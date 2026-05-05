@@ -2161,6 +2161,12 @@ export default function App() {
       ? true
       : String(row.importDate).slice(0, 7) === normalizedAccountingMonthFilter
   ));
+  const monthlyImportBatchCount = new Set(
+    monthlyImportRows.map((row) => (
+      row.containerReference
+      || `${row.shipmentReference ?? "sin-envio"}-${String(row.importDate).slice(0, 10)}`
+    )),
+  ).size;
   const monthlyImportCostTotal = monthlyImportRows.reduce((sum, row) => sum + Number(row.totalImportCost ?? 0), 0);
   const monthlyImportUnits = monthlyImportRows.reduce((sum, row) => sum + Number(row.importedQuantity ?? 0), 0);
   const monthlyProjectedUtilityCop = monthlyImportCostTotal * (accountingUtilityMarginValue / 100);
@@ -8727,7 +8733,7 @@ export default function App() {
               <div className="accounting-kpi-grid">
                 <article className="kpi-card tone-cyan">
                   <p>Importaciones del mes</p>
-                  <strong>{monthlyImportRows.length}</strong>
+                  <strong>{monthlyImportBatchCount}</strong>
                 </article>
                 <article className="kpi-card tone-amber">
                   <p>Costo importado del mes (COP)</p>
