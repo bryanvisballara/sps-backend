@@ -2896,6 +2896,7 @@ async function syncDeliveredOrdersIntoLogisticsInvoices() {
   const deliveredOrders = await Order.find({ status: "delivered" })
     .select({
       _id: 1,
+      storeId: 1,
       storeName: 1,
       salesRepName: 1,
       routeName: 1,
@@ -2909,31 +2910,24 @@ async function syncDeliveredOrdersIntoLogisticsInvoices() {
     return;
   }
 
-  const deliveredOrderIds = deliveredOrders.map((order) => String(order._id));
-  const existingInvoices = await LogisticsInvoice.find({
-    active: { $ne: false },
-    orderId: { $in: deliveredOrderIds },
-  })
-    .select({ orderId: 1 })
-    .lean();
-  const existingOrderIds = new Set(existingInvoices.map((invoice) => String(invoice.orderId ?? "")).filter(Boolean));
-  const ordersToSync = deliveredOrders.filter((order) => !existingOrderIds.has(String(order._id)));
-
-  if (ordersToSync.length === 0) {
-    return;
-  }
-
   const productIds = Array.from(
     new Set(
-      ordersToSync.flatMap((order) =>
+      deliveredOrders.flatMap((order) =>
         (order.items ?? [])
           .map((item) => String(item.productId ?? "").trim())
           .filter(Boolean),
       ),
     ),
   );
+  const clientIds = Array.from(
+    new Set(
+      deliveredOrders
+        .map((order) => String(order.storeId ?? "").trim())
+        .filter(Boolean),
+    ),
+  );
 
-  const [products, latestImportCosts] = await Promise.all([
+  const [products, latestImportCosts, clientPricingRows] = await Promise.all([
     productIds.length > 0
       ? Product.find({ _id: { $in: productIds } })
           .select({ _id: 1, name: 1, sku: 1, salePrice: 1, cost: 1, arubaPurchaseCostUsd: 1, arubaUsdToAwgRate: 1 })
@@ -2942,10 +2936,16 @@ async function syncDeliveredOrdersIntoLogisticsInvoices() {
     productIds.length > 0
       ? ImportCost.find({ productId: { $in: productIds } }).sort({ importDate: -1, createdAt: -1 }).lean()
       : Promise.resolve([]),
+    clientIds.length > 0
+      ? CatalogClientPricing.find({ active: { $ne: false }, clientId: { $in: clientIds } })
+          .sort({ updatedAt: -1, createdAt: -1 })
+          .lean()
+      : Promise.resolve([]),
   ]);
 
   const productsById = new Map(products.map((product) => [String(product._id), product]));
   const latestCostMap = new Map<string, number>();
+  const clientProductSalePriceMap = new Map<string, number>();
 
   latestImportCosts.forEach((row) => {
     const productId = String(row.productId ?? "");
@@ -2955,9 +2955,32 @@ async function syncDeliveredOrdersIntoLogisticsInvoices() {
     }
   });
 
+  clientPricingRows.forEach((pricingRow) => {
+    const clientId = String(pricingRow.clientId ?? "").trim();
+
+    if (!clientId || !Array.isArray(pricingRow.items)) {
+      return;
+    }
+
+    pricingRow.items.forEach((item) => {
+      const productId = String(item.productId ?? "").trim();
+
+      if (!productId) {
+        return;
+      }
+
+      const key = `${clientId}:${productId}`;
+
+      if (!clientProductSalePriceMap.has(key)) {
+        clientProductSalePriceMap.set(key, Number(item.salePrice ?? 0));
+      }
+    });
+  });
+
   const now = new Date();
-  const upsertOperations = ordersToSync.map(async (order) => {
+  const upsertOperations = deliveredOrders.map(async (order) => {
     const orderId = String(order._id);
+    const storeId = String(order.storeId ?? "").trim();
     const normalizedItems = (order.items ?? []).flatMap((item) => {
       const productId = String(item.productId ?? "").trim();
       const quantity = Number(item.quantity ?? 0);
@@ -2967,7 +2990,10 @@ async function syncDeliveredOrdersIntoLogisticsInvoices() {
       }
 
       const product = productsById.get(productId);
-      const salePriceAwg = Math.max(0, Number(product?.salePrice ?? 0));
+  const clientSalePriceKey = storeId ? `${storeId}:${productId}` : "";
+  const catalogSalePrice = clientSalePriceKey ? Number(clientProductSalePriceMap.get(clientSalePriceKey) ?? NaN) : NaN;
+  const baseSalePrice = Number(product?.salePrice ?? 0);
+  const salePriceAwg = Math.max(0, Number.isFinite(catalogSalePrice) ? catalogSalePrice : baseSalePrice);
       const arubaPurchaseCostUsd = Number(product?.arubaPurchaseCostUsd ?? 0);
       const arubaUsdToAwgRate = Number(product?.arubaUsdToAwgRate ?? 1.79);
       const arubaCostAwg = arubaPurchaseCostUsd * arubaUsdToAwgRate;
