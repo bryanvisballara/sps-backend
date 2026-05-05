@@ -2263,6 +2263,22 @@ h1 {
   justify-content: flex-end;
 }
 
+.inventory-entry-inline-input {
+  width: 92px;
+  border: 1px solid rgba(17, 17, 17, 0.14);
+  border-radius: 10px;
+  background: #ffffff;
+  color: #111111;
+  font: inherit;
+  padding: 8px 10px;
+}
+
+.inventory-entry-inline-input:focus {
+  outline: none;
+  border-color: rgba(0, 193, 214, 0.9);
+  box-shadow: 0 0 0 3px rgba(0, 193, 214, 0.16);
+}
+
 .small-add-button {
   border: 1px solid rgba(17, 17, 17, 0.18);
   border-radius: 999px;

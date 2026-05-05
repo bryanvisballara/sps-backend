@@ -9454,7 +9454,18 @@ export default function App() {
                         return (
                           <tr key={`preview-${item.id}`}>
                             <td>{product ? `${product.label} (${product.sku})` : "-"}</td>
-                            <td>{item.quantity || "0"}</td>
+                            <td>
+                              <input
+                                className="inventory-entry-inline-input"
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={item.quantity}
+                                placeholder="0"
+                                onChange={(event) => updateInventoryEntryRow(item.id, "quantity", event.target.value)}
+                                disabled={isImportingInventoryExcel || isSavingInventoryEntry}
+                              />
+                            </td>
                             <td>{item.costUsd || "0"}</td>
                             <td>{getInventoryEntryCostAwg(item.costUsd) || "0"}</td>
                             <td>
