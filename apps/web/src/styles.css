@@ -1978,6 +1978,17 @@ h1 {
   background: rgba(17, 17, 17, 0.035);
 }
 
+.data-table th.col-highlight {
+  background: #0f172a;
+  color: #fff;
+}
+
+.data-table td.col-highlight {
+  background: rgba(15, 23, 42, 0.07) !important;
+  font-weight: 600;
+  text-align: center;
+}
+
 .empty-table-cell {
   text-align: center !important;
   color: rgba(17, 17, 17, 0.58) !important;

@@ -11162,20 +11162,36 @@ export default function App() {
                           <th>SKU</th>
                           <th>Producto</th>
                           <th>Stock actual</th>
-                          <th>Cantidad</th>
+                          <th className="col-highlight">Cantidad a despachar</th>
+                          <th>Costo unit. (AWG)</th>
+                          <th>Precio venta (AWG)</th>
+                          <th>Utilidad unit. (AWG)</th>
+                          <th>Utilidad total (AWG)</th>
                           <th>Notas</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {selectedWarehouseOrderDetail.items.map((item) => (
-                          <tr key={`${selectedWarehouseOrderDetail._id}-${item.productId}`}>
-                            <td>{item.productSku}</td>
-                            <td>{item.productName}</td>
-                            <td>{item.stockCurrent ?? "-"}</td>
-                            <td>{item.quantity}</td>
-                            <td>{item.notes || "-"}</td>
-                          </tr>
-                        ))}
+                        {selectedWarehouseOrderDetail.items.map((item) => {
+                          const invRow = inventoryRows.find((r) => r.productId === item.productId);
+                          const unitCostAwg = Number(invRow?.unitCost ?? 0);
+                          const salePriceAwg = Number(invRow?.salePrice ?? 0);
+                          const unitUtilityAwg = salePriceAwg - unitCostAwg;
+                          const totalUtilityAwg = unitUtilityAwg * Number(item.quantity ?? 0);
+
+                          return (
+                            <tr key={`${selectedWarehouseOrderDetail._id}-${item.productId}`}>
+                              <td>{item.productSku}</td>
+                              <td>{item.productName}</td>
+                              <td>{item.stockCurrent ?? "-"}</td>
+                              <td className="col-highlight"><strong>{item.quantity}</strong></td>
+                              <td>{unitCostAwg > 0 ? formatAwgCurrency(unitCostAwg) : "-"}</td>
+                              <td>{salePriceAwg > 0 ? formatAwgCurrency(salePriceAwg) : "-"}</td>
+                              <td>{unitCostAwg > 0 || salePriceAwg > 0 ? formatAwgCurrency(unitUtilityAwg) : "-"}</td>
+                              <td>{unitCostAwg > 0 || salePriceAwg > 0 ? formatAwgCurrency(totalUtilityAwg) : "-"}</td>
+                              <td>{item.notes || "-"}</td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
