@@ -1405,6 +1405,37 @@ function formatUsdCurrency(value: number) {
   }).format(Number.isFinite(value) ? value : 0);
 }
 
+function parseDecimalInput(value: unknown) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : Number.NaN;
+  }
+
+  if (typeof value !== "string") {
+    return Number.NaN;
+  }
+
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return Number.NaN;
+  }
+
+  let normalized = trimmed.replace(/\s+/g, "");
+
+  if (normalized.includes(",") && normalized.includes(".")) {
+    if (normalized.lastIndexOf(",") > normalized.lastIndexOf(".")) {
+      normalized = normalized.replace(/\./g, "").replace(",", ".");
+    } else {
+      normalized = normalized.replace(/,/g, "");
+    }
+  } else if (normalized.includes(",")) {
+    normalized = normalized.replace(",", ".");
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
 function formatCurrencyUpTwoDecimals(value: number) {
   const normalizedValue = Number.isFinite(value) ? value : 0;
   const roundedValue = normalizedValue >= 0
@@ -2143,7 +2174,7 @@ export default function App() {
   });
   const selectedBillingBatch = billingBatchRows.find((row) => row.referenceKey === selectedBillingReference) ?? null;
   const billingMarginValue = Number(billingMarginPercent || 0);
-  const billingTrmValue = Number(billingTrmCopPerUsd || 0);
+  const billingTrmValue = parseDecimalInput(billingTrmCopPerUsd);
   const showBillingPurchaseColumn = selectedBillingRows.some((row) => Number(row.purchaseUnitCostOrigin || 0) > 0);
   const showBillingFreightColumn = selectedBillingRows.some((row) => Number(row.freightCost || 0) > 0);
   const showBillingCustomsColumn = selectedBillingRows.some((row) => Number(row.customsCost || 0) > 0);
@@ -3249,10 +3280,22 @@ export default function App() {
 
     try {
       setAccountingError("");
-      const rows = selectedBillingRows.map((row, index) => ({
-        productId: row.productId,
-        saleUsd: Number(getEffectiveBillingSaleUsd(row, index) || 0),
-      }));
+      const rows: Array<{ productId: string; saleUsd: number }> = [];
+
+      for (let index = 0; index < selectedBillingRows.length; index += 1) {
+        const row = selectedBillingRows[index];
+        const saleUsd = parseDecimalInput(getEffectiveBillingSaleUsd(row, index));
+
+        if (!Number.isFinite(saleUsd) || saleUsd < 0) {
+          setAccountingError(`El precio USD del producto ${row.productName} no es valido.`);
+          return false;
+        }
+
+        rows.push({
+          productId: row.productId,
+          saleUsd,
+        });
+      }
 
       const response = await fetch(
         `${apiBaseUrl}/management/accounting/import-batches/${encodeURIComponent(selectedBillingBatch.containerReference)}/invoice-pricing`,
@@ -3299,7 +3342,7 @@ export default function App() {
 
     const lineRows = selectedBillingRows.map((row, index) => {
       const quantity = Number(row.importedQuantity || 0);
-      const saleUsd = Number(getEffectiveBillingSaleUsd(row, index) || 0);
+      const saleUsd = parseDecimalInput(getEffectiveBillingSaleUsd(row, index));
       const lineTotalUsd = quantity * saleUsd;
 
       return {
@@ -3344,7 +3387,7 @@ export default function App() {
 
     const rows = selectedBillingRows.map((row, index) => {
       const quantity = Number(row.importedQuantity || 0);
-      const saleUsd = Number(getEffectiveBillingSaleUsd(row, index) || 0);
+      const saleUsd = parseDecimalInput(getEffectiveBillingSaleUsd(row, index));
       const totalUsd = quantity * saleUsd;
 
       return {
