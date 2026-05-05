@@ -505,6 +505,8 @@ const sidebarItems = [
   { key: "routes", label: "Rutas" },
   { key: "catalog", label: "Catalogo" },
   { key: "imports", label: "Importaciones" },
+  { key: "import-billing", label: "Facturacion" },
+  { key: "accounting", label: "Contabilidad" },
 ] as const;
 
 const managementSidebarSections = [
@@ -530,6 +532,7 @@ const managementSidebarSections = [
     items: [
       { key: "imports", label: "Importaciones" },
       { key: "import-billing", label: "Facturacion" },
+      { key: "accounting", label: "Contabilidad" },
     ],
   },
   {
@@ -1475,6 +1478,16 @@ function normalizeMonthlyAmount(amount: number, frequency: string) {
   }
 }
 
+function getFixedCostAmountForMonth(row: FixedCostRecord, monthKey: string) {
+  const startMonth = String(row.startDate ?? "").slice(0, 7);
+
+  if (row.frequency === "one-time") {
+    return startMonth === monthKey ? Number(row.amount ?? 0) : 0;
+  }
+
+  return normalizeMonthlyAmount(Number(row.amount ?? 0), row.frequency);
+}
+
 function buildContainerImportProducts(
   products: ProductOption[],
   current: ContainerImportProductFormState[] = [],
@@ -1707,6 +1720,8 @@ export default function App() {
   const [billingSaleOverrides, setBillingSaleOverrides] = useState<Record<string, string>>({});
   const [isLoadingBillingTrm, setIsLoadingBillingTrm] = useState(false);
   const [accountingFilters, setAccountingFilters] = useState<Record<string, SectionFilters>>({});
+  const [accountingMonthFilter, setAccountingMonthFilter] = useState(() => new Date().toISOString().slice(0, 7));
+  const [accountingUtilityMarginPercent, setAccountingUtilityMarginPercent] = useState("25");
   const [importCostRows, setImportCostRows] = useState<ImportCostRecord[]>([]);
   const [fixedCostRows, setFixedCostRows] = useState<FixedCostRecord[]>([]);
   const [operationalExpenseRows, setOperationalExpenseRows] = useState<OperationalExpenseRecord[]>([]);
@@ -2139,6 +2154,26 @@ export default function App() {
     + (showBillingInlandColumn ? 1 : 0)
     + (showBillingTaxesColumn ? 1 : 0)
     + (showBillingOthersColumn ? 1 : 0);
+  const normalizedAccountingMonthFilter = accountingMonthFilter.trim();
+  const accountingUtilityMarginValue = Math.max(Number(accountingUtilityMarginPercent || 0), 0);
+  const monthlyImportRows = importCostRows.filter((row) => (
+    normalizedAccountingMonthFilter.length === 0
+      ? true
+      : String(row.importDate).slice(0, 7) === normalizedAccountingMonthFilter
+  ));
+  const monthlyImportCostTotal = monthlyImportRows.reduce((sum, row) => sum + Number(row.totalImportCost ?? 0), 0);
+  const monthlyImportUnits = monthlyImportRows.reduce((sum, row) => sum + Number(row.importedQuantity ?? 0), 0);
+  const monthlyProjectedUtilityCop = monthlyImportCostTotal * (accountingUtilityMarginValue / 100);
+  const monthlyProjectedRevenueCop = monthlyImportCostTotal + monthlyProjectedUtilityCop;
+  const monthlyFixedAdditionalCosts = fixedCostRows.reduce(
+    (sum, row) => sum + getFixedCostAmountForMonth(row, normalizedAccountingMonthFilter),
+    0,
+  );
+  const monthlyOperationalAdditionalCosts = operationalExpenseRows
+    .filter((row) => String(row.expenseDate).slice(0, 7) === normalizedAccountingMonthFilter)
+    .reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+  const monthlyAdditionalCostsTotal = monthlyFixedAdditionalCosts + monthlyOperationalAdditionalCosts;
+  const monthlyProjectedNetUtilityCop = monthlyProjectedUtilityCop - monthlyAdditionalCostsTotal;
 
   function getBillingRowKey(row: ImportCostRecord, index: number) {
     return `${selectedBillingReference}-${row._id ?? `${row.productId}-${row.importDate}-${index}`}`;
@@ -2320,7 +2355,9 @@ export default function App() {
   }, [activeSection, sessionUser]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "management" || (activeSection !== "accounting" && activeSection !== "imports" && activeSection !== "import-billing")) {
+    const canAccessAccounting = sessionUser?.role === "management" || sessionUser?.role === "colombia-ops";
+
+    if (!canAccessAccounting || (activeSection !== "accounting" && activeSection !== "imports" && activeSection !== "import-billing")) {
       return;
     }
 
@@ -2328,7 +2365,9 @@ export default function App() {
   }, [activeSection, sessionUser]);
 
   useEffect(() => {
-    if (activeSection !== "import-billing" || sessionUser?.role !== "management") {
+    const canAccessBilling = sessionUser?.role === "management" || sessionUser?.role === "colombia-ops";
+
+    if (activeSection !== "import-billing" || !canAccessBilling) {
       return;
     }
 
@@ -2343,7 +2382,9 @@ export default function App() {
   }, [activeSection, billingBatchRows, selectedBillingBatchReference, sessionUser]);
 
   useEffect(() => {
-    if (activeSection !== "import-billing" || sessionUser?.role !== "management") {
+    const canAccessBilling = sessionUser?.role === "management" || sessionUser?.role === "colombia-ops";
+
+    if (activeSection !== "import-billing" || !canAccessBilling) {
       return;
     }
 
@@ -8648,6 +8689,113 @@ export default function App() {
             </div>
 
             {accountingError ? <p className="form-feedback error">{accountingError}</p> : null}
+
+            <article className="database-card">
+              <div className="accounting-block-header">
+                <div>
+                  <p className="section-label">Operaciones Col</p>
+                  <h2>Contabilidad mensual (COP)</h2>
+                  <p>Filtra por mes para ver importaciones detalladas, costos adicionales y utilidad estimada en COP.</p>
+                </div>
+              </div>
+
+              <div className="filter-grid">
+                <label className="field">
+                  <span>Mes</span>
+                  <input
+                    type="month"
+                    value={accountingMonthFilter}
+                    onChange={(event) => setAccountingMonthFilter(event.target.value)}
+                  />
+                </label>
+                <label className="field">
+                  <span>Margen esperado (%)</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={accountingUtilityMarginPercent}
+                    onChange={(event) => setAccountingUtilityMarginPercent(event.target.value)}
+                  />
+                </label>
+                <label className="field">
+                  <span>Utilidad neta proyectada (COP)</span>
+                  <input type="text" readOnly value={formatCurrency(monthlyProjectedNetUtilityCop)} />
+                </label>
+              </div>
+
+              <div className="accounting-kpi-grid">
+                <article className="kpi-card tone-cyan">
+                  <p>Importaciones del mes</p>
+                  <strong>{monthlyImportRows.length}</strong>
+                </article>
+                <article className="kpi-card tone-amber">
+                  <p>Costo importado del mes (COP)</p>
+                  <strong>{formatCurrency(monthlyImportCostTotal)}</strong>
+                </article>
+                <article className="kpi-card tone-slate">
+                  <p>Utilidad bruta proyectada (COP)</p>
+                  <strong>{formatCurrency(monthlyProjectedUtilityCop)}</strong>
+                </article>
+                <article className="kpi-card tone-cyan">
+                  <p>Costos adicionales del mes (COP)</p>
+                  <strong>{formatCurrency(monthlyAdditionalCostsTotal)}</strong>
+                </article>
+              </div>
+
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Contenedor</th>
+                      <th>Envio</th>
+                      <th>Producto</th>
+                      <th>Cantidad</th>
+                      <th>Costo unitario (COP)</th>
+                      <th>Costo total (COP)</th>
+                      <th>Venta proyectada (COP)</th>
+                      <th>Utilidad proyectada (COP)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isLoadingAccounting ? (
+                      <tr>
+                        <td colSpan={9} className="empty-table-cell">Cargando contabilidad mensual...</td>
+                      </tr>
+                    ) : monthlyImportRows.length > 0 ? (
+                      monthlyImportRows.map((row, index) => {
+                        const projectedRevenue = Number(row.totalImportCost ?? 0) * (1 + accountingUtilityMarginValue / 100);
+                        const projectedUtility = projectedRevenue - Number(row.totalImportCost ?? 0);
+                        const rowKey = row._id ?? `${row.productId}-${row.importDate}-${index}`;
+
+                        return (
+                          <tr key={rowKey}>
+                            <td>{String(row.importDate).slice(0, 10)}</td>
+                            <td>{row.containerReference ? `${formatContainerSize(row.containerSize ?? "20ft")} · ${row.containerReference}` : formatContainerSize(row.containerSize ?? "20ft")}</td>
+                            <td>{row.shipmentReference || "-"}</td>
+                            <td>{`${row.productName} (${row.productSku})`}</td>
+                            <td>{row.importedQuantity}</td>
+                            <td>{formatCurrency(row.landedUnitCost)}</td>
+                            <td>{formatCurrency(row.totalImportCost)}</td>
+                            <td>{formatCurrency(projectedRevenue)}</td>
+                            <td>{formatCurrency(projectedUtility)}</td>
+                          </tr>
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan={9} className="empty-table-cell">No hay importaciones registradas para el mes seleccionado.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <p className="management-table-meta">
+                {`Unidades importadas en el mes: ${monthlyImportUnits} · Venta proyectada del mes: ${formatCurrency(monthlyProjectedRevenueCop)}`}
+              </p>
+            </article>
 
             <article className="database-card">
               <div className="accounting-block-header">
