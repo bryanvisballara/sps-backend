@@ -8257,8 +8257,8 @@ export default function App() {
                       <th>SKU</th>
                       <th>Producto</th>
                       <th>Categoria</th>
-                      <th>Costo</th>
-                      <th>Precio de venta</th>
+                      <th>Costo (AWG)</th>
+                      <th>Precio de venta (AWG)</th>
                     </tr>
                   </thead>
                   <tbody>
