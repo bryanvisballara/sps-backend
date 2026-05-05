@@ -521,6 +521,18 @@ type LogisticsInvoiceRecord = {
   active?: boolean;
 };
 
+type LogisticsBilledOrderRecord = {
+  _id?: string;
+  orderId: string;
+  invoiceDate: string;
+  storeName: string;
+  salesRepName?: string;
+  routeName?: string;
+  totalCostAwg: number;
+  totalRevenueAwg: number;
+  totalUtilityAwg: number;
+};
+
 type LogisticsFixedCostRecord = {
   _id?: string;
   name: string;
@@ -1888,6 +1900,7 @@ export default function App() {
   const [operationalExpenseRows, setOperationalExpenseRows] = useState<OperationalExpenseRecord[]>([]);
   // Logistics accounting state
   const [logisticsInvoices, setLogisticsInvoices] = useState<LogisticsInvoiceRecord[]>([]);
+  const [logisticsBilledOrders, setLogisticsBilledOrders] = useState<LogisticsBilledOrderRecord[]>([]);
   const [logisticsFixedCosts, setLogisticsFixedCosts] = useState<LogisticsFixedCostRecord[]>([]);
   const [logisticsExpenses, setLogisticsExpenses] = useState<LogisticsExpenseRecord[]>([]);
   const [isLoadingLogisticsAccounting, setIsLoadingLogisticsAccounting] = useState(false);
@@ -2415,6 +2428,11 @@ export default function App() {
     normalizedLogisticsMonthFilter.length === 0
       ? true
       : String(inv.invoiceDate).slice(0, 7) === normalizedLogisticsMonthFilter,
+  );
+  const logisticsMonthlyBilledOrders = logisticsBilledOrders.filter((order) =>
+    normalizedLogisticsMonthFilter.length === 0
+      ? true
+      : String(order.invoiceDate).slice(0, 7) === normalizedLogisticsMonthFilter,
   );
   const logisticsMonthlyRevenue = logisticsMonthlyInvoices.reduce((sum, inv) => sum + Number(inv.totalRevenueAwg ?? 0), 0);
   const logisticsMonthlyUtility = logisticsMonthlyInvoices.reduce((sum, inv) => sum + Number(inv.totalUtilityAwg ?? 0), 0);
@@ -3299,21 +3317,29 @@ export default function App() {
     try {
       setIsLoadingLogisticsAccounting(true);
       setLogisticsAccountingError("");
-      const [invoicesRes, fixedRes, expensesRes] = await Promise.all([
+      const [invoicesRes, billedOrdersRes, fixedRes, expensesRes] = await Promise.all([
         fetch(`${apiBaseUrl}/management/logistics-accounting/invoices`),
+        fetch(`${apiBaseUrl}/management/logistics-accounting/billed-orders`),
         fetch(`${apiBaseUrl}/management/logistics-accounting/fixed-costs`),
         fetch(`${apiBaseUrl}/management/logistics-accounting/expenses`),
       ]);
       const invoicesData = (await invoicesRes.json()) as LogisticsInvoiceRecord[] | { message?: string };
+      const billedOrdersData = (await billedOrdersRes.json()) as LogisticsBilledOrderRecord[] | { message?: string };
       const fixedData = (await fixedRes.json()) as LogisticsFixedCostRecord[] | { message?: string };
       const expensesData = (await expensesRes.json()) as LogisticsExpenseRecord[] | { message?: string };
 
-      if (!invoicesRes.ok || !Array.isArray(invoicesData) || !fixedRes.ok || !Array.isArray(fixedData) || !expensesRes.ok || !Array.isArray(expensesData)) {
+      if (
+        !invoicesRes.ok || !Array.isArray(invoicesData)
+        || !billedOrdersRes.ok || !Array.isArray(billedOrdersData)
+        || !fixedRes.ok || !Array.isArray(fixedData)
+        || !expensesRes.ok || !Array.isArray(expensesData)
+      ) {
         setLogisticsAccountingError("No fue posible cargar la informacion contable logistica.");
         return;
       }
 
       setLogisticsInvoices(invoicesData);
+      setLogisticsBilledOrders(billedOrdersData);
       setLogisticsFixedCosts(fixedData);
       setLogisticsExpenses(expensesData);
     } catch {
@@ -9676,6 +9702,10 @@ export default function App() {
               </div>
 
               <div className="accounting-kpi-grid">
+                <article className="kpi-card tone-slate">
+                  <p>Pedidos facturados del mes</p>
+                  <strong>{logisticsMonthlyBilledOrders.length}</strong>
+                </article>
                 <article className="kpi-card tone-cyan">
                   <p>Facturas del mes</p>
                   <strong>{logisticsMonthlyInvoices.length}</strong>
@@ -9692,6 +9722,41 @@ export default function App() {
                   <p>Costos adicionales del mes (AWG)</p>
                   <strong>{formatAwgCurrency(logisticsMonthlyAdditionalCosts)}</strong>
                 </article>
+              </div>
+
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Cliente</th>
+                      <th>Costo total (AWG)</th>
+                      <th>Venta total (AWG)</th>
+                      <th>Utilidad total (AWG)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isLoadingLogisticsAccounting ? (
+                      <tr>
+                        <td colSpan={5} className="empty-table-cell">Cargando pedidos facturados...</td>
+                      </tr>
+                    ) : logisticsMonthlyBilledOrders.length > 0 ? (
+                      logisticsMonthlyBilledOrders.map((order) => (
+                        <tr key={order._id ?? order.orderId}>
+                          <td>{String(order.invoiceDate).slice(0, 10)}</td>
+                          <td>{order.storeName}</td>
+                          <td>{formatAwgCurrency(order.totalCostAwg)}</td>
+                          <td>{formatAwgCurrency(order.totalRevenueAwg)}</td>
+                          <td>{formatAwgCurrency(order.totalUtilityAwg)}</td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={5} className="empty-table-cell">No hay pedidos facturados para el mes seleccionado.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
 
               <div className="table-wrap">
