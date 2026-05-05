@@ -3,10 +3,10 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { z } from "zod";
 const envFilePath = resolve(fileURLToPath(new URL("../../../..", import.meta.url)), ".env.local");
-const loadedEnv = config({ path: envFilePath, override: true });
+const loadedEnv = config({ path: envFilePath, override: false });
 const envSource = {
-    ...process.env,
     ...(loadedEnv.parsed ?? {}),
+    ...process.env,
 };
 const envSchema = z.object({
     MONGODB_URI: z.string().min(1),

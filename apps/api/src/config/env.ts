@@ -8,10 +8,10 @@ const envFilePath = resolve(
   ".env.local",
 );
 
-const loadedEnv = config({ path: envFilePath, override: true });
+const loadedEnv = config({ path: envFilePath, override: false });
 const envSource = {
-  ...process.env,
   ...(loadedEnv.parsed ?? {}),
+  ...process.env,
 };
 
 const envSchema = z.object({
