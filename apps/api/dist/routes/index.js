@@ -5,6 +5,9 @@ import * as XLSX from "xlsx";
 import { env } from "../config/env.js";
 import { FixedCost } from "../modules/accounting/fixed-cost.model.js";
 import { ImportCost } from "../modules/accounting/import-cost.model.js";
+import { LogisticsExpense } from "../modules/accounting/logistics-expense.model.js";
+import { LogisticsFixedCost } from "../modules/accounting/logistics-fixed-cost.model.js";
+import { LogisticsInvoice } from "../modules/accounting/logistics-invoice.model.js";
 import { OperationalExpense } from "../modules/accounting/operational-expense.model.js";
 import { Category } from "../modules/categories/category.model.js";
 import { CatalogClientPricing } from "../modules/catalog/catalog-client-pricing.model.js";
@@ -2246,6 +2249,140 @@ apiRouter.post("/management/accounting/operational-expenses", async (request, re
         sendCreationError(response, error);
     }
 });
+// ─── Logística: facturas de pedidos (AWG) ────────────────────────────────────
+function normalizeLogisticsInvoicePayload(body) {
+    if (typeof body !== "object" || body === null) {
+        throw new Error("La factura logistica enviada no es valida.");
+    }
+    const payload = body;
+    const invoiceDateValue = typeof payload.invoiceDate === "string" ? payload.invoiceDate.trim() : "";
+    const storeName = typeof payload.storeName === "string" ? payload.storeName.trim() : "";
+    const salesRepName = typeof payload.salesRepName === "string" ? payload.salesRepName.trim() : "";
+    const routeName = typeof payload.routeName === "string" ? payload.routeName.trim() : "";
+    const orderId = typeof payload.orderId === "string" ? payload.orderId.trim() : "";
+    const notes = typeof payload.notes === "string" ? payload.notes.trim() : "";
+    if (!invoiceDateValue || !storeName) {
+        throw new Error("Fecha y cliente son obligatorios en la factura logistica.");
+    }
+    const invoiceDate = new Date(invoiceDateValue);
+    if (Number.isNaN(invoiceDate.getTime())) {
+        throw new Error("La fecha de la factura logistica no es valida.");
+    }
+    const rawItems = Array.isArray(payload.items) ? payload.items : [];
+    if (rawItems.length === 0) {
+        throw new Error("La factura debe tener al menos un producto.");
+    }
+    const items = rawItems.map((item, index) => {
+        const productId = typeof item.productId === "string" ? item.productId.trim() : "";
+        const productName = typeof item.productName === "string" ? item.productName.trim() : "";
+        const productSku = typeof item.productSku === "string" ? item.productSku.trim() : "";
+        const quantity = Number(item.quantity ?? 0);
+        const salePriceAwg = Number(item.salePriceAwg ?? 0);
+        const unitCostAwg = Number(item.unitCostAwg ?? 0);
+        if (!productId || !productName || quantity <= 0 || salePriceAwg < 0) {
+            throw new Error(`El producto en la fila ${index + 1} tiene datos invalidos.`);
+        }
+        const lineTotalAwg = salePriceAwg * quantity;
+        const lineUtilityAwg = lineTotalAwg - unitCostAwg * quantity;
+        return { productId, productName, productSku, quantity, salePriceAwg, lineTotalAwg, unitCostAwg, lineUtilityAwg };
+    });
+    const totalRevenueAwg = items.reduce((sum, item) => sum + item.lineTotalAwg, 0);
+    const totalCostAwg = items.reduce((sum, item) => sum + item.unitCostAwg * item.quantity, 0);
+    const totalUtilityAwg = totalRevenueAwg - totalCostAwg;
+    return { invoiceDate, storeName, salesRepName, routeName, orderId, notes, items, totalRevenueAwg, totalCostAwg, totalUtilityAwg };
+}
+function normalizeLogisticsFixedCostPayload(body) {
+    if (typeof body !== "object" || body === null) {
+        throw new Error("El costo fijo logistico enviado no es valido.");
+    }
+    const payload = body;
+    const name = typeof payload.name === "string" ? payload.name.trim() : "";
+    const category = typeof payload.category === "string" ? payload.category.trim() : "";
+    const frequency = typeof payload.frequency === "string" ? payload.frequency.trim() : "";
+    const startDateValue = typeof payload.startDate === "string" ? payload.startDate.trim() : "";
+    const notes = typeof payload.notes === "string" ? payload.notes.trim() : "";
+    const amountAwg = Number(payload.amountAwg ?? 0);
+    if (!name || !category || !frequency || !startDateValue || amountAwg < 0) {
+        throw new Error("Nombre, categoria, frecuencia, fecha y monto del costo fijo son obligatorios.");
+    }
+    const startDate = new Date(startDateValue);
+    if (Number.isNaN(startDate.getTime())) {
+        throw new Error("La fecha del costo fijo no es valida.");
+    }
+    return { name, category, frequency, amountAwg, startDate, notes };
+}
+function normalizeLogisticsExpensePayload(body) {
+    if (typeof body !== "object" || body === null) {
+        throw new Error("El gasto logistico enviado no es valido.");
+    }
+    const payload = body;
+    const name = typeof payload.name === "string" ? payload.name.trim() : "";
+    const category = typeof payload.category === "string" ? payload.category.trim() : "";
+    const expenseDateValue = typeof payload.expenseDate === "string" ? payload.expenseDate.trim() : "";
+    const notes = typeof payload.notes === "string" ? payload.notes.trim() : "";
+    const amountAwg = Number(payload.amountAwg ?? 0);
+    if (!name || !category || !expenseDateValue || amountAwg < 0) {
+        throw new Error("Nombre, categoria, fecha y monto del gasto logistico son obligatorios.");
+    }
+    const expenseDate = new Date(expenseDateValue);
+    if (Number.isNaN(expenseDate.getTime())) {
+        throw new Error("La fecha del gasto logistico no es valida.");
+    }
+    return { name, category, amountAwg, expenseDate, notes };
+}
+apiRouter.get("/management/logistics-accounting/invoices", async (_request, response) => {
+    const invoices = await LogisticsInvoice.find({ active: { $ne: false } }).sort({ invoiceDate: -1, createdAt: -1 }).lean();
+    response.json(invoices);
+});
+apiRouter.post("/management/logistics-accounting/invoices", async (request, response) => {
+    try {
+        const invoice = await LogisticsInvoice.create(normalizeLogisticsInvoicePayload(request.body));
+        response.status(201).json(invoice);
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
+apiRouter.delete("/management/logistics-accounting/invoices/:id", async (request, response) => {
+    try {
+        const invoice = await LogisticsInvoice.findByIdAndUpdate(request.params.id, { active: false }, { new: true });
+        if (!invoice) {
+            response.status(404).json({ message: "La factura logistica no existe." });
+            return;
+        }
+        response.json({ message: "Factura logistica borrada correctamente." });
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
+apiRouter.get("/management/logistics-accounting/fixed-costs", async (_request, response) => {
+    const fixedCosts = await LogisticsFixedCost.find({ active: { $ne: false } }).sort({ createdAt: -1 }).lean();
+    response.json(fixedCosts);
+});
+apiRouter.post("/management/logistics-accounting/fixed-costs", async (request, response) => {
+    try {
+        const fixedCost = await LogisticsFixedCost.create(normalizeLogisticsFixedCostPayload(request.body));
+        response.status(201).json(fixedCost);
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
+apiRouter.get("/management/logistics-accounting/expenses", async (_request, response) => {
+    const expenses = await LogisticsExpense.find({ active: { $ne: false } }).sort({ expenseDate: -1, createdAt: -1 }).lean();
+    response.json(expenses);
+});
+apiRouter.post("/management/logistics-accounting/expenses", async (request, response) => {
+    try {
+        const expense = await LogisticsExpense.create(normalizeLogisticsExpensePayload(request.body));
+        response.status(201).json(expense);
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
+// ─────────────────────────────────────────────────────────────────────────────
 apiRouter.post("/management/warehouse-locations", async (request, response) => {
     try {
         const payload = normalizeWarehouseLocationPayload(request.body);

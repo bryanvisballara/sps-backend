@@ -1,26 +1,29 @@
 import { Schema } from "mongoose";
-export declare const OperationalExpense: import("mongoose").Model<{
+export declare const LogisticsFixedCost: import("mongoose").Model<{
     name: string;
-    category: "other" | "fuel" | "maintenance" | "unforeseen" | "tolls" | "logistics";
-    amount: number;
+    category: "payroll" | "rent" | "utilities" | "administration" | "other";
+    frequency: "monthly" | "biweekly" | "weekly" | "annual" | "one-time";
+    startDate: NativeDate;
     active: boolean;
-    expenseDate: NativeDate;
+    amountAwg: number;
     notes?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps, {}, {}, {}, import("mongoose").Document<unknown, {}, {
     name: string;
-    category: "other" | "fuel" | "maintenance" | "unforeseen" | "tolls" | "logistics";
-    amount: number;
+    category: "payroll" | "rent" | "utilities" | "administration" | "other";
+    frequency: "monthly" | "biweekly" | "weekly" | "annual" | "one-time";
+    startDate: NativeDate;
     active: boolean;
-    expenseDate: NativeDate;
+    amountAwg: number;
     notes?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps, {}, {
     timestamps: true;
 }> & {
     name: string;
-    category: "other" | "fuel" | "maintenance" | "unforeseen" | "tolls" | "logistics";
-    amount: number;
+    category: "payroll" | "rent" | "utilities" | "administration" | "other";
+    frequency: "monthly" | "biweekly" | "weekly" | "annual" | "one-time";
+    startDate: NativeDate;
     active: boolean;
-    expenseDate: NativeDate;
+    amountAwg: number;
     notes?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps & {
     _id: import("mongoose").Types.ObjectId;
@@ -30,30 +33,33 @@ export declare const OperationalExpense: import("mongoose").Model<{
     timestamps: true;
 }, {
     name: string;
-    category: "other" | "fuel" | "maintenance" | "unforeseen" | "tolls" | "logistics";
-    amount: number;
+    category: "payroll" | "rent" | "utilities" | "administration" | "other";
+    frequency: "monthly" | "biweekly" | "weekly" | "annual" | "one-time";
+    startDate: NativeDate;
     active: boolean;
-    expenseDate: NativeDate;
+    amountAwg: number;
     notes?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps, import("mongoose").Document<unknown, {}, import("mongoose").FlatRecord<{
     name: string;
-    category: "other" | "fuel" | "maintenance" | "unforeseen" | "tolls" | "logistics";
-    amount: number;
+    category: "payroll" | "rent" | "utilities" | "administration" | "other";
+    frequency: "monthly" | "biweekly" | "weekly" | "annual" | "one-time";
+    startDate: NativeDate;
     active: boolean;
-    expenseDate: NativeDate;
+    amountAwg: number;
     notes?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps>, {}, import("mongoose").MergeType<import("mongoose").DefaultSchemaOptions, {
     timestamps: true;
 }>> & import("mongoose").FlatRecord<{
     name: string;
-    category: "other" | "fuel" | "maintenance" | "unforeseen" | "tolls" | "logistics";
-    amount: number;
+    category: "payroll" | "rent" | "utilities" | "administration" | "other";
+    frequency: "monthly" | "biweekly" | "weekly" | "annual" | "one-time";
+    startDate: NativeDate;
     active: boolean;
-    expenseDate: NativeDate;
+    amountAwg: number;
     notes?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps> & {
     _id: import("mongoose").Types.ObjectId;
 } & {
     __v: number;
 }>>;
-//# sourceMappingURL=operational-expense.model.d.ts.map
+//# sourceMappingURL=logistics-fixed-cost.model.d.ts.map

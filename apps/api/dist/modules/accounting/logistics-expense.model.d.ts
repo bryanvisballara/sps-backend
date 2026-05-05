@@ -1,25 +1,25 @@
 import { Schema } from "mongoose";
-export declare const OperationalExpense: import("mongoose").Model<{
+export declare const LogisticsExpense: import("mongoose").Model<{
     name: string;
-    category: "other" | "fuel" | "maintenance" | "unforeseen" | "tolls" | "logistics";
-    amount: number;
+    category: "other" | "fuel" | "maintenance" | "unforeseen" | "delivery" | "tolls";
     active: boolean;
+    amountAwg: number;
     expenseDate: NativeDate;
     notes?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps, {}, {}, {}, import("mongoose").Document<unknown, {}, {
     name: string;
-    category: "other" | "fuel" | "maintenance" | "unforeseen" | "tolls" | "logistics";
-    amount: number;
+    category: "other" | "fuel" | "maintenance" | "unforeseen" | "delivery" | "tolls";
     active: boolean;
+    amountAwg: number;
     expenseDate: NativeDate;
     notes?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps, {}, {
     timestamps: true;
 }> & {
     name: string;
-    category: "other" | "fuel" | "maintenance" | "unforeseen" | "tolls" | "logistics";
-    amount: number;
+    category: "other" | "fuel" | "maintenance" | "unforeseen" | "delivery" | "tolls";
     active: boolean;
+    amountAwg: number;
     expenseDate: NativeDate;
     notes?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps & {
@@ -30,25 +30,25 @@ export declare const OperationalExpense: import("mongoose").Model<{
     timestamps: true;
 }, {
     name: string;
-    category: "other" | "fuel" | "maintenance" | "unforeseen" | "tolls" | "logistics";
-    amount: number;
+    category: "other" | "fuel" | "maintenance" | "unforeseen" | "delivery" | "tolls";
     active: boolean;
+    amountAwg: number;
     expenseDate: NativeDate;
     notes?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps, import("mongoose").Document<unknown, {}, import("mongoose").FlatRecord<{
     name: string;
-    category: "other" | "fuel" | "maintenance" | "unforeseen" | "tolls" | "logistics";
-    amount: number;
+    category: "other" | "fuel" | "maintenance" | "unforeseen" | "delivery" | "tolls";
     active: boolean;
+    amountAwg: number;
     expenseDate: NativeDate;
     notes?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps>, {}, import("mongoose").MergeType<import("mongoose").DefaultSchemaOptions, {
     timestamps: true;
 }>> & import("mongoose").FlatRecord<{
     name: string;
-    category: "other" | "fuel" | "maintenance" | "unforeseen" | "tolls" | "logistics";
-    amount: number;
+    category: "other" | "fuel" | "maintenance" | "unforeseen" | "delivery" | "tolls";
     active: boolean;
+    amountAwg: number;
     expenseDate: NativeDate;
     notes?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps> & {
@@ -56,4 +56,4 @@ export declare const OperationalExpense: import("mongoose").Model<{
 } & {
     __v: number;
 }>>;
-//# sourceMappingURL=operational-expense.model.d.ts.map
+//# sourceMappingURL=logistics-expense.model.d.ts.map
