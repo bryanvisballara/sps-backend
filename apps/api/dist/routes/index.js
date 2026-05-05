@@ -425,7 +425,7 @@ async function resolveCatalogProducts(catalog) {
 }
 function normalizeImportCostPayload(body) {
     if (typeof body !== "object" || body === null) {
-        throw new Error("El costo de importacion enviado no es valido.");
+        throw new Error("El costo de exportacion enviado no es valido.");
     }
     const payload = body;
     const containerSizeValue = typeof payload.containerSize === "string" ? payload.containerSize.trim() : "20ft";
@@ -462,7 +462,7 @@ function normalizeImportCostPayload(body) {
     }
     const importDate = new Date(importDateValue || new Date().toISOString());
     if (Number.isNaN(importDate.getTime())) {
-        throw new Error("La fecha de importacion no es valida.");
+        throw new Error("La fecha de exportacion no es valida.");
     }
     return {
         containerSize,
@@ -2074,7 +2074,7 @@ apiRouter.get("/management/accounting/import-batches/:containerReference", async
             .sort({ createdAt: 1 })
             .lean();
         if (batchRows.length === 0) {
-            response.status(404).json({ message: "El lote de importacion no existe." });
+            response.status(404).json({ message: "El lote de exportacion no existe." });
             return;
         }
         const firstRow = batchRows[0];
@@ -2100,7 +2100,7 @@ apiRouter.put("/management/accounting/import-batches/:containerReference", async
     try {
         const existingRows = await ImportCost.find({ containerReference: request.params.containerReference }).lean();
         if (existingRows.length === 0) {
-            response.status(404).json({ message: "El lote de importacion no existe." });
+            response.status(404).json({ message: "El lote de exportacion no existe." });
             return;
         }
         const payload = normalizeImportCostPayload(request.body);
@@ -2134,7 +2134,7 @@ apiRouter.post("/management/accounting/import-batches/:containerReference/invoic
         }
         const batchRows = await ImportCost.find({ containerReference, active: { $ne: false } }).lean();
         if (batchRows.length === 0) {
-            response.status(404).json({ message: "El lote de importacion no existe." });
+            response.status(404).json({ message: "El lote de exportacion no existe." });
             return;
         }
         const saleUsdByProductId = new Map();
@@ -2190,10 +2190,10 @@ apiRouter.delete("/management/accounting/import-batches/:containerReference", as
     try {
         const result = await ImportCost.deleteMany({ containerReference: request.params.containerReference });
         if (!result.deletedCount) {
-            response.status(404).json({ message: "El lote de importacion no existe." });
+            response.status(404).json({ message: "El lote de exportacion no existe." });
             return;
         }
-        response.json({ message: "Importacion borrada correctamente." });
+        response.json({ message: "Exportacion borrada correctamente." });
     }
     catch (error) {
         sendCreationError(response, error);

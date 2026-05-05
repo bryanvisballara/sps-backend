@@ -579,7 +579,7 @@ async function resolveCatalogProducts(catalog: {
 
 function normalizeImportCostPayload(body: unknown) {
   if (typeof body !== "object" || body === null) {
-    throw new Error("El costo de importacion enviado no es valido.");
+    throw new Error("El costo de exportacion enviado no es valido.");
   }
 
   const payload = body as Record<string, unknown>;
@@ -626,7 +626,7 @@ function normalizeImportCostPayload(body: unknown) {
   const importDate = new Date(importDateValue || new Date().toISOString());
 
   if (Number.isNaN(importDate.getTime())) {
-    throw new Error("La fecha de importacion no es valida.");
+    throw new Error("La fecha de exportacion no es valida.");
   }
 
   return {
@@ -2583,7 +2583,7 @@ apiRouter.get("/management/accounting/import-batches/:containerReference", async
       .lean();
 
     if (batchRows.length === 0) {
-      response.status(404).json({ message: "El lote de importacion no existe." });
+      response.status(404).json({ message: "El lote de exportacion no existe." });
       return;
     }
 
@@ -2611,7 +2611,7 @@ apiRouter.put("/management/accounting/import-batches/:containerReference", async
     const existingRows = await ImportCost.find({ containerReference: request.params.containerReference }).lean();
 
     if (existingRows.length === 0) {
-      response.status(404).json({ message: "El lote de importacion no existe." });
+      response.status(404).json({ message: "El lote de exportacion no existe." });
       return;
     }
 
@@ -2652,7 +2652,7 @@ apiRouter.post("/management/accounting/import-batches/:containerReference/invoic
     const batchRows = await ImportCost.find({ containerReference, active: { $ne: false } }).lean();
 
     if (batchRows.length === 0) {
-      response.status(404).json({ message: "El lote de importacion no existe." });
+      response.status(404).json({ message: "El lote de exportacion no existe." });
       return;
     }
 
@@ -2718,11 +2718,11 @@ apiRouter.delete("/management/accounting/import-batches/:containerReference", as
     const result = await ImportCost.deleteMany({ containerReference: request.params.containerReference });
 
     if (!result.deletedCount) {
-      response.status(404).json({ message: "El lote de importacion no existe." });
+      response.status(404).json({ message: "El lote de exportacion no existe." });
       return;
     }
 
-    response.json({ message: "Importacion borrada correctamente." });
+    response.json({ message: "Exportacion borrada correctamente." });
   } catch (error) {
     sendCreationError(response, error);
   }
