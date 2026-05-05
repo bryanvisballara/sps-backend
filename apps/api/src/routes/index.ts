@@ -2970,9 +2970,16 @@ async function syncDeliveredOrdersIntoLogisticsInvoices() {
       }
 
       const key = `${clientId}:${productId}`;
+      const candidateSalePrice = Number(item.salePrice ?? 0);
+      const currentSalePrice = clientProductSalePriceMap.get(key);
 
-      if (!clientProductSalePriceMap.has(key)) {
-        clientProductSalePriceMap.set(key, Number(item.salePrice ?? 0));
+      if (currentSalePrice === undefined) {
+        clientProductSalePriceMap.set(key, candidateSalePrice);
+        return;
+      }
+
+      if (currentSalePrice <= 0 && candidateSalePrice > 0) {
+        clientProductSalePriceMap.set(key, candidateSalePrice);
       }
     });
   });
