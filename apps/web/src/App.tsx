@@ -4016,6 +4016,81 @@ export default function App() {
     }
   }
 
+  async function handlePrintCompletedOrderSummary(order: SellerOrderRecord) {
+    const pdf = new jsPDF({ unit: "mm", format: "a4" });
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 14;
+    const generatedAt = new Date().toLocaleDateString("es-CO", { year: "numeric", month: "2-digit", day: "2-digit" });
+    const logoImage = await loadImageForPdf("/company-logo.jpeg");
+
+    pdf.setFillColor(8, 15, 28);
+    pdf.rect(0, 0, pageWidth, 34, "F");
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(20);
+    pdf.text("Factura comercial", margin, 16);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(9.5);
+    pdf.text(`Reimpresion: ${generatedAt}`, margin, 23);
+    pdf.text(`Estado: ${formatSellerOrderStatus(order.status)}`, margin, 28);
+
+    if (logoImage) {
+      pdf.setFillColor(255, 255, 255);
+      pdf.roundedRect(pageWidth - 46, 6, 32, 22, 4, 4, "F");
+      pdf.addImage(logoImage.dataUrl, logoImage.format, pageWidth - 42, 8, 24, 18);
+    }
+
+    pdf.setTextColor(17, 17, 17);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(11);
+    pdf.text("Datos del pedido", margin, 46);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(9.5);
+    pdf.text(`Cliente: ${order.storeName}`, margin, 53);
+    pdf.text(`Vendedor: ${order.salesRepName}`, margin, 59);
+    pdf.text(`Ruta: ${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`, margin, 65);
+    pdf.text(`Fecha: ${formatSellerOrderDate(order.updatedAt)}`, margin, 71);
+
+    let currentY = 84;
+    pdf.setFillColor(244, 247, 250);
+    pdf.rect(margin, currentY, pageWidth - margin * 2, 8, "F");
+    pdf.setTextColor(17, 17, 17);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(8.5);
+    pdf.text("SKU", margin + 2, currentY + 5.3);
+    pdf.text("Producto", margin + 26, currentY + 5.3);
+    pdf.text("Cantidad", pageWidth - 36, currentY + 5.3, { align: "right" });
+    currentY += 12;
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8.8);
+
+    for (const item of order.items) {
+      if (currentY > pageHeight - 26) {
+        pdf.addPage();
+        currentY = 20;
+      }
+
+      const nameLines = pdf.splitTextToSize(item.productName, 78);
+      const rowH = Math.max(7, nameLines.length * 4.6);
+
+      pdf.text(item.productSku || "-", margin + 2, currentY);
+      pdf.text(nameLines as string[], margin + 26, currentY);
+      pdf.text(String(item.quantity), pageWidth - 36, currentY, { align: "right" });
+      currentY += rowH + 2;
+      pdf.setDrawColor(223, 229, 235);
+      pdf.line(margin, currentY - 4, pageWidth - margin, currentY - 4);
+    }
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8.5);
+    pdf.text("SPS Trading Enterprises", margin, pageHeight - 8);
+
+    const fileName = sanitizePdfFileName(`factura-${order.storeName}-${order.routeName}-${generatedAt}`) || "factura-pedido";
+    pdf.save(`${fileName}.pdf`);
+  }
+
   function handleSectionFilterChange(field: keyof SectionFilters, value: string) {
     setSectionFilters((current) => ({
       ...current,
@@ -10935,7 +11010,7 @@ export default function App() {
                   <h2>Pedidos recibidos</h2>
                   <p>Consulta vendedor, cliente, ruta, fecha y detalle de productos por pedido.</p>
                 </div>
-                <p className="management-table-meta">{warehouseOrders.length} pedidos</p>
+                <p className="management-table-meta">{warehouseReceivedOrders.length} pedidos</p>
               </div>
 
               {warehouseOrdersError ? <p className="form-feedback error">{warehouseOrdersError}</p> : null}
@@ -10958,8 +11033,8 @@ export default function App() {
                       <tr>
                         <td colSpan={7} className="empty-table-cell">Cargando pedidos recibidos...</td>
                       </tr>
-                    ) : warehouseOrders.length > 0 ? (
-                      warehouseOrders.map((order) => {
+                    ) : warehouseReceivedOrders.length > 0 ? (
+                      warehouseReceivedOrders.map((order) => {
                         const totalUnits = order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
 
                         return (
@@ -10987,6 +11062,80 @@ export default function App() {
                     ) : (
                       <tr>
                         <td colSpan={7} className="empty-table-cell">Todavia no han llegado pedidos desde el portal de vendedores.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            <article className="database-card">
+              <div className="management-table-header">
+                <div>
+                  <h2>Pedidos completados</h2>
+                  <p>Pedidos ya despachados y cerrados. Puedes reimprimir la factura desde aqui.</p>
+                </div>
+                <p className="management-table-meta">{warehouseCompletedOrders.length} pedidos</p>
+              </div>
+
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Vendedor</th>
+                      <th>Cliente</th>
+                      <th>Ruta</th>
+                      <th>Productos</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isLoadingWarehouseOrders ? (
+                      <tr>
+                        <td colSpan={6} className="empty-table-cell">Cargando pedidos completados...</td>
+                      </tr>
+                    ) : warehouseCompletedOrders.length > 0 ? (
+                      warehouseCompletedOrders.map((order) => {
+                        const totalUnits = order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+
+                        return (
+                          <tr key={order._id}>
+                            <td>{formatSellerOrderDate(order.updatedAt)}</td>
+                            <td>{order.salesRepName}</td>
+                            <td>{order.storeName}</td>
+                            <td>{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
+                            <td>{`${order.items.length} producto${order.items.length === 1 ? "" : "s"} / ${totalUnits} und`}</td>
+                            <td className="table-actions-cell">
+                              <button
+                                className="table-action-icon"
+                                type="button"
+                                aria-label="Reimprimir factura"
+                                title="Reimprimir factura"
+                                onClick={() => void handlePrintCompletedOrderSummary(order)}
+                              >
+                                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                  <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
+                                </svg>
+                              </button>
+                              <button
+                                className="table-action-icon"
+                                type="button"
+                                aria-label="Ver detalle del pedido"
+                                title="Ver detalle"
+                                onClick={() => setSelectedWarehouseOrderDetail(order)}
+                              >
+                                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                  <path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z" fill="currentColor" />
+                                </svg>
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan={6} className="empty-table-cell">Todavia no hay pedidos completados.</td>
                       </tr>
                     )}
                   </tbody>
