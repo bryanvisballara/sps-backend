@@ -9648,6 +9648,7 @@ export default function App() {
                       <th>Cliente</th>
                       <th>Vendedor</th>
                       <th>Ruta</th>
+                      <th>Costo (AWG)</th>
                       <th>Ingresos (AWG)</th>
                       <th>Utilidad (AWG)</th>
                       <th>Accion</th>
@@ -9656,7 +9657,7 @@ export default function App() {
                   <tbody>
                     {isLoadingLogisticsAccounting ? (
                       <tr>
-                        <td colSpan={7} className="empty-table-cell">Cargando facturas...</td>
+                        <td colSpan={8} className="empty-table-cell">Cargando facturas...</td>
                       </tr>
                     ) : logisticsMonthlyInvoices.length > 0 ? (
                       logisticsMonthlyInvoices.map((inv) => (
@@ -9665,6 +9666,7 @@ export default function App() {
                           <td>{inv.storeName}</td>
                           <td>{inv.salesRepName || "-"}</td>
                           <td>{inv.routeName || "-"}</td>
+                          <td>{formatAwgCurrency(inv.totalCostAwg)}</td>
                           <td>{formatAwgCurrency(inv.totalRevenueAwg)}</td>
                           <td>{formatAwgCurrency(inv.totalUtilityAwg)}</td>
                           <td>
@@ -9695,7 +9697,7 @@ export default function App() {
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={7} className="empty-table-cell">No hay facturas registradas para el mes seleccionado.</td>
+                        <td colSpan={8} className="empty-table-cell">No hay facturas registradas para el mes seleccionado.</td>
                       </tr>
                     )}
                   </tbody>
