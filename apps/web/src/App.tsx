@@ -571,7 +571,7 @@ type LogisticsInvoiceFormState = {
 };
 
 const apiBaseUrl =
-  (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:4000/api";
+  (import.meta.env.VITE_API_URL as string | undefined) ?? "https://sps-backend-jxms.onrender.com/api";
 const cloudinaryCloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME as string | undefined;
 const cloudinaryUploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET as string | undefined;
 const sessionStorageKey = "spste-session-user";
@@ -3324,19 +3324,36 @@ export default function App() {
         fetch(`${apiBaseUrl}/management/logistics-accounting/expenses`),
       ]);
       const invoicesData = (await invoicesRes.json()) as LogisticsInvoiceRecord[] | { message?: string };
-      const billedOrdersData = (await billedOrdersRes.json()) as LogisticsBilledOrderRecord[] | { message?: string };
+      const billedOrdersPayload = billedOrdersRes.ok
+        ? ((await billedOrdersRes.json()) as LogisticsBilledOrderRecord[] | { message?: string })
+        : [];
       const fixedData = (await fixedRes.json()) as LogisticsFixedCostRecord[] | { message?: string };
       const expensesData = (await expensesRes.json()) as LogisticsExpenseRecord[] | { message?: string };
 
       if (
         !invoicesRes.ok || !Array.isArray(invoicesData)
-        || !billedOrdersRes.ok || !Array.isArray(billedOrdersData)
         || !fixedRes.ok || !Array.isArray(fixedData)
         || !expensesRes.ok || !Array.isArray(expensesData)
       ) {
         setLogisticsAccountingError("No fue posible cargar la informacion contable logistica.");
         return;
       }
+
+      const billedOrdersData = Array.isArray(billedOrdersPayload)
+        ? billedOrdersPayload
+        : invoicesData
+            .filter((invoice) => typeof invoice.orderId === "string" && invoice.orderId.trim().length > 0)
+            .map((invoice) => ({
+              _id: invoice._id,
+              orderId: String(invoice.orderId ?? ""),
+              invoiceDate: invoice.invoiceDate,
+              storeName: invoice.storeName,
+              salesRepName: invoice.salesRepName,
+              routeName: invoice.routeName,
+              totalCostAwg: Number(invoice.totalCostAwg ?? 0),
+              totalRevenueAwg: Number(invoice.totalRevenueAwg ?? 0),
+              totalUtilityAwg: Number(invoice.totalUtilityAwg ?? 0),
+            }));
 
       setLogisticsInvoices(invoicesData);
       setLogisticsBilledOrders(billedOrdersData);
