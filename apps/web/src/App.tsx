@@ -1816,7 +1816,6 @@ function normalizeUppercaseInputTarget(target: EventTarget | null) {
 
 export default function App() {
   const tablePaginationStateRef = useRef<Record<string, number>>({});
-  const billingAutosaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [email, setEmail] = useState("said@spste.com");
   const [password, setPassword] = useState("123456");
   const [isAuthenticating, setIsAuthenticating] = useState(false);
@@ -1891,6 +1890,7 @@ export default function App() {
   const [billingTrmCopPerUsd, setBillingTrmCopPerUsd] = useState("0");
   const [billingSaleOverrides, setBillingSaleOverrides] = useState<Record<string, string>>({});
   const [hasPendingBillingPricingChanges, setHasPendingBillingPricingChanges] = useState(false);
+  const [editingBillingReference, setEditingBillingReference] = useState("");
   const [isLoadingBillingTrm, setIsLoadingBillingTrm] = useState(false);
   const [accountingFilters, setAccountingFilters] = useState<Record<string, SectionFilters>>({});
   const [accountingMonthFilter, setAccountingMonthFilter] = useState(() => new Date().toISOString().slice(0, 7));
@@ -2338,6 +2338,10 @@ export default function App() {
   const selectedBillingBatch = billingBatchRows.find((row) => row.referenceKey === selectedBillingReference) ?? null;
   const billingMarginValue = Number(billingMarginPercent || 0);
   const billingTrmValue = parseDecimalInput(billingTrmCopPerUsd);
+  const selectedBillingPricingLocked = selectedBillingRows.length > 0
+    && selectedBillingRows.every((row) => Boolean(row.invoiceGeneratedAt));
+  const isBillingPricingEditable = selectedBillingRows.length > 0
+    && (!selectedBillingPricingLocked || editingBillingReference === selectedBillingReference);
   const showBillingPurchaseColumn = selectedBillingRows.some((row) => Number(row.purchaseUnitCostOrigin || 0) > 0);
   const showBillingFreightColumn = selectedBillingRows.some((row) => Number(row.freightCost || 0) > 0);
   const showBillingCustomsColumn = selectedBillingRows.some((row) => Number(row.customsCost || 0) > 0);
@@ -2462,10 +2466,24 @@ export default function App() {
 
   function getEffectiveBillingSaleUsd(row: ImportCostRecord, index: number) {
     const rowKey = getBillingRowKey(row, index);
-    return billingSaleOverrides[rowKey] ?? getSuggestedBillingSaleUsd(row);
+    const persistedSaleUsd = Number(row.invoicedSaleUnitUsd ?? 0);
+
+    if (billingSaleOverrides[rowKey] !== undefined) {
+      return billingSaleOverrides[rowKey];
+    }
+
+    if (Number.isFinite(persistedSaleUsd) && persistedSaleUsd > 0) {
+      return persistedSaleUsd.toFixed(2);
+    }
+
+    return getSuggestedBillingSaleUsd(row);
   }
 
   function applyBillingMarginToRows() {
+    if (!isBillingPricingEditable) {
+      return;
+    }
+
     setBillingSaleOverrides((current) => {
       const next = { ...current };
 
@@ -2710,43 +2728,17 @@ export default function App() {
   }, [activeSection, sessionUser]);
 
   useEffect(() => {
-    const canAccessBilling = sessionUser?.role === "management" || sessionUser?.role === "colombia-ops";
-
-    if (activeSection !== "import-billing" || !canAccessBilling) {
+    if (!selectedBillingReference) {
+      setEditingBillingReference("");
+      setHasPendingBillingPricingChanges(false);
       return;
     }
 
-    if (!hasPendingBillingPricingChanges || selectedBillingRows.length === 0 || !selectedBillingBatch?.containerReference) {
-      return;
+    if (editingBillingReference && editingBillingReference !== selectedBillingReference) {
+      setEditingBillingReference("");
+      setHasPendingBillingPricingChanges(false);
     }
-
-    if (!Number.isFinite(billingTrmValue) || billingTrmValue <= 0) {
-      return;
-    }
-
-    if (billingAutosaveTimeoutRef.current) {
-      clearTimeout(billingAutosaveTimeoutRef.current);
-    }
-
-    billingAutosaveTimeoutRef.current = setTimeout(() => {
-      void persistBillingInvoicePricing();
-    }, 900);
-
-    return () => {
-      if (billingAutosaveTimeoutRef.current) {
-        clearTimeout(billingAutosaveTimeoutRef.current);
-        billingAutosaveTimeoutRef.current = null;
-      }
-    };
-  }, [
-    activeSection,
-    billingTrmValue,
-    billingSaleOverrides,
-    hasPendingBillingPricingChanges,
-    selectedBillingBatch?.containerReference,
-    selectedBillingRows,
-    sessionUser,
-  ]);
+  }, [editingBillingReference, selectedBillingReference]);
 
   useEffect(() => {
     if (!selectedAccountingMonthlyBatchKey) {
@@ -3606,6 +3598,7 @@ export default function App() {
 
       await refreshAccountingData();
       setHasPendingBillingPricingChanges(false);
+      setEditingBillingReference("");
       return true;
     } catch {
       setAccountingError("No fue posible conectar con el backend para guardar la factura.");
@@ -9204,7 +9197,9 @@ export default function App() {
                     value={billingTrmCopPerUsd}
                     onChange={(event) => {
                       setBillingTrmCopPerUsd(event.target.value);
-                      setHasPendingBillingPricingChanges(true);
+                      if (isBillingPricingEditable) {
+                        setHasPendingBillingPricingChanges(true);
+                      }
                     }}
                   />
                   <small>{isLoadingBillingTrm ? "Actualizando TRM..." : "Puedes ajustarla manualmente si hace falta."}</small>
@@ -9243,6 +9238,22 @@ export default function App() {
                       <p>
                         <strong>Envio:</strong> {selectedBillingBatch.shipmentReference || "-"}
                       </p>
+                      {selectedBillingPricingLocked && editingBillingReference !== selectedBillingReference ? (
+                        <button
+                          className="table-action-icon import-billing-edit-button"
+                          type="button"
+                          aria-label="Editar precios guardados"
+                          title="Editar precios guardados"
+                          onClick={() => {
+                            setEditingBillingReference(selectedBillingReference);
+                            setHasPendingBillingPricingChanges(false);
+                          }}
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M4 20h4l10-10-4-4L4 16v4zm12.7-12.3 1.6-1.6a1 1 0 0 1 1.4 0l1.2 1.2a1 1 0 0 1 0 1.4L19.3 10l-2.6-2.3z" fill="currentColor" />
+                          </svg>
+                        </button>
+                      ) : null}
                     </div>
                   ) : null}
 
@@ -9280,7 +9291,9 @@ export default function App() {
                             const suggestedSaleUsd = Number.isFinite(saleUnitUsd)
                               ? (Math.round(saleUnitUsd * 100) / 100).toFixed(2)
                               : "";
-                            const saleInputValue = billingSaleOverrides[rowKey] ?? suggestedSaleUsd;
+                            const persistedSaleUsd = Number(row.invoicedSaleUnitUsd ?? 0);
+                            const saleInputValue = billingSaleOverrides[rowKey]
+                              ?? (Number.isFinite(persistedSaleUsd) && persistedSaleUsd > 0 ? persistedSaleUsd.toFixed(2) : suggestedSaleUsd);
 
                             return (
                               <tr key={rowKey}>
@@ -9302,6 +9315,7 @@ export default function App() {
                                     step="0.01"
                                     value={saleInputValue}
                                     placeholder={billingTrmValue > 0 ? "0.00" : "TRM"}
+                                    disabled={!isBillingPricingEditable}
                                     onChange={(event) => {
                                       const nextValue = event.target.value;
                                       setBillingSaleOverrides((current) => ({
@@ -9325,6 +9339,14 @@ export default function App() {
                   </div>
 
                   <div className="catalog-form-actions inventory-adjustment-actions">
+                    <button
+                      className="ghost-button invoice-export-button"
+                      type="button"
+                      onClick={() => void persistBillingInvoicePricing()}
+                      disabled={selectedBillingRows.length === 0 || !isBillingPricingEditable}
+                    >
+                      Guardar precios
+                    </button>
                     <button
                       className="submit-button invoice-export-button"
                       type="button"
