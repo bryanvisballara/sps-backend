@@ -1436,7 +1436,7 @@ apiRouter.get("/management/catalogs/:id/preview", async (request, response) => {
       resolveCatalogProducts(catalog),
       clientId
         ? CatalogClientPricing.findOne({ catalogId: catalog._id, clientId }).lean()
-        : Promise.resolve(null),
+        : CatalogClientPricing.findOne({ catalogId: catalog._id, active: { $ne: false } }).sort({ updatedAt: -1 }).lean(),
     ]);
 
     const savedPricingMap = new Map(
