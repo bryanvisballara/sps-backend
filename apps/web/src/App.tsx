@@ -596,13 +596,14 @@ const cloudinaryCloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME as string
 const cloudinaryUploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET as string | undefined;
 const sessionStorageKey = "spste-session-user";
 const dashboardKpiSectionMap: Record<string, ActiveSection> = {
-  "Usuarios activos": "users",
   Clientes: "clients",
-  Categorias: "categories",
   Productos: "products",
-  Proveedores: "suppliers",
-  Bodegas: "warehouses",
-  "Rutas semanales": "routes",
+  "Rutas asignadas": "routes",
+  "Stock en bodega (AWG)": "inventory",
+  "Ventas del mes Aruba (AWG)": "logistics-accounting",
+  "Utilidad del mes Aruba (AWG)": "logistics-accounting",
+  "Ventas del mes Colombia (COP)": "accounting",
+  "Utilidad del mes Colombia (COP)": "accounting",
 };
 
 function readPersistedSessionUser(): SessionUser | null {
@@ -2538,36 +2539,51 @@ export default function App() {
   const dashboardLowestBillingClients = [...dashboardClientBilling]
     .sort((left, right) => left.totalRevenue - right.totalRevenue || left.clientName.localeCompare(right.clientName))
     .slice(0, 5);
+  const hiddenDashboardKpis = new Set(["Usuarios activos", "Categorias", "Proveedores", "Bodegas"]);
   const dashboardExecutiveCards: DashboardExecutiveCard[] = [
-    ...kpis.map((card) => ({
-      label: card.label,
-      valueLabel: String(card.value),
-      tone: card.tone,
-      targetSection: dashboardKpiSectionMap[card.label],
-    })),
+    ...kpis.flatMap((card) => {
+      if (hiddenDashboardKpis.has(card.label)) {
+        return [];
+      }
+
+      const label = card.label === "Rutas semanales" ? "Rutas asignadas" : card.label;
+
+      return [{
+        label,
+        valueLabel: String(card.value),
+        tone: card.tone,
+        targetSection: dashboardKpiSectionMap[label],
+      }];
+    }),
+    {
+      label: "Stock en bodega (AWG)",
+      valueLabel: formatAwgCurrency(inventoryKpis.totalInventoryCost),
+      tone: "cyan",
+      targetSection: "inventory",
+    },
     {
       label: "Ventas del mes Aruba (AWG)",
       valueLabel: formatAwgCurrency(dashboardArubaMonthlySalesAwg),
       tone: "amber",
-      targetSection: "logistics-accounting",
+      targetSection: dashboardKpiSectionMap["Ventas del mes Aruba (AWG)"],
     },
     {
       label: "Utilidad del mes Aruba (AWG)",
       valueLabel: formatAwgCurrency(dashboardArubaMonthlyUtilityAwg),
       tone: "slate",
-      targetSection: "logistics-accounting",
+      targetSection: dashboardKpiSectionMap["Utilidad del mes Aruba (AWG)"],
     },
     {
       label: "Ventas del mes Colombia (COP)",
       valueLabel: formatCurrency(dashboardColombiaMonthlySalesCop),
       tone: "amber",
-      targetSection: "accounting",
+      targetSection: dashboardKpiSectionMap["Ventas del mes Colombia (COP)"],
     },
     {
       label: "Utilidad del mes Colombia (COP)",
       valueLabel: formatCurrency(dashboardColombiaMonthlyUtilityCop),
       tone: "slate",
-      targetSection: "accounting",
+      targetSection: dashboardKpiSectionMap["Utilidad del mes Colombia (COP)"],
     },
   ];
 
