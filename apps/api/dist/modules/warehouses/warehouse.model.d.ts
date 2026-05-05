@@ -1,0 +1,47 @@
+import { Schema } from "mongoose";
+export declare const Warehouse: import("mongoose").Model<{
+    code: string;
+    name: string;
+    active: boolean;
+    address: string;
+} & import("mongoose").DefaultTimestampProps, {}, {}, {}, import("mongoose").Document<unknown, {}, {
+    code: string;
+    name: string;
+    active: boolean;
+    address: string;
+} & import("mongoose").DefaultTimestampProps, {}, {
+    timestamps: true;
+}> & {
+    code: string;
+    name: string;
+    active: boolean;
+    address: string;
+} & import("mongoose").DefaultTimestampProps & {
+    _id: import("mongoose").Types.ObjectId;
+} & {
+    __v: number;
+}, Schema<any, import("mongoose").Model<any, any, any, any, any, any>, {}, {}, {}, {}, {
+    timestamps: true;
+}, {
+    code: string;
+    name: string;
+    active: boolean;
+    address: string;
+} & import("mongoose").DefaultTimestampProps, import("mongoose").Document<unknown, {}, import("mongoose").FlatRecord<{
+    code: string;
+    name: string;
+    active: boolean;
+    address: string;
+} & import("mongoose").DefaultTimestampProps>, {}, import("mongoose").MergeType<import("mongoose").DefaultSchemaOptions, {
+    timestamps: true;
+}>> & import("mongoose").FlatRecord<{
+    code: string;
+    name: string;
+    active: boolean;
+    address: string;
+} & import("mongoose").DefaultTimestampProps> & {
+    _id: import("mongoose").Types.ObjectId;
+} & {
+    __v: number;
+}>>;
+//# sourceMappingURL=warehouse.model.d.ts.map

@@ -1,4 +1,4 @@
 node_modules/
 .env.local
-dist/
+apps/web/dist/
 .DS_Store

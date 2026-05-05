@@ -5,9 +5,10 @@
     "apps/*"
   ],
   "scripts": {
-    "dev:api": "npm run dev --workspace @spste/api",
-    "dev:web": "npm run dev --workspace @spste/web",
-    "build": "npm run build --workspaces",
+    "dev:api": "npm run dev --workspace=apps/api",
+    "dev:web": "npm run dev --workspace=apps/web",
+    "build": "npm run build --workspace=apps/api",
+    "start": "node apps/api/dist/server.js",
     "lint": "npm run lint --workspaces",
     "typecheck": "npm run typecheck --workspaces"
   }
