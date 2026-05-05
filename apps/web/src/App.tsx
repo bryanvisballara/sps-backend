@@ -1722,6 +1722,7 @@ export default function App() {
   const [accountingFilters, setAccountingFilters] = useState<Record<string, SectionFilters>>({});
   const [accountingMonthFilter, setAccountingMonthFilter] = useState(() => new Date().toISOString().slice(0, 7));
   const [accountingUtilityMarginPercent, setAccountingUtilityMarginPercent] = useState("25");
+  const [selectedAccountingMonthlyBatchKey, setSelectedAccountingMonthlyBatchKey] = useState("");
   const [importCostRows, setImportCostRows] = useState<ImportCostRecord[]>([]);
   const [fixedCostRows, setFixedCostRows] = useState<FixedCostRecord[]>([]);
   const [operationalExpenseRows, setOperationalExpenseRows] = useState<OperationalExpenseRecord[]>([]);
@@ -2161,12 +2162,51 @@ export default function App() {
       ? true
       : String(row.importDate).slice(0, 7) === normalizedAccountingMonthFilter
   ));
-  const monthlyImportBatchCount = new Set(
-    monthlyImportRows.map((row) => (
-      row.containerReference
-      || `${row.shipmentReference ?? "sin-envio"}-${String(row.importDate).slice(0, 10)}`
-    )),
-  ).size;
+  const monthlyImportBatchRows = Array.from(
+    monthlyImportRows.reduce((map, row) => {
+      const key = row.containerReference
+        || `${row.shipmentReference ?? "sin-envio"}-${String(row.importDate).slice(0, 10)}`;
+      const current = map.get(key) ?? {
+        key,
+        importDate: row.importDate,
+        containerReference: row.containerReference ?? key,
+        containerSize: row.containerSize ?? "20ft",
+        shipmentReference: row.shipmentReference ?? "",
+        totalQuantity: 0,
+        totalImportCost: 0,
+        totalProjectedRevenue: 0,
+        totalProjectedUtility: 0,
+        items: [] as ImportCostRecord[],
+      };
+
+      const rowTotalCost = Number(row.totalImportCost ?? 0);
+      const rowProjectedRevenue = rowTotalCost * (1 + accountingUtilityMarginValue / 100);
+      const rowProjectedUtility = rowProjectedRevenue - rowTotalCost;
+
+      current.totalQuantity += Number(row.importedQuantity ?? 0);
+      current.totalImportCost += rowTotalCost;
+      current.totalProjectedRevenue += rowProjectedRevenue;
+      current.totalProjectedUtility += rowProjectedUtility;
+      current.items.push(row);
+
+      map.set(key, current);
+      return map;
+    }, new Map<string, {
+      key: string;
+      importDate: string;
+      containerReference: string;
+      containerSize: string;
+      shipmentReference: string;
+      totalQuantity: number;
+      totalImportCost: number;
+      totalProjectedRevenue: number;
+      totalProjectedUtility: number;
+      items: ImportCostRecord[];
+    }>()),
+  ).map(([, value]) => value)
+    .sort((left, right) => String(right.importDate).localeCompare(String(left.importDate)));
+  const monthlyImportBatchCount = monthlyImportBatchRows.length;
+  const selectedAccountingMonthlyBatch = monthlyImportBatchRows.find((row) => row.key === selectedAccountingMonthlyBatchKey) ?? null;
   const monthlyImportCostTotal = monthlyImportRows.reduce((sum, row) => sum + Number(row.totalImportCost ?? 0), 0);
   const monthlyImportUnits = monthlyImportRows.reduce((sum, row) => sum + Number(row.importedQuantity ?? 0), 0);
   const monthlyProjectedUtilityCop = monthlyImportCostTotal * (accountingUtilityMarginValue / 100);
@@ -2430,6 +2470,16 @@ export default function App() {
       isCancelled = true;
     };
   }, [activeSection, sessionUser]);
+
+  useEffect(() => {
+    if (!selectedAccountingMonthlyBatchKey) {
+      return;
+    }
+
+    if (!monthlyImportBatchRows.some((row) => row.key === selectedAccountingMonthlyBatchKey)) {
+      setSelectedAccountingMonthlyBatchKey("");
+    }
+  }, [monthlyImportBatchRows, selectedAccountingMonthlyBatchKey]);
 
   useEffect(() => {
     if (sessionUser?.role !== "management" || activeSection !== "catalog") {
@@ -8756,42 +8806,49 @@ export default function App() {
                       <th>Fecha</th>
                       <th>Contenedor</th>
                       <th>Envio</th>
-                      <th>Producto</th>
                       <th>Cantidad</th>
-                      <th>Costo unitario (COP)</th>
                       <th>Costo total (COP)</th>
-                      <th>Venta proyectada (COP)</th>
-                      <th>Utilidad proyectada (COP)</th>
+                      <th>Venta proyectada total (COP)</th>
+                      <th>Utilidad proyectada total (COP)</th>
+                      <th>Accion</th>
                     </tr>
                   </thead>
                   <tbody>
                     {isLoadingAccounting ? (
                       <tr>
-                        <td colSpan={9} className="empty-table-cell">Cargando contabilidad mensual...</td>
+                        <td colSpan={8} className="empty-table-cell">Cargando contabilidad mensual...</td>
                       </tr>
-                    ) : monthlyImportRows.length > 0 ? (
-                      monthlyImportRows.map((row, index) => {
-                        const projectedRevenue = Number(row.totalImportCost ?? 0) * (1 + accountingUtilityMarginValue / 100);
-                        const projectedUtility = projectedRevenue - Number(row.totalImportCost ?? 0);
-                        const rowKey = row._id ?? `${row.productId}-${row.importDate}-${index}`;
+                    ) : monthlyImportBatchRows.length > 0 ? (
+                      monthlyImportBatchRows.map((row) => {
 
                         return (
-                          <tr key={rowKey}>
+                          <tr key={row.key}>
                             <td>{String(row.importDate).slice(0, 10)}</td>
-                            <td>{row.containerReference ? `${formatContainerSize(row.containerSize ?? "20ft")} · ${row.containerReference}` : formatContainerSize(row.containerSize ?? "20ft")}</td>
+                            <td>{row.containerReference ? `${formatContainerSize(row.containerSize)} · ${row.containerReference}` : formatContainerSize(row.containerSize)}</td>
                             <td>{row.shipmentReference || "-"}</td>
-                            <td>{`${row.productName} (${row.productSku})`}</td>
-                            <td>{row.importedQuantity}</td>
-                            <td>{formatCurrency(row.landedUnitCost)}</td>
+                            <td>{row.totalQuantity}</td>
                             <td>{formatCurrency(row.totalImportCost)}</td>
-                            <td>{formatCurrency(projectedRevenue)}</td>
-                            <td>{formatCurrency(projectedUtility)}</td>
+                            <td>{formatCurrency(row.totalProjectedRevenue)}</td>
+                            <td>{formatCurrency(row.totalProjectedUtility)}</td>
+                            <td>
+                              <button
+                                className="table-action-icon"
+                                type="button"
+                                aria-label="Ver detalle de productos importados"
+                                title="Ver listado"
+                                onClick={() => setSelectedAccountingMonthlyBatchKey(row.key)}
+                              >
+                                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                  <path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z" fill="currentColor" />
+                                </svg>
+                              </button>
+                            </td>
                           </tr>
                         );
                       })
                     ) : (
                       <tr>
-                        <td colSpan={9} className="empty-table-cell">No hay importaciones registradas para el mes seleccionado.</td>
+                        <td colSpan={8} className="empty-table-cell">No hay importaciones registradas para el mes seleccionado.</td>
                       </tr>
                     )}
                   </tbody>
@@ -8802,6 +8859,61 @@ export default function App() {
                 {`Unidades importadas en el mes: ${monthlyImportUnits} · Venta proyectada del mes: ${formatCurrency(monthlyProjectedRevenueCop)}`}
               </p>
             </article>
+
+            {selectedAccountingMonthlyBatch ? (
+              <div className="modal-overlay" role="presentation" onClick={() => setSelectedAccountingMonthlyBatchKey("")}>
+                <div className="modal-card inventory-entry-history-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                  <div className="modal-header">
+                    <div>
+                      <p className="section-label">Detalle de importacion</p>
+                      <h2>{selectedAccountingMonthlyBatch.containerReference ? `${formatContainerSize(selectedAccountingMonthlyBatch.containerSize)} · ${selectedAccountingMonthlyBatch.containerReference}` : formatContainerSize(selectedAccountingMonthlyBatch.containerSize)}</h2>
+                      <p>{`${String(selectedAccountingMonthlyBatch.importDate).slice(0, 10)} · ${selectedAccountingMonthlyBatch.shipmentReference || "Sin envio"}`}</p>
+                    </div>
+                    <button className="modal-close-button" type="button" onClick={() => setSelectedAccountingMonthlyBatchKey("")}>Cerrar</button>
+                  </div>
+
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Fecha</th>
+                          <th>Contenedor</th>
+                          <th>Envio</th>
+                          <th>Producto</th>
+                          <th>Cantidad</th>
+                          <th>Costo unitario (COP)</th>
+                          <th>Costo total (COP)</th>
+                          <th>Venta proyectada (COP)</th>
+                          <th>Utilidad proyectada (COP)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedAccountingMonthlyBatch.items.map((item, index) => {
+                          const itemTotalCost = Number(item.totalImportCost ?? 0);
+                          const itemProjectedRevenue = itemTotalCost * (1 + accountingUtilityMarginValue / 100);
+                          const itemProjectedUtility = itemProjectedRevenue - itemTotalCost;
+                          const key = item._id ?? `${item.productId}-${item.importDate}-${index}`;
+
+                          return (
+                            <tr key={key}>
+                              <td>{String(item.importDate).slice(0, 10)}</td>
+                              <td>{item.containerReference ? `${formatContainerSize(item.containerSize ?? "20ft")} · ${item.containerReference}` : formatContainerSize(item.containerSize ?? "20ft")}</td>
+                              <td>{item.shipmentReference || "-"}</td>
+                              <td>{`${item.productName} (${item.productSku})`}</td>
+                              <td>{item.importedQuantity}</td>
+                              <td>{formatCurrency(item.landedUnitCost)}</td>
+                              <td>{formatCurrency(itemTotalCost)}</td>
+                              <td>{formatCurrency(itemProjectedRevenue)}</td>
+                              <td>{formatCurrency(itemProjectedUtility)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             <article className="database-card">
               <div className="accounting-block-header">
