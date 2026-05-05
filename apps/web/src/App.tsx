@@ -26,7 +26,8 @@ type ActiveSection =
   | "catalog"
   | "imports"
   | "import-billing"
-  | "accounting";
+  | "accounting"
+  | "logistics-accounting";
 
 type KpiCard = {
   label: string;
@@ -492,6 +493,71 @@ type OperationalExpenseRecord = {
   active?: boolean;
 };
 
+type LogisticsAccountingModalKind = "logistics-fixed-cost" | "logistics-expense" | "logistics-invoice";
+
+type LogisticsInvoiceItem = {
+  productId: string;
+  productName: string;
+  productSku: string;
+  quantity: number;
+  salePriceAwg: number;
+  lineTotalAwg: number;
+  unitCostAwg: number;
+  lineUtilityAwg: number;
+};
+
+type LogisticsInvoiceRecord = {
+  _id?: string;
+  orderId?: string;
+  invoiceDate: string;
+  storeName: string;
+  salesRepName?: string;
+  routeName?: string;
+  notes?: string;
+  items: LogisticsInvoiceItem[];
+  totalRevenueAwg: number;
+  totalCostAwg: number;
+  totalUtilityAwg: number;
+  active?: boolean;
+};
+
+type LogisticsFixedCostRecord = {
+  _id?: string;
+  name: string;
+  category: string;
+  frequency: string;
+  amountAwg: number;
+  startDate: string;
+  notes?: string;
+  active?: boolean;
+};
+
+type LogisticsExpenseRecord = {
+  _id?: string;
+  name: string;
+  category: string;
+  amountAwg: number;
+  expenseDate: string;
+  notes?: string;
+  active?: boolean;
+};
+
+type LogisticsInvoiceFormState = {
+  storeName: string;
+  salesRepName: string;
+  routeName: string;
+  invoiceDate: string;
+  notes: string;
+  items: Array<{
+    productId: string;
+    productName: string;
+    productSku: string;
+    quantity: string;
+    salePriceAwg: string;
+    unitCostAwg: string;
+  }>;
+};
+
 const apiBaseUrl =
   (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:4000/api";
 const cloudinaryCloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME as string | undefined;
@@ -512,6 +578,7 @@ const sidebarItems = [
   { key: "imports", label: "Exportaciones" },
   { key: "import-billing", label: "Facturacion" },
   { key: "accounting", label: "Contabilidad" },
+  { key: "logistics-accounting", label: "Contabilidad Logistica" },
 ] as const;
 
 const managementSidebarSections = [
@@ -521,6 +588,7 @@ const managementSidebarSections = [
     items: [
       { key: "inventory", label: "Inventario" },
       { key: "routes", label: "Rutas" },
+      { key: "logistics-accounting", label: "Contabilidad" },
     ],
   },
   {
@@ -1553,6 +1621,17 @@ function createInitialInventoryAdjustmentForm(): InventoryAdjustmentFormState {
   };
 }
 
+function createInitialLogisticsInvoiceForm(): LogisticsInvoiceFormState {
+  return {
+    storeName: "",
+    salesRepName: "",
+    routeName: "",
+    invoiceDate: new Date().toISOString().slice(0, 10),
+    notes: "",
+    items: [{ productId: "", productName: "", productSku: "", quantity: "", salePriceAwg: "", unitCostAwg: "" }],
+  };
+}
+
 function createInventoryEntryDraftItem(productId = ""): InventoryEntryDraftItem {
   return {
     id: `inventory-entry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -1762,6 +1841,17 @@ export default function App() {
   const [importCostRows, setImportCostRows] = useState<ImportCostRecord[]>([]);
   const [fixedCostRows, setFixedCostRows] = useState<FixedCostRecord[]>([]);
   const [operationalExpenseRows, setOperationalExpenseRows] = useState<OperationalExpenseRecord[]>([]);
+  // Logistics accounting state
+  const [logisticsInvoices, setLogisticsInvoices] = useState<LogisticsInvoiceRecord[]>([]);
+  const [logisticsFixedCosts, setLogisticsFixedCosts] = useState<LogisticsFixedCostRecord[]>([]);
+  const [logisticsExpenses, setLogisticsExpenses] = useState<LogisticsExpenseRecord[]>([]);
+  const [isLoadingLogisticsAccounting, setIsLoadingLogisticsAccounting] = useState(false);
+  const [logisticsAccountingError, setLogisticsAccountingError] = useState("");
+  const [logisticsAccountingMonthFilter, setLogisticsAccountingMonthFilter] = useState(() => new Date().toISOString().slice(0, 7));
+  const [logisticsAccountingModalKind, setLogisticsAccountingModalKind] = useState<LogisticsAccountingModalKind | null>(null);
+  const [logisticsAccountingStatuses, setLogisticsAccountingStatuses] = useState<Record<string, CreationStatus>>({});
+  const [selectedLogisticsInvoiceId, setSelectedLogisticsInvoiceId] = useState<string | null>(null);
+  const [logisticsInvoiceForm, setLogisticsInvoiceForm] = useState<LogisticsInvoiceFormState>(() => createInitialLogisticsInvoiceForm());
   const [containerImportForm, setContainerImportForm] = useState<ContainerImportFormState>(() =>
     createInitialContainerImportForm([]),
   );
@@ -2261,6 +2351,27 @@ export default function App() {
   const monthlyAdditionalCostsTotal = monthlyFixedAdditionalCosts + monthlyOperationalAdditionalCosts;
   const monthlyProjectedNetUtilityCop = monthlyProjectedUtilityCop - monthlyAdditionalCostsTotal;
 
+  // Logistics accounting computed values (AWG)
+  const normalizedLogisticsMonthFilter = logisticsAccountingMonthFilter.trim();
+  const logisticsMonthlyInvoices = logisticsInvoices.filter((inv) =>
+    normalizedLogisticsMonthFilter.length === 0
+      ? true
+      : String(inv.invoiceDate).slice(0, 7) === normalizedLogisticsMonthFilter,
+  );
+  const logisticsMonthlyRevenue = logisticsMonthlyInvoices.reduce((sum, inv) => sum + Number(inv.totalRevenueAwg ?? 0), 0);
+  const logisticsMonthlyUtility = logisticsMonthlyInvoices.reduce((sum, inv) => sum + Number(inv.totalUtilityAwg ?? 0), 0);
+  const logisticsMonthlyFixedCosts = logisticsFixedCosts.reduce((sum, fc) => {
+    const startMonth = String(fc.startDate ?? "").slice(0, 7);
+    if (fc.frequency === "one-time") return sum + (startMonth === normalizedLogisticsMonthFilter ? Number(fc.amountAwg ?? 0) : 0);
+    return sum + normalizeMonthlyAmount(Number(fc.amountAwg ?? 0), fc.frequency);
+  }, 0);
+  const logisticsMonthlyExpenses = logisticsExpenses
+    .filter((ex) => String(ex.expenseDate).slice(0, 7) === normalizedLogisticsMonthFilter)
+    .reduce((sum, ex) => sum + Number(ex.amountAwg ?? 0), 0);
+  const logisticsMonthlyAdditionalCosts = logisticsMonthlyFixedCosts + logisticsMonthlyExpenses;
+  const logisticsMonthlyNetUtility = logisticsMonthlyUtility - logisticsMonthlyAdditionalCosts;
+  const selectedLogisticsInvoice = logisticsInvoices.find((inv) => inv._id === selectedLogisticsInvoiceId) ?? null;
+
   function getBillingRowKey(row: ImportCostRecord, index: number) {
     return `${selectedBillingReference}-${row._id ?? `${row.productId}-${row.importDate}-${index}`}`;
   }
@@ -2449,6 +2560,16 @@ export default function App() {
     }
 
     void refreshAccountingData();
+  }, [activeSection, sessionUser]);
+
+  useEffect(() => {
+    const canAccessLogisticsAccounting = sessionUser?.role === "management" || sessionUser?.role === "warehouse-aruba";
+
+    if (!canAccessLogisticsAccounting || activeSection !== "logistics-accounting") {
+      return;
+    }
+
+    void refreshLogisticsAccountingData();
   }, [activeSection, sessionUser]);
 
   useEffect(() => {
@@ -3113,6 +3234,34 @@ export default function App() {
       setAccountingError("No fue posible conectar con el backend.");
     } finally {
       setIsLoadingAccounting(false);
+    }
+  }
+
+  async function refreshLogisticsAccountingData() {
+    try {
+      setIsLoadingLogisticsAccounting(true);
+      setLogisticsAccountingError("");
+      const [invoicesRes, fixedRes, expensesRes] = await Promise.all([
+        fetch(`${apiBaseUrl}/management/logistics-accounting/invoices`),
+        fetch(`${apiBaseUrl}/management/logistics-accounting/fixed-costs`),
+        fetch(`${apiBaseUrl}/management/logistics-accounting/expenses`),
+      ]);
+      const invoicesData = (await invoicesRes.json()) as LogisticsInvoiceRecord[] | { message?: string };
+      const fixedData = (await fixedRes.json()) as LogisticsFixedCostRecord[] | { message?: string };
+      const expensesData = (await expensesRes.json()) as LogisticsExpenseRecord[] | { message?: string };
+
+      if (!invoicesRes.ok || !Array.isArray(invoicesData) || !fixedRes.ok || !Array.isArray(fixedData) || !expensesRes.ok || !Array.isArray(expensesData)) {
+        setLogisticsAccountingError("No fue posible cargar la informacion contable logistica.");
+        return;
+      }
+
+      setLogisticsInvoices(invoicesData);
+      setLogisticsFixedCosts(fixedData);
+      setLogisticsExpenses(expensesData);
+    } catch {
+      setLogisticsAccountingError("No fue posible conectar con el backend.");
+    } finally {
+      setIsLoadingLogisticsAccounting(false);
     }
   }
 
@@ -5803,6 +5952,143 @@ export default function App() {
     }
   }
 
+  async function handleCreateLogisticsInvoice(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    try {
+      const items = logisticsInvoiceForm.items.map((item) => ({
+        productId: item.productId || item.productName,
+        productName: item.productName,
+        productSku: item.productSku,
+        quantity: Number(item.quantity ?? 0),
+        salePriceAwg: Number(item.salePriceAwg ?? 0),
+        unitCostAwg: Number(item.unitCostAwg ?? 0),
+      }));
+
+      const response = await fetch(`${apiBaseUrl}/management/logistics-accounting/invoices`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storeName: logisticsInvoiceForm.storeName,
+          salesRepName: logisticsInvoiceForm.salesRepName,
+          routeName: logisticsInvoiceForm.routeName,
+          invoiceDate: logisticsInvoiceForm.invoiceDate,
+          notes: logisticsInvoiceForm.notes,
+          items,
+        }),
+      });
+      const data = (await response.json()) as { message?: string };
+
+      if (!response.ok) {
+        setLogisticsAccountingStatuses((current) => ({
+          ...current,
+          invoice: { tone: "error", message: data.message ?? "No fue posible registrar la factura." },
+        }));
+        return;
+      }
+
+      setLogisticsAccountingModalKind(null);
+      setLogisticsInvoiceForm(createInitialLogisticsInvoiceForm());
+      await refreshLogisticsAccountingData();
+    } catch {
+      setLogisticsAccountingStatuses((current) => ({
+        ...current,
+        invoice: { tone: "error", message: "No fue posible conectar con el backend." },
+      }));
+    }
+  }
+
+  async function handleCreateLogisticsFixedCost(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    try {
+      const formData = new FormData(event.currentTarget);
+      const response = await fetch(`${apiBaseUrl}/management/logistics-accounting/fixed-costs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: String(formData.get("name") ?? ""),
+          category: String(formData.get("category") ?? ""),
+          frequency: String(formData.get("frequency") ?? ""),
+          amountAwg: Number(formData.get("amountAwg") ?? 0),
+          startDate: String(formData.get("startDate") ?? ""),
+          notes: String(formData.get("notes") ?? ""),
+        }),
+      });
+      const data = (await response.json()) as { message?: string };
+
+      if (!response.ok) {
+        setLogisticsAccountingStatuses((current) => ({
+          ...current,
+          fixedCosts: { tone: "error", message: data.message ?? "No fue posible guardar el costo fijo." },
+        }));
+        return;
+      }
+
+      setLogisticsAccountingModalKind(null);
+      await refreshLogisticsAccountingData();
+    } catch {
+      setLogisticsAccountingStatuses((current) => ({
+        ...current,
+        fixedCosts: { tone: "error", message: "No fue posible conectar con el backend." },
+      }));
+    }
+  }
+
+  async function handleCreateLogisticsExpense(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    try {
+      const formData = new FormData(event.currentTarget);
+      const response = await fetch(`${apiBaseUrl}/management/logistics-accounting/expenses`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: String(formData.get("name") ?? ""),
+          category: String(formData.get("category") ?? ""),
+          amountAwg: Number(formData.get("amountAwg") ?? 0),
+          expenseDate: String(formData.get("expenseDate") ?? ""),
+          notes: String(formData.get("notes") ?? ""),
+        }),
+      });
+      const data = (await response.json()) as { message?: string };
+
+      if (!response.ok) {
+        setLogisticsAccountingStatuses((current) => ({
+          ...current,
+          expenses: { tone: "error", message: data.message ?? "No fue posible guardar el gasto." },
+        }));
+        return;
+      }
+
+      setLogisticsAccountingModalKind(null);
+      await refreshLogisticsAccountingData();
+    } catch {
+      setLogisticsAccountingStatuses((current) => ({
+        ...current,
+        expenses: { tone: "error", message: "No fue posible conectar con el backend." },
+      }));
+    }
+  }
+
+  async function handleDeleteLogisticsInvoice(id: string) {
+    if (!id) return;
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/management/logistics-accounting/invoices/${id}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      await refreshLogisticsAccountingData();
+    } catch {
+      // silent fail
+    }
+  }
+
   async function handleRouteSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -7243,6 +7529,8 @@ export default function App() {
                   ? "Facturacion"
               : activeSection === "accounting"
                 ? "Contabilidad"
+              : activeSection === "logistics-accounting"
+                ? "Contabilidad Logistica"
               : activeSection === "warehouses"
                 ? "Bodegas"
               : isCreationSection
@@ -7268,6 +7556,8 @@ export default function App() {
                   ? "Selecciona una exportacion guardada, aplica un margen global y calcula precios de venta en USD usando TRM del dia."
               : activeSection === "accounting"
                 ? "Registra costos fijos y monitorea gastos operacionales para entender la carga mensual del negocio."
+              : activeSection === "logistics-accounting"
+                ? "Visualiza las utilidades de pedidos despachados a clientes, en florines (AWG), con costos adicionales de la operacion logistica."
               : activeSection === "warehouses"
                 ? "Crea bodegas y organiza cada una por estantes, pisos y racks para ubicar productos fisicamente."
               : isCreationSection
@@ -9215,6 +9505,538 @@ export default function App() {
                 </table>
               </div>
             </article>
+          </section>
+        ) : activeSection === "logistics-accounting" ? (
+          <section className="accounting-layout">
+            {logisticsAccountingError ? <p className="form-feedback error">{logisticsAccountingError}</p> : null}
+
+            <article className="database-card">
+              <div className="accounting-block-header">
+                <div>
+                  <p className="section-label">Logistica</p>
+                  <h2>Contabilidad mensual (AWG)</h2>
+                  <p>Facturas despachadas a clientes segun catalogo, con utilidad en florines.</p>
+                </div>
+                <button className="primary-action-button" type="button" onClick={() => {
+                  setLogisticsInvoiceForm(createInitialLogisticsInvoiceForm());
+                  setLogisticsAccountingModalKind("logistics-invoice");
+                }}>Registrar factura</button>
+              </div>
+
+              <div className="filter-grid">
+                <label className="field">
+                  <span>Mes</span>
+                  <input
+                    type="month"
+                    value={logisticsAccountingMonthFilter}
+                    onChange={(event) => setLogisticsAccountingMonthFilter(event.target.value)}
+                  />
+                </label>
+                <label className="field">
+                  <span>Utilidad neta del mes (AWG)</span>
+                  <input type="text" readOnly value={formatAwgCurrency(logisticsMonthlyNetUtility)} />
+                </label>
+              </div>
+
+              <div className="accounting-kpi-grid">
+                <article className="kpi-card tone-cyan">
+                  <p>Facturas del mes</p>
+                  <strong>{logisticsMonthlyInvoices.length}</strong>
+                </article>
+                <article className="kpi-card tone-amber">
+                  <p>Ingresos del mes (AWG)</p>
+                  <strong>{formatAwgCurrency(logisticsMonthlyRevenue)}</strong>
+                </article>
+                <article className="kpi-card tone-slate">
+                  <p>Utilidad bruta del mes (AWG)</p>
+                  <strong>{formatAwgCurrency(logisticsMonthlyUtility)}</strong>
+                </article>
+                <article className="kpi-card tone-cyan">
+                  <p>Costos adicionales del mes (AWG)</p>
+                  <strong>{formatAwgCurrency(logisticsMonthlyAdditionalCosts)}</strong>
+                </article>
+              </div>
+
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Cliente</th>
+                      <th>Vendedor</th>
+                      <th>Ruta</th>
+                      <th>Ingresos (AWG)</th>
+                      <th>Utilidad (AWG)</th>
+                      <th>Accion</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isLoadingLogisticsAccounting ? (
+                      <tr>
+                        <td colSpan={7} className="empty-table-cell">Cargando facturas...</td>
+                      </tr>
+                    ) : logisticsMonthlyInvoices.length > 0 ? (
+                      logisticsMonthlyInvoices.map((inv) => (
+                        <tr key={inv._id ?? `${inv.storeName}-${inv.invoiceDate}`}>
+                          <td>{String(inv.invoiceDate).slice(0, 10)}</td>
+                          <td>{inv.storeName}</td>
+                          <td>{inv.salesRepName || "-"}</td>
+                          <td>{inv.routeName || "-"}</td>
+                          <td>{formatAwgCurrency(inv.totalRevenueAwg)}</td>
+                          <td>{formatAwgCurrency(inv.totalUtilityAwg)}</td>
+                          <td>
+                            <button
+                              className="table-action-icon"
+                              type="button"
+                              aria-label="Ver detalle de factura"
+                              title="Ver detalle"
+                              onClick={() => setSelectedLogisticsInvoiceId(inv._id ?? null)}
+                            >
+                              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z" fill="currentColor" />
+                              </svg>
+                            </button>
+                            <button
+                              className="table-action-icon"
+                              type="button"
+                              aria-label="Eliminar factura"
+                              title="Eliminar"
+                              onClick={() => void handleDeleteLogisticsInvoice(inv._id ?? "")}
+                            >
+                              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor" />
+                              </svg>
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={7} className="empty-table-cell">No hay facturas registradas para el mes seleccionado.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            {selectedLogisticsInvoice ? (
+              <div className="modal-overlay" role="presentation" onClick={() => setSelectedLogisticsInvoiceId(null)}>
+                <div className="modal-card inventory-entry-history-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                  <div className="modal-header">
+                    <div>
+                      <p className="section-label">Detalle de factura logistica</p>
+                      <h2>{selectedLogisticsInvoice.storeName}</h2>
+                      <p>{String(selectedLogisticsInvoice.invoiceDate).slice(0, 10)}{selectedLogisticsInvoice.routeName ? ` · ${selectedLogisticsInvoice.routeName}` : ""}</p>
+                    </div>
+                    <button className="modal-close-button" type="button" onClick={() => setSelectedLogisticsInvoiceId(null)}>Cerrar</button>
+                  </div>
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>SKU</th>
+                          <th>Producto</th>
+                          <th>Cantidad</th>
+                          <th>Precio unitario (AWG)</th>
+                          <th>Total linea (AWG)</th>
+                          <th>Utilidad linea (AWG)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedLogisticsInvoice.items.map((item, idx) => (
+                          <tr key={`${selectedLogisticsInvoice._id}-${item.productId}-${idx}`}>
+                            <td>{item.productSku || "-"}</td>
+                            <td>{item.productName}</td>
+                            <td>{item.quantity}</td>
+                            <td>{formatAwgCurrency(item.salePriceAwg)}</td>
+                            <td>{formatAwgCurrency(item.lineTotalAwg)}</td>
+                            <td>{formatAwgCurrency(item.lineUtilityAwg)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="management-table-meta">
+                    {`Total ingresos: ${formatAwgCurrency(selectedLogisticsInvoice.totalRevenueAwg)} · Utilidad bruta: ${formatAwgCurrency(selectedLogisticsInvoice.totalUtilityAwg)}`}
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
+            <article className="database-card">
+              <div className="accounting-block-header">
+                <div>
+                  <p className="section-label">Costos fijos</p>
+                  <h2>Estructura fija de logistica</h2>
+                  <p>Registra nomina, arriendo y otros costos base de la operacion logistica.</p>
+                </div>
+                <button className="primary-action-button" type="button" onClick={() => setLogisticsAccountingModalKind("logistics-fixed-cost")}>Crear costo fijo</button>
+              </div>
+
+              {logisticsAccountingStatuses["fixedCosts"] ? <p className={`form-feedback ${logisticsAccountingStatuses["fixedCosts"].tone}`}>{logisticsAccountingStatuses["fixedCosts"].message}</p> : null}
+
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Concepto</th>
+                      <th>Categoria</th>
+                      <th>Frecuencia</th>
+                      <th>Monto (AWG)</th>
+                      <th>Base mensual (AWG)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isLoadingLogisticsAccounting ? (
+                      <tr><td colSpan={5} className="empty-table-cell">Cargando costos fijos...</td></tr>
+                    ) : logisticsFixedCosts.length > 0 ? (
+                      logisticsFixedCosts.map((row) => (
+                        <tr key={row._id ?? `${row.name}-${row.startDate}`}>
+                          <td>{row.name}</td>
+                          <td>{row.category}</td>
+                          <td>{row.frequency}</td>
+                          <td>{formatAwgCurrency(row.amountAwg)}</td>
+                          <td>{formatAwgCurrency(normalizeMonthlyAmount(row.amountAwg, row.frequency))}</td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr><td colSpan={5} className="empty-table-cell">Aun no hay costos fijos registrados.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            <article className="database-card">
+              <div className="accounting-block-header">
+                <div>
+                  <p className="section-label">Gastos operacionales</p>
+                  <h2>Variables del dia a dia</h2>
+                  <p>Captura combustible, imprevistos y otros gastos variables de la operacion logistica.</p>
+                </div>
+                <button className="primary-action-button" type="button" onClick={() => setLogisticsAccountingModalKind("logistics-expense")}>Crear gasto</button>
+              </div>
+
+              {logisticsAccountingStatuses["expenses"] ? <p className={`form-feedback ${logisticsAccountingStatuses["expenses"].tone}`}>{logisticsAccountingStatuses["expenses"].message}</p> : null}
+
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Concepto</th>
+                      <th>Categoria</th>
+                      <th>Monto (AWG)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isLoadingLogisticsAccounting ? (
+                      <tr><td colSpan={4} className="empty-table-cell">Cargando gastos...</td></tr>
+                    ) : logisticsExpenses.length > 0 ? (
+                      logisticsExpenses.map((row) => (
+                        <tr key={row._id ?? `${row.name}-${row.expenseDate}`}>
+                          <td>{String(row.expenseDate).slice(0, 10)}</td>
+                          <td>{row.name}</td>
+                          <td>{row.category}</td>
+                          <td>{formatAwgCurrency(row.amountAwg)}</td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr><td colSpan={4} className="empty-table-cell">Aun no hay gastos registrados.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            {logisticsAccountingModalKind === "logistics-invoice" ? (
+              <div className="modal-overlay" role="presentation" onClick={() => setLogisticsAccountingModalKind(null)}>
+                <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                  <div className="modal-header">
+                    <div>
+                      <p className="section-label">Nueva factura logistica</p>
+                      <h2>Registrar pedido despachado</h2>
+                      <p>Ingresa el cliente, productos y precio de venta en AWG.</p>
+                    </div>
+                    <button className="modal-close-button" type="button" onClick={() => setLogisticsAccountingModalKind(null)}>Cerrar</button>
+                  </div>
+                  <form className="creation-form" onSubmit={(event) => void handleCreateLogisticsInvoice(event)}>
+                    <label className="field field-full">
+                      <span>Cliente (tienda)</span>
+                      <input
+                        type="text"
+                        value={logisticsInvoiceForm.storeName}
+                        placeholder="Nombre del cliente"
+                        onChange={(event) => setLogisticsInvoiceForm((f) => ({ ...f, storeName: event.target.value }))}
+                        required
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Vendedor</span>
+                      <input
+                        type="text"
+                        value={logisticsInvoiceForm.salesRepName}
+                        placeholder="Nombre del vendedor"
+                        onChange={(event) => setLogisticsInvoiceForm((f) => ({ ...f, salesRepName: event.target.value }))}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Ruta</span>
+                      <input
+                        type="text"
+                        value={logisticsInvoiceForm.routeName}
+                        placeholder="Nombre de la ruta"
+                        onChange={(event) => setLogisticsInvoiceForm((f) => ({ ...f, routeName: event.target.value }))}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Fecha</span>
+                      <input
+                        type="date"
+                        value={logisticsInvoiceForm.invoiceDate}
+                        onChange={(event) => setLogisticsInvoiceForm((f) => ({ ...f, invoiceDate: event.target.value }))}
+                        required
+                      />
+                    </label>
+                    <div className="form-span-full">
+                      <div className="accounting-block-header" style={{ marginBottom: "0.75rem" }}>
+                        <p className="section-label">Productos</p>
+                        <button
+                          className="secondary-action-button"
+                          type="button"
+                          onClick={() => setLogisticsInvoiceForm((f) => ({
+                            ...f,
+                            items: [...f.items, { productId: "", productName: "", productSku: "", quantity: "", salePriceAwg: "", unitCostAwg: "" }],
+                          }))}
+                        >
+                          + Agregar producto
+                        </button>
+                      </div>
+                      {logisticsInvoiceForm.items.map((item, idx) => (
+                        <div key={idx} className="filter-grid" style={{ alignItems: "flex-end", marginBottom: "0.5rem" }}>
+                          <label className="field">
+                            <span>Producto</span>
+                            <input
+                              type="text"
+                              value={item.productName}
+                              placeholder="Nombre del producto"
+                              onChange={(event) => {
+                                const val = event.target.value;
+                                setLogisticsInvoiceForm((f) => {
+                                  const items = [...f.items];
+                                  items[idx] = { ...items[idx], productName: val };
+                                  return { ...f, items };
+                                });
+                              }}
+                              required
+                            />
+                          </label>
+                          <label className="field">
+                            <span>SKU</span>
+                            <input
+                              type="text"
+                              value={item.productSku}
+                              placeholder="SKU"
+                              onChange={(event) => {
+                                const val = event.target.value;
+                                setLogisticsInvoiceForm((f) => {
+                                  const items = [...f.items];
+                                  items[idx] = { ...items[idx], productSku: val };
+                                  return { ...f, items };
+                                });
+                              }}
+                            />
+                          </label>
+                          <label className="field">
+                            <span>Cantidad</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={item.quantity}
+                              placeholder="0"
+                              onChange={(event) => {
+                                const val = event.target.value;
+                                setLogisticsInvoiceForm((f) => {
+                                  const items = [...f.items];
+                                  items[idx] = { ...items[idx], quantity: val };
+                                  return { ...f, items };
+                                });
+                              }}
+                              required
+                            />
+                          </label>
+                          <label className="field">
+                            <span>Precio venta AWG</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={item.salePriceAwg}
+                              placeholder="0.00"
+                              onChange={(event) => {
+                                const val = event.target.value;
+                                setLogisticsInvoiceForm((f) => {
+                                  const items = [...f.items];
+                                  items[idx] = { ...items[idx], salePriceAwg: val };
+                                  return { ...f, items };
+                                });
+                              }}
+                              required
+                            />
+                          </label>
+                          <label className="field">
+                            <span>Costo unitario AWG</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={item.unitCostAwg}
+                              placeholder="0.00"
+                              onChange={(event) => {
+                                const val = event.target.value;
+                                setLogisticsInvoiceForm((f) => {
+                                  const items = [...f.items];
+                                  items[idx] = { ...items[idx], unitCostAwg: val };
+                                  return { ...f, items };
+                                });
+                              }}
+                            />
+                          </label>
+                          {logisticsInvoiceForm.items.length > 1 ? (
+                            <button
+                              className="table-action-icon"
+                              type="button"
+                              onClick={() => setLogisticsInvoiceForm((f) => ({
+                                ...f,
+                                items: f.items.filter((_, i) => i !== idx),
+                              }))}
+                            >
+                              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor" />
+                              </svg>
+                            </button>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                    <label className="field field-full">
+                      <span>Notas</span>
+                      <input
+                        type="text"
+                        value={logisticsInvoiceForm.notes}
+                        placeholder="Notas opcionales"
+                        onChange={(event) => setLogisticsInvoiceForm((f) => ({ ...f, notes: event.target.value }))}
+                      />
+                    </label>
+                    {logisticsAccountingStatuses["invoice"] ? (
+                      <p className={`form-feedback ${logisticsAccountingStatuses["invoice"].tone} form-span-full`}>{logisticsAccountingStatuses["invoice"].message}</p>
+                    ) : null}
+                    <div className="form-actions form-span-full">
+                      <button className="primary-action-button" type="submit">Registrar factura</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            ) : logisticsAccountingModalKind === "logistics-fixed-cost" ? (
+              <div className="modal-overlay" role="presentation" onClick={() => setLogisticsAccountingModalKind(null)}>
+                <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                  <div className="modal-header">
+                    <div>
+                      <p className="section-label">Costos fijos</p>
+                      <h2>Nuevo costo fijo logistico</h2>
+                    </div>
+                    <button className="modal-close-button" type="button" onClick={() => setLogisticsAccountingModalKind(null)}>Cerrar</button>
+                  </div>
+                  <form className="creation-form" onSubmit={(event) => void handleCreateLogisticsFixedCost(event)}>
+                    <label className="field field-full">
+                      <span>Concepto</span>
+                      <input type="text" name="name" placeholder="Nomina, arriendo..." required />
+                    </label>
+                    <label className="field">
+                      <span>Categoria</span>
+                      <select name="category" required>
+                        {fixedCostCategoryOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Frecuencia</span>
+                      <select name="frequency" required>
+                        {fixedCostFrequencyOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Monto (AWG)</span>
+                      <input type="number" name="amountAwg" min="0" step="0.01" placeholder="0.00" required />
+                    </label>
+                    <label className="field">
+                      <span>Fecha inicio</span>
+                      <input type="date" name="startDate" required />
+                    </label>
+                    <label className="field field-full">
+                      <span>Notas</span>
+                      <input type="text" name="notes" placeholder="Notas opcionales" />
+                    </label>
+                    {logisticsAccountingStatuses["fixedCosts"] ? (
+                      <p className={`form-feedback ${logisticsAccountingStatuses["fixedCosts"].tone} form-span-full`}>{logisticsAccountingStatuses["fixedCosts"].message}</p>
+                    ) : null}
+                    <div className="form-actions form-span-full">
+                      <button className="primary-action-button" type="submit">Crear costo fijo</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            ) : logisticsAccountingModalKind === "logistics-expense" ? (
+              <div className="modal-overlay" role="presentation" onClick={() => setLogisticsAccountingModalKind(null)}>
+                <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                  <div className="modal-header">
+                    <div>
+                      <p className="section-label">Gastos operacionales</p>
+                      <h2>Nuevo gasto logistico</h2>
+                    </div>
+                    <button className="modal-close-button" type="button" onClick={() => setLogisticsAccountingModalKind(null)}>Cerrar</button>
+                  </div>
+                  <form className="creation-form" onSubmit={(event) => void handleCreateLogisticsExpense(event)}>
+                    <label className="field field-full">
+                      <span>Concepto</span>
+                      <input type="text" name="name" placeholder="Combustible, imprevisto..." required />
+                    </label>
+                    <label className="field">
+                      <span>Categoria</span>
+                      <select name="category" required>
+                        {[
+                          { value: "fuel", label: "Combustible" },
+                          { value: "maintenance", label: "Mantenimiento" },
+                          { value: "unforeseen", label: "Imprevisto" },
+                          { value: "delivery", label: "Despacho" },
+                          { value: "tolls", label: "Peajes" },
+                          { value: "other", label: "Otro" },
+                        ].map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Monto (AWG)</span>
+                      <input type="number" name="amountAwg" min="0" step="0.01" placeholder="0.00" required />
+                    </label>
+                    <label className="field">
+                      <span>Fecha</span>
+                      <input type="date" name="expenseDate" required />
+                    </label>
+                    <label className="field field-full">
+                      <span>Notas</span>
+                      <input type="text" name="notes" placeholder="Notas opcionales" />
+                    </label>
+                    {logisticsAccountingStatuses["expenses"] ? (
+                      <p className={`form-feedback ${logisticsAccountingStatuses["expenses"].tone} form-span-full`}>{logisticsAccountingStatuses["expenses"].message}</p>
+                    ) : null}
+                    <div className="form-actions form-span-full">
+                      <button className="primary-action-button" type="submit">Crear gasto</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            ) : null}
           </section>
         ) : activeSection === "routes" ? (
           <section className="routes-layout">
