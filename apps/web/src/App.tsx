@@ -48,6 +48,13 @@ type DashboardClientBillingRow = {
   totalRevenue: number;
 };
 
+type DashboardExecutiveCard = {
+  label: string;
+  valueLabel: string;
+  tone: "cyan" | "amber" | "slate";
+  targetSection?: ActiveSection;
+};
+
 type CreationStatus = {
   tone: "success" | "error";
   message: string;
@@ -2384,6 +2391,7 @@ export default function App() {
       ? true
       : String(row.importDate).slice(0, 7) === normalizedAccountingMonthFilter
   ));
+  const dashboardCurrentMonthImportRows = importCostRows.filter((row) => String(row.importDate).slice(0, 7) === currentMonthKey);
   const monthlyImportBatchRows = Array.from(
     monthlyImportRows.reduce((map, row) => {
       const key = row.containerReference
@@ -2473,6 +2481,14 @@ export default function App() {
   const logisticsMonthlyAdditionalCosts = logisticsMonthlyFixedCosts + logisticsMonthlyExpenses;
   const logisticsMonthlyNetUtility = logisticsMonthlyUtility - logisticsMonthlyAdditionalCosts;
   const selectedLogisticsInvoice = logisticsInvoices.find((inv) => inv._id === selectedLogisticsInvoiceId) ?? null;
+  const dashboardCurrentMonthArubaRows = logisticsBilledOrders.filter((row) => String(row.invoiceDate).slice(0, 7) === currentMonthKey);
+  const dashboardArubaMonthlySalesAwg = dashboardCurrentMonthArubaRows.reduce((sum, row) => sum + Number(row.totalRevenueAwg ?? 0), 0);
+  const dashboardArubaMonthlyUtilityAwg = dashboardCurrentMonthArubaRows.reduce((sum, row) => sum + Number(row.totalUtilityAwg ?? 0), 0);
+  const dashboardColombiaMonthlySalesCop = dashboardCurrentMonthImportRows.reduce((sum, row) => {
+    const lineTotal = Number(row.invoicedLineTotalCop ?? 0);
+    return sum + (lineTotal > 0 ? lineTotal : Number(row.totalImportCost ?? 0));
+  }, 0);
+  const dashboardColombiaMonthlyUtilityCop = dashboardCurrentMonthImportRows.reduce((sum, row) => sum + Number(row.invoicedLineUtilityCop ?? 0), 0);
   const dashboardDeliveredOrders = warehouseOrders.filter((order) => order.status === "delivered");
   const dashboardSoldProducts = Array.from(
     dashboardDeliveredOrders.reduce((map, order) => {
@@ -2522,6 +2538,38 @@ export default function App() {
   const dashboardLowestBillingClients = [...dashboardClientBilling]
     .sort((left, right) => left.totalRevenue - right.totalRevenue || left.clientName.localeCompare(right.clientName))
     .slice(0, 5);
+  const dashboardExecutiveCards: DashboardExecutiveCard[] = [
+    ...kpis.map((card) => ({
+      label: card.label,
+      valueLabel: String(card.value),
+      tone: card.tone,
+      targetSection: dashboardKpiSectionMap[card.label],
+    })),
+    {
+      label: "Ventas del mes Aruba (AWG)",
+      valueLabel: formatAwgCurrency(dashboardArubaMonthlySalesAwg),
+      tone: "amber",
+      targetSection: "logistics-accounting",
+    },
+    {
+      label: "Utilidad del mes Aruba (AWG)",
+      valueLabel: formatAwgCurrency(dashboardArubaMonthlyUtilityAwg),
+      tone: "slate",
+      targetSection: "logistics-accounting",
+    },
+    {
+      label: "Ventas del mes Colombia (COP)",
+      valueLabel: formatCurrency(dashboardColombiaMonthlySalesCop),
+      tone: "amber",
+      targetSection: "accounting",
+    },
+    {
+      label: "Utilidad del mes Colombia (COP)",
+      valueLabel: formatCurrency(dashboardColombiaMonthlyUtilityCop),
+      tone: "slate",
+      targetSection: "accounting",
+    },
+  ];
 
   function getBillingRowKey(row: ImportCostRecord, index: number) {
     return `${selectedBillingReference}-${row._id ?? `${row.productId}-${row.importDate}-${index}`}`;
@@ -2720,7 +2768,7 @@ export default function App() {
   useEffect(() => {
     const canAccessAccounting = sessionUser?.role === "management" || sessionUser?.role === "colombia-ops";
 
-    if (!canAccessAccounting || (activeSection !== "accounting" && activeSection !== "imports" && activeSection !== "import-billing")) {
+    if (!canAccessAccounting || (activeSection !== "accounting" && activeSection !== "imports" && activeSection !== "import-billing" && activeSection !== "dashboard")) {
       return;
     }
 
@@ -7819,8 +7867,8 @@ export default function App() {
                 ? kpiPlaceholders.map((placeholder) => (
                     <article key={placeholder} className="kpi-card is-loading" />
                   ))
-                : kpis.map((card) => {
-                    const targetSection = dashboardKpiSectionMap[card.label];
+                : dashboardExecutiveCards.map((card) => {
+                    const targetSection = card.targetSection;
 
                     return (
                       <button
@@ -7831,7 +7879,7 @@ export default function App() {
                         disabled={!targetSection}
                       >
                         <p>{card.label}</p>
-                        <strong>{card.value}</strong>
+                        <strong>{card.valueLabel}</strong>
                       </button>
                     );
                   })}
