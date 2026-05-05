@@ -35,6 +35,19 @@ type KpiCard = {
   tone: "cyan" | "amber" | "slate";
 };
 
+type DashboardProductSalesRow = {
+  productId: string;
+  productName: string;
+  productSku: string;
+  totalUnits: number;
+};
+
+type DashboardClientBillingRow = {
+  clientName: string;
+  invoiceCount: number;
+  totalRevenue: number;
+};
+
 type CreationStatus = {
   tone: "success" | "error";
   message: string;
@@ -575,6 +588,15 @@ const apiBaseUrl =
 const cloudinaryCloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME as string | undefined;
 const cloudinaryUploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET as string | undefined;
 const sessionStorageKey = "spste-session-user";
+const dashboardKpiSectionMap: Record<string, ActiveSection> = {
+  "Usuarios activos": "users",
+  Clientes: "clients",
+  Categorias: "categories",
+  Productos: "products",
+  Proveedores: "suppliers",
+  Bodegas: "warehouses",
+  "Rutas semanales": "routes",
+};
 
 function readPersistedSessionUser(): SessionUser | null {
   if (typeof window === "undefined") {
@@ -2451,6 +2473,55 @@ export default function App() {
   const logisticsMonthlyAdditionalCosts = logisticsMonthlyFixedCosts + logisticsMonthlyExpenses;
   const logisticsMonthlyNetUtility = logisticsMonthlyUtility - logisticsMonthlyAdditionalCosts;
   const selectedLogisticsInvoice = logisticsInvoices.find((inv) => inv._id === selectedLogisticsInvoiceId) ?? null;
+  const dashboardDeliveredOrders = warehouseOrders.filter((order) => order.status === "delivered");
+  const dashboardSoldProducts = Array.from(
+    dashboardDeliveredOrders.reduce((map, order) => {
+      order.items.forEach((item) => {
+        const current = map.get(item.productId) ?? {
+          productId: item.productId,
+          productName: item.productName,
+          productSku: item.productSku,
+          totalUnits: 0,
+        };
+
+        current.totalUnits += Number(item.quantity ?? 0);
+        map.set(item.productId, current);
+      });
+
+      return map;
+    }, new Map<string, DashboardProductSalesRow>()),
+  )
+    .map(([, value]) => value)
+    .filter((row) => row.totalUnits > 0)
+    .sort((left, right) => right.totalUnits - left.totalUnits || left.productName.localeCompare(right.productName));
+  const dashboardTopSellingProducts = dashboardSoldProducts.slice(0, 5);
+  const dashboardLowestSellingProducts = [...dashboardSoldProducts]
+    .sort((left, right) => left.totalUnits - right.totalUnits || left.productName.localeCompare(right.productName))
+    .slice(0, 5);
+  const dashboardExpiringProducts = inventoryRows
+    .filter((row) => row.isExpiringSoon && row.expirationDate)
+    .sort((left, right) => String(left.expirationDate).localeCompare(String(right.expirationDate)))
+    .slice(0, 5);
+  const dashboardClientBilling = Array.from(
+    logisticsBilledOrders.reduce((map, order) => {
+      const current = map.get(order.storeName) ?? {
+        clientName: order.storeName,
+        invoiceCount: 0,
+        totalRevenue: 0,
+      };
+
+      current.invoiceCount += 1;
+      current.totalRevenue += Number(order.totalRevenueAwg ?? 0);
+      map.set(order.storeName, current);
+      return map;
+    }, new Map<string, DashboardClientBillingRow>()),
+  )
+    .map(([, value]) => value)
+    .sort((left, right) => right.totalRevenue - left.totalRevenue || left.clientName.localeCompare(right.clientName));
+  const dashboardTopBillingClients = dashboardClientBilling.slice(0, 5);
+  const dashboardLowestBillingClients = [...dashboardClientBilling]
+    .sort((left, right) => left.totalRevenue - right.totalRevenue || left.clientName.localeCompare(right.clientName))
+    .slice(0, 5);
 
   function getBillingRowKey(row: ImportCostRecord, index: number) {
     return `${selectedBillingReference}-${row._id ?? `${row.productId}-${row.importDate}-${index}`}`;
@@ -2659,7 +2730,7 @@ export default function App() {
   useEffect(() => {
     const canAccessLogisticsAccounting = sessionUser?.role === "management" || sessionUser?.role === "warehouse-aruba";
 
-    if (!canAccessLogisticsAccounting || activeSection !== "logistics-accounting") {
+    if (!canAccessLogisticsAccounting || (activeSection !== "logistics-accounting" && activeSection !== "dashboard")) {
       return;
     }
 
@@ -2802,7 +2873,7 @@ export default function App() {
   }, [salesRepOptions]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "management" || (activeSection !== "inventory" && activeSection !== "catalog")) {
+    if (sessionUser?.role !== "management" || (activeSection !== "inventory" && activeSection !== "catalog" && activeSection !== "dashboard")) {
       return;
     }
 
@@ -2810,7 +2881,7 @@ export default function App() {
   }, [activeSection, sessionUser]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "management" || activeSection !== "orders") {
+    if (sessionUser?.role !== "management" || (activeSection !== "orders" && activeSection !== "dashboard")) {
       return;
     }
 
@@ -7742,17 +7813,208 @@ export default function App() {
         </header>
 
         {activeSection === "dashboard" ? (
-          <section className="dashboard-grid">
-            {isLoadingKpis
-              ? kpiPlaceholders.map((placeholder) => (
-                  <article key={placeholder} className="kpi-card is-loading" />
-                ))
-              : kpis.map((card) => (
-                  <article key={card.label} className={`kpi-card tone-${card.tone}`}>
-                    <p>{card.label}</p>
-                    <strong>{card.value}</strong>
-                  </article>
-                ))}
+          <section className="dashboard-layout">
+            <div className="dashboard-grid">
+              {isLoadingKpis
+                ? kpiPlaceholders.map((placeholder) => (
+                    <article key={placeholder} className="kpi-card is-loading" />
+                  ))
+                : kpis.map((card) => {
+                    const targetSection = dashboardKpiSectionMap[card.label];
+
+                    return (
+                      <button
+                        key={card.label}
+                        className={`kpi-card kpi-card-button tone-${card.tone} ${activeSection === targetSection ? "is-active" : ""}`}
+                        type="button"
+                        onClick={() => targetSection ? setActiveSection(targetSection) : undefined}
+                        disabled={!targetSection}
+                      >
+                        <p>{card.label}</p>
+                        <strong>{card.value}</strong>
+                      </button>
+                    );
+                  })}
+            </div>
+
+            <div className="dashboard-table-grid">
+              <article className="database-card">
+                <div className="management-table-header">
+                  <div>
+                    <h2>Productos mas vendidos</h2>
+                    <p>Unidades despachadas acumuladas en pedidos entregados.</p>
+                  </div>
+                </div>
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Producto</th>
+                        <th>SKU</th>
+                        <th>Unidades</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dashboardTopSellingProducts.length > 0 ? (
+                        dashboardTopSellingProducts.map((row) => (
+                          <tr key={row.productId}>
+                            <td>{row.productName}</td>
+                            <td>{row.productSku}</td>
+                            <td>{row.totalUnits}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={3} className="empty-table-cell">Aun no hay productos vendidos.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+
+              <article className="database-card">
+                <div className="management-table-header">
+                  <div>
+                    <h2>Productos menos vendidos</h2>
+                    <p>Productos con menor salida entre los pedidos ya entregados.</p>
+                  </div>
+                </div>
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Producto</th>
+                        <th>SKU</th>
+                        <th>Unidades</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dashboardLowestSellingProducts.length > 0 ? (
+                        dashboardLowestSellingProducts.map((row) => (
+                          <tr key={row.productId}>
+                            <td>{row.productName}</td>
+                            <td>{row.productSku}</td>
+                            <td>{row.totalUnits}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={3} className="empty-table-cell">Aun no hay productos vendidos.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+
+              <article className="database-card">
+                <div className="management-table-header">
+                  <div>
+                    <h2>Productos proximos a vencerse</h2>
+                    <p>Inventario con vencimiento cercano en los proximos dos meses.</p>
+                  </div>
+                </div>
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Producto</th>
+                        <th>SKU</th>
+                        <th>Vence</th>
+                        <th>Stock</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dashboardExpiringProducts.length > 0 ? (
+                        dashboardExpiringProducts.map((row) => (
+                          <tr key={row.productId}>
+                            <td>{row.name}</td>
+                            <td>{row.sku}</td>
+                            <td>{String(row.expirationDate).slice(0, 10)}</td>
+                            <td>{row.quantity}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={4} className="empty-table-cell">No hay productos proximos a vencerse.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+
+              <article className="database-card">
+                <div className="management-table-header">
+                  <div>
+                    <h2>Clientes con mas facturacion</h2>
+                    <p>Clientes con mayor venta acumulada segun pedidos facturados.</p>
+                  </div>
+                </div>
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Cliente</th>
+                        <th>Pedidos facturados</th>
+                        <th>Facturacion</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dashboardTopBillingClients.length > 0 ? (
+                        dashboardTopBillingClients.map((row) => (
+                          <tr key={row.clientName}>
+                            <td>{row.clientName}</td>
+                            <td>{row.invoiceCount}</td>
+                            <td>{formatAwgCurrency(row.totalRevenue)}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={3} className="empty-table-cell">Aun no hay clientes con facturacion registrada.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+
+              <article className="database-card">
+                <div className="management-table-header">
+                  <div>
+                    <h2>Clientes con menos facturacion</h2>
+                    <p>Clientes con menor venta acumulada entre los pedidos facturados.</p>
+                  </div>
+                </div>
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Cliente</th>
+                        <th>Pedidos facturados</th>
+                        <th>Facturacion</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dashboardLowestBillingClients.length > 0 ? (
+                        dashboardLowestBillingClients.map((row) => (
+                          <tr key={row.clientName}>
+                            <td>{row.clientName}</td>
+                            <td>{row.invoiceCount}</td>
+                            <td>{formatAwgCurrency(row.totalRevenue)}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={3} className="empty-table-cell">Aun no hay clientes con facturacion registrada.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+            </div>
           </section>
         ) : isCreationSection ? (
           <section className="creation-layout">

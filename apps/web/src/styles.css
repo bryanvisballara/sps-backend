@@ -280,6 +280,17 @@ h1 {
   gap: 18px;
 }
 
+.dashboard-layout {
+  display: grid;
+  gap: 18px;
+}
+
+.dashboard-table-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
 .kpi-card,
 .creation-card {
   border-radius: 24px;
@@ -2495,6 +2506,7 @@ h1 {
 
   .management-overview,
   .management-kpi-grid,
+  .dashboard-table-grid,
   .filter-grid,
   .catalog-pricing-toolbar,
   .inventory-entry-top-grid {
