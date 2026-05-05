@@ -3031,6 +3031,30 @@ apiRouter.get("/management/logistics-accounting/invoices", async (_request, resp
   response.json(invoices);
 });
 
+apiRouter.get("/management/logistics-accounting/billed-orders", async (_request, response) => {
+  await syncDeliveredOrdersIntoLogisticsInvoices();
+  const billedOrders = await LogisticsInvoice.find({
+    active: { $ne: false },
+    orderId: { $exists: true, $ne: "" },
+  })
+    .sort({ invoiceDate: -1, createdAt: -1 })
+    .lean();
+
+  response.json(
+    billedOrders.map((invoice) => ({
+      _id: String(invoice._id),
+      orderId: String(invoice.orderId ?? ""),
+      invoiceDate: invoice.invoiceDate,
+      storeName: String(invoice.storeName ?? "Cliente"),
+      salesRepName: String(invoice.salesRepName ?? ""),
+      routeName: String(invoice.routeName ?? ""),
+      totalCostAwg: Number(invoice.totalCostAwg ?? 0),
+      totalRevenueAwg: Number(invoice.totalRevenueAwg ?? 0),
+      totalUtilityAwg: Number(invoice.totalUtilityAwg ?? 0),
+    })),
+  );
+});
+
 apiRouter.post("/management/logistics-accounting/invoices", async (request, response) => {
   try {
     const invoice = await LogisticsInvoice.create(normalizeLogisticsInvoicePayload(request.body));
