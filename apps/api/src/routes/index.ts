@@ -2892,7 +2892,141 @@ function normalizeLogisticsExpensePayload(body: unknown) {
   return { name, category, amountAwg, expenseDate, notes };
 }
 
+async function syncDeliveredOrdersIntoLogisticsInvoices() {
+  const deliveredOrders = await Order.find({ status: "delivered" })
+    .select({
+      _id: 1,
+      storeName: 1,
+      salesRepName: 1,
+      routeName: 1,
+      items: 1,
+      updatedAt: 1,
+      createdAt: 1,
+    })
+    .lean();
+
+  if (deliveredOrders.length === 0) {
+    return;
+  }
+
+  const deliveredOrderIds = deliveredOrders.map((order) => String(order._id));
+  const existingInvoices = await LogisticsInvoice.find({
+    active: { $ne: false },
+    orderId: { $in: deliveredOrderIds },
+  })
+    .select({ orderId: 1 })
+    .lean();
+  const existingOrderIds = new Set(existingInvoices.map((invoice) => String(invoice.orderId ?? "")).filter(Boolean));
+  const ordersToSync = deliveredOrders.filter((order) => !existingOrderIds.has(String(order._id)));
+
+  if (ordersToSync.length === 0) {
+    return;
+  }
+
+  const productIds = Array.from(
+    new Set(
+      ordersToSync.flatMap((order) =>
+        (order.items ?? [])
+          .map((item) => String(item.productId ?? "").trim())
+          .filter(Boolean),
+      ),
+    ),
+  );
+
+  const [products, latestImportCosts] = await Promise.all([
+    productIds.length > 0
+      ? Product.find({ _id: { $in: productIds } })
+          .select({ _id: 1, name: 1, sku: 1, salePrice: 1, cost: 1, arubaPurchaseCostUsd: 1, arubaUsdToAwgRate: 1 })
+          .lean()
+      : Promise.resolve([]),
+    productIds.length > 0
+      ? ImportCost.find({ productId: { $in: productIds } }).sort({ importDate: -1, createdAt: -1 }).lean()
+      : Promise.resolve([]),
+  ]);
+
+  const productsById = new Map(products.map((product) => [String(product._id), product]));
+  const latestCostMap = new Map<string, number>();
+
+  latestImportCosts.forEach((row) => {
+    const productId = String(row.productId ?? "");
+
+    if (productId && !latestCostMap.has(productId)) {
+      latestCostMap.set(productId, Number(row.landedUnitCost ?? 0));
+    }
+  });
+
+  const now = new Date();
+  const upsertOperations = ordersToSync.map(async (order) => {
+    const orderId = String(order._id);
+    const normalizedItems = (order.items ?? []).flatMap((item) => {
+      const productId = String(item.productId ?? "").trim();
+      const quantity = Number(item.quantity ?? 0);
+
+      if (!productId || !Number.isFinite(quantity) || quantity <= 0) {
+        return [];
+      }
+
+      const product = productsById.get(productId);
+      const salePriceAwg = Math.max(0, Number(product?.salePrice ?? 0));
+      const arubaPurchaseCostUsd = Number(product?.arubaPurchaseCostUsd ?? 0);
+      const arubaUsdToAwgRate = Number(product?.arubaUsdToAwgRate ?? 1.79);
+      const arubaCostAwg = arubaPurchaseCostUsd * arubaUsdToAwgRate;
+      const fallbackCostAwg = Number(latestCostMap.get(productId) ?? Number(product?.cost ?? 0));
+      const unitCostAwg = Math.max(0, arubaCostAwg > 0 ? arubaCostAwg : (Number.isFinite(fallbackCostAwg) ? fallbackCostAwg : 0));
+      const lineTotalAwg = salePriceAwg * quantity;
+      const lineUtilityAwg = lineTotalAwg - unitCostAwg * quantity;
+
+      return [{
+        productId,
+        productName: String(product?.name ?? "Producto"),
+        productSku: String(product?.sku ?? "-"),
+        quantity,
+        salePriceAwg,
+        lineTotalAwg,
+        unitCostAwg,
+        lineUtilityAwg,
+      }];
+    });
+
+    if (normalizedItems.length === 0) {
+      return;
+    }
+
+    const totalRevenueAwg = normalizedItems.reduce((sum, item) => sum + Number(item.lineTotalAwg ?? 0), 0);
+    const totalCostAwg = normalizedItems.reduce((sum, item) => sum + Number(item.unitCostAwg ?? 0) * Number(item.quantity ?? 0), 0);
+    const totalUtilityAwg = totalRevenueAwg - totalCostAwg;
+    const invoiceDateCandidate = order.updatedAt ?? order.createdAt;
+    const invoiceDate = invoiceDateCandidate ? new Date(invoiceDateCandidate) : now;
+
+    await LogisticsInvoice.findOneAndUpdate(
+      { orderId },
+      {
+        orderId,
+        invoiceDate: Number.isNaN(invoiceDate.getTime()) ? now : invoiceDate,
+        storeName: String(order.storeName ?? "Cliente"),
+        salesRepName: String(order.salesRepName ?? ""),
+        routeName: String(order.routeName ?? ""),
+        notes: "Generada automaticamente desde pedido facturado.",
+        items: normalizedItems,
+        totalRevenueAwg,
+        totalCostAwg,
+        totalUtilityAwg,
+        active: true,
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+        runValidators: true,
+      },
+    );
+  });
+
+  await Promise.all(upsertOperations);
+}
+
 apiRouter.get("/management/logistics-accounting/invoices", async (_request, response) => {
+  await syncDeliveredOrdersIntoLogisticsInvoices();
   const invoices = await LogisticsInvoice.find({ active: { $ne: false } }).sort({ invoiceDate: -1, createdAt: -1 }).lean();
   response.json(invoices);
 });
