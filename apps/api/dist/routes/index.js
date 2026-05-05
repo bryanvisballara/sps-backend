@@ -2113,6 +2113,79 @@ apiRouter.put("/management/accounting/import-batches/:containerReference", async
         sendCreationError(response, error);
     }
 });
+apiRouter.post("/management/accounting/import-batches/:containerReference/invoice-pricing", async (request, response) => {
+    try {
+        const containerReference = typeof request.params.containerReference === "string" ? request.params.containerReference.trim() : "";
+        const trmCopPerUsd = Number(request.body?.trmCopPerUsd ?? 0);
+        const rawRows = Array.isArray(request.body?.rows)
+            ? request.body.rows
+            : [];
+        if (!containerReference) {
+            response.status(400).json({ message: "El contenedor de la factura no es valido." });
+            return;
+        }
+        if (!Number.isFinite(trmCopPerUsd) || trmCopPerUsd <= 0) {
+            response.status(400).json({ message: "Define una TRM valida (COP por 1 USD) para guardar la factura." });
+            return;
+        }
+        if (rawRows.length === 0) {
+            response.status(400).json({ message: "La factura no contiene productos para guardar." });
+            return;
+        }
+        const batchRows = await ImportCost.find({ containerReference, active: { $ne: false } }).lean();
+        if (batchRows.length === 0) {
+            response.status(404).json({ message: "El lote de importacion no existe." });
+            return;
+        }
+        const saleUsdByProductId = new Map();
+        rawRows.forEach((entry, index) => {
+            const current = typeof entry === "object" && entry !== null ? entry : {};
+            const productId = typeof current.productId === "string" ? current.productId.trim() : "";
+            const saleUsd = Number(current.saleUsd ?? 0);
+            if (!productId) {
+                throw new Error(`La fila ${index + 1} no tiene productId valido.`);
+            }
+            if (!Number.isFinite(saleUsd) || saleUsd < 0) {
+                throw new Error(`El precio de venta USD de la fila ${index + 1} debe ser cero o mayor.`);
+            }
+            saleUsdByProductId.set(productId, saleUsd);
+        });
+        const now = new Date();
+        const operations = batchRows.map((row) => {
+            const productId = String(row.productId);
+            const importedQuantity = Number(row.importedQuantity ?? 0);
+            const totalImportCost = Number(row.totalImportCost ?? 0);
+            const saleUnitUsd = Number(saleUsdByProductId.get(productId) ?? 0);
+            const saleUnitCop = saleUnitUsd * trmCopPerUsd;
+            const lineTotalCop = saleUnitCop * importedQuantity;
+            const lineUtilityCop = lineTotalCop - totalImportCost;
+            return {
+                updateOne: {
+                    filter: { _id: row._id },
+                    update: {
+                        $set: {
+                            invoicedSaleUnitUsd: saleUnitUsd,
+                            invoicedSaleUnitCop: saleUnitCop,
+                            invoicedLineTotalCop: lineTotalCop,
+                            invoicedLineUtilityCop: lineUtilityCop,
+                            invoiceGeneratedAt: now,
+                        },
+                    },
+                },
+            };
+        });
+        if (operations.length > 0) {
+            await ImportCost.bulkWrite(operations);
+        }
+        response.json({
+            message: `Factura guardada para ${operations.length} producto${operations.length === 1 ? "" : "s"}.`,
+            updated: operations.length,
+        });
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
 apiRouter.delete("/management/accounting/import-batches/:containerReference", async (request, response) => {
     try {
         const result = await ImportCost.deleteMany({ containerReference: request.params.containerReference });

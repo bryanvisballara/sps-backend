@@ -436,6 +436,11 @@ type ImportCostRecord = {
   otherImportCosts?: number;
   totalImportCost: number;
   landedUnitCost: number;
+  invoicedSaleUnitUsd?: number;
+  invoicedSaleUnitCop?: number;
+  invoicedLineTotalCop?: number;
+  invoicedLineUtilityCop?: number;
+  invoiceGeneratedAt?: string | null;
   active?: boolean;
 };
 
@@ -1721,7 +1726,6 @@ export default function App() {
   const [isLoadingBillingTrm, setIsLoadingBillingTrm] = useState(false);
   const [accountingFilters, setAccountingFilters] = useState<Record<string, SectionFilters>>({});
   const [accountingMonthFilter, setAccountingMonthFilter] = useState(() => new Date().toISOString().slice(0, 7));
-  const [accountingUtilityMarginPercent, setAccountingUtilityMarginPercent] = useState("25");
   const [selectedAccountingMonthlyBatchKey, setSelectedAccountingMonthlyBatchKey] = useState("");
   const [importCostRows, setImportCostRows] = useState<ImportCostRecord[]>([]);
   const [fixedCostRows, setFixedCostRows] = useState<FixedCostRecord[]>([]);
@@ -2156,7 +2160,6 @@ export default function App() {
     + (showBillingTaxesColumn ? 1 : 0)
     + (showBillingOthersColumn ? 1 : 0);
   const normalizedAccountingMonthFilter = accountingMonthFilter.trim();
-  const accountingUtilityMarginValue = Math.max(Number(accountingUtilityMarginPercent || 0), 0);
   const monthlyImportRows = importCostRows.filter((row) => (
     normalizedAccountingMonthFilter.length === 0
       ? true
@@ -2180,13 +2183,15 @@ export default function App() {
       };
 
       const rowTotalCost = Number(row.totalImportCost ?? 0);
-      const rowProjectedRevenue = rowTotalCost * (1 + accountingUtilityMarginValue / 100);
-      const rowProjectedUtility = rowProjectedRevenue - rowTotalCost;
+      const rowInvoicedRevenue = Number(row.invoicedLineTotalCop ?? 0) > 0
+        ? Number(row.invoicedLineTotalCop ?? 0)
+        : rowTotalCost;
+      const rowInvoicedUtility = Number(row.invoicedLineUtilityCop ?? 0);
 
       current.totalQuantity += Number(row.importedQuantity ?? 0);
       current.totalImportCost += rowTotalCost;
-      current.totalProjectedRevenue += rowProjectedRevenue;
-      current.totalProjectedUtility += rowProjectedUtility;
+      current.totalProjectedRevenue += rowInvoicedRevenue;
+      current.totalProjectedUtility += rowInvoicedUtility;
       current.items.push(row);
 
       map.set(key, current);
@@ -2209,8 +2214,11 @@ export default function App() {
   const selectedAccountingMonthlyBatch = monthlyImportBatchRows.find((row) => row.key === selectedAccountingMonthlyBatchKey) ?? null;
   const monthlyImportCostTotal = monthlyImportRows.reduce((sum, row) => sum + Number(row.totalImportCost ?? 0), 0);
   const monthlyImportUnits = monthlyImportRows.reduce((sum, row) => sum + Number(row.importedQuantity ?? 0), 0);
-  const monthlyProjectedUtilityCop = monthlyImportCostTotal * (accountingUtilityMarginValue / 100);
-  const monthlyProjectedRevenueCop = monthlyImportCostTotal + monthlyProjectedUtilityCop;
+  const monthlyProjectedRevenueCop = monthlyImportRows.reduce((sum, row) => {
+    const lineTotal = Number(row.invoicedLineTotalCop ?? 0);
+    return sum + (lineTotal > 0 ? lineTotal : Number(row.totalImportCost ?? 0));
+  }, 0);
+  const monthlyProjectedUtilityCop = monthlyImportRows.reduce((sum, row) => sum + Number(row.invoicedLineUtilityCop ?? 0), 0);
   const monthlyFixedAdditionalCosts = fixedCostRows.reduce(
     (sum, row) => sum + getFixedCostAmountForMonth(row, normalizedAccountingMonthFilter),
     0,
@@ -3230,8 +3238,54 @@ export default function App() {
     closeInventoryEntryItemModal();
   }
 
-  function downloadBillingInvoicePdf() {
+  async function persistBillingInvoicePricing() {
+    if (selectedBillingRows.length === 0 || !selectedBillingBatch?.containerReference) {
+      return false;
+    }
+
+    if (!Number.isFinite(billingTrmValue) || billingTrmValue <= 0) {
+      setAccountingError("Antes de generar la factura define una TRM valida (COP por 1 USD).");
+      return false;
+    }
+
+    try {
+      setAccountingError("");
+      const rows = selectedBillingRows.map((row, index) => ({
+        productId: row.productId,
+        saleUsd: Number(getEffectiveBillingSaleUsd(row, index) || 0),
+      }));
+
+      const response = await fetch(
+        `${apiBaseUrl}/management/accounting/import-batches/${encodeURIComponent(selectedBillingBatch.containerReference)}/invoice-pricing`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ trmCopPerUsd: billingTrmValue, rows }),
+        },
+      );
+      const data = (await response.json()) as { message?: string };
+
+      if (!response.ok) {
+        setAccountingError(data.message ?? "No fue posible guardar los precios facturados de la importacion.");
+        return false;
+      }
+
+      await refreshAccountingData();
+      return true;
+    } catch {
+      setAccountingError("No fue posible conectar con el backend para guardar la factura.");
+      return false;
+    }
+  }
+
+  async function downloadBillingInvoicePdf() {
     if (selectedBillingRows.length === 0) {
+      return;
+    }
+
+    const persisted = await persistBillingInvoicePricing();
+
+    if (!persisted) {
       return;
     }
 
@@ -3278,8 +3332,14 @@ export default function App() {
     doc.save(`factura-importacion-${String(reference).toLowerCase()}.pdf`);
   }
 
-  function downloadBillingInvoiceExcel() {
+  async function downloadBillingInvoiceExcel() {
     if (selectedBillingRows.length === 0) {
+      return;
+    }
+
+    const persisted = await persistBillingInvoicePricing();
+
+    if (!persisted) {
       return;
     }
 
@@ -8709,7 +8769,7 @@ export default function App() {
                     <button
                       className="submit-button invoice-export-button"
                       type="button"
-                      onClick={downloadBillingInvoicePdf}
+                      onClick={() => void downloadBillingInvoicePdf()}
                       disabled={selectedBillingRows.length === 0}
                     >
                       Generar factura (PDF)
@@ -8717,7 +8777,7 @@ export default function App() {
                     <button
                       className="primary-action-button invoice-export-button"
                       type="button"
-                      onClick={downloadBillingInvoiceExcel}
+                      onClick={() => void downloadBillingInvoiceExcel()}
                       disabled={selectedBillingRows.length === 0}
                     >
                       Generar factura (Excel)
@@ -8765,17 +8825,7 @@ export default function App() {
                   />
                 </label>
                 <label className="field">
-                  <span>Margen esperado (%)</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={accountingUtilityMarginPercent}
-                    onChange={(event) => setAccountingUtilityMarginPercent(event.target.value)}
-                  />
-                </label>
-                <label className="field">
-                  <span>Utilidad neta proyectada (COP)</span>
+                  <span>Utilidad neta facturada (COP)</span>
                   <input type="text" readOnly value={formatCurrency(monthlyProjectedNetUtilityCop)} />
                 </label>
               </div>
@@ -8790,7 +8840,7 @@ export default function App() {
                   <strong>{formatCurrency(monthlyImportCostTotal)}</strong>
                 </article>
                 <article className="kpi-card tone-slate">
-                  <p>Utilidad bruta proyectada (COP)</p>
+                  <p>Utilidad bruta facturada (COP)</p>
                   <strong>{formatCurrency(monthlyProjectedUtilityCop)}</strong>
                 </article>
                 <article className="kpi-card tone-cyan">
@@ -8808,8 +8858,8 @@ export default function App() {
                       <th>Envio</th>
                       <th>Cantidad</th>
                       <th>Costo total (COP)</th>
-                      <th>Venta proyectada total (COP)</th>
-                      <th>Utilidad proyectada total (COP)</th>
+                      <th>Venta facturada total (COP)</th>
+                      <th>Utilidad facturada total (COP)</th>
                       <th>Accion</th>
                     </tr>
                   </thead>
@@ -8856,7 +8906,7 @@ export default function App() {
               </div>
 
               <p className="management-table-meta">
-                {`Unidades importadas en el mes: ${monthlyImportUnits} · Venta proyectada del mes: ${formatCurrency(monthlyProjectedRevenueCop)}`}
+                {`Unidades importadas en el mes: ${monthlyImportUnits} · Venta facturada del mes: ${formatCurrency(monthlyProjectedRevenueCop)}`}
               </p>
             </article>
 
@@ -8883,15 +8933,17 @@ export default function App() {
                           <th>Cantidad</th>
                           <th>Costo unitario (COP)</th>
                           <th>Costo total (COP)</th>
-                          <th>Venta proyectada (COP)</th>
-                          <th>Utilidad proyectada (COP)</th>
+                          <th>Venta facturada (COP)</th>
+                          <th>Utilidad facturada (COP)</th>
                         </tr>
                       </thead>
                       <tbody>
                         {selectedAccountingMonthlyBatch.items.map((item, index) => {
                           const itemTotalCost = Number(item.totalImportCost ?? 0);
-                          const itemProjectedRevenue = itemTotalCost * (1 + accountingUtilityMarginValue / 100);
-                          const itemProjectedUtility = itemProjectedRevenue - itemTotalCost;
+                          const itemInvoicedRevenue = Number(item.invoicedLineTotalCop ?? 0) > 0
+                            ? Number(item.invoicedLineTotalCop ?? 0)
+                            : itemTotalCost;
+                          const itemInvoicedUtility = Number(item.invoicedLineUtilityCop ?? 0);
                           const key = item._id ?? `${item.productId}-${item.importDate}-${index}`;
 
                           return (
@@ -8903,8 +8955,8 @@ export default function App() {
                               <td>{item.importedQuantity}</td>
                               <td>{formatCurrency(item.landedUnitCost)}</td>
                               <td>{formatCurrency(itemTotalCost)}</td>
-                              <td>{formatCurrency(itemProjectedRevenue)}</td>
-                              <td>{formatCurrency(itemProjectedUtility)}</td>
+                              <td>{formatCurrency(itemInvoicedRevenue)}</td>
+                              <td>{formatCurrency(itemInvoicedUtility)}</td>
                             </tr>
                           );
                         })}
