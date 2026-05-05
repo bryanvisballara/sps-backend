@@ -509,7 +509,7 @@ const sidebarItems = [
   { key: "users", label: "Usuarios" },
   { key: "routes", label: "Rutas" },
   { key: "catalog", label: "Catalogo" },
-  { key: "imports", label: "Importaciones" },
+  { key: "imports", label: "Exportaciones" },
   { key: "import-billing", label: "Facturacion" },
   { key: "accounting", label: "Contabilidad" },
 ] as const;
@@ -535,7 +535,7 @@ const managementSidebarSections = [
     key: "operaciones-col",
     label: "Operaciones Col",
     items: [
-      { key: "imports", label: "Importaciones" },
+      { key: "imports", label: "Exportaciones" },
       { key: "import-billing", label: "Facturacion" },
       { key: "accounting", label: "Contabilidad" },
     ],
@@ -1391,8 +1391,7 @@ function formatCurrency(value: number) {
 
 function formatAwgCurrency(value: number) {
   return new Intl.NumberFormat("es-CO", {
-    style: "currency",
-    currency: "AWG",
+    style: "decimal",
     maximumFractionDigits: 0,
   }).format(Number.isFinite(value) ? value : 0);
 }
@@ -3266,7 +3265,7 @@ export default function App() {
       const data = (await response.json()) as { message?: string };
 
       if (!response.ok) {
-        setAccountingError(data.message ?? "No fue posible guardar los precios facturados de la importacion.");
+        setAccountingError(data.message ?? "No fue posible guardar los precios facturados de la exportacion.");
         return false;
       }
 
@@ -3290,11 +3289,11 @@ export default function App() {
     }
 
     const doc = new jsPDF({ unit: "pt", format: "a4" });
-    const reference = selectedBillingBatch?.containerReference || "IMPORTACION";
+    const reference = selectedBillingBatch?.containerReference || "EXPORTACION";
     const shipment = selectedBillingBatch?.shipmentReference || "SIN ENVIO";
 
     doc.setFontSize(14);
-    doc.text(`Factura importacion ${reference}`, 40, 36);
+    doc.text(`Factura exportacion ${reference}`, 40, 36);
     doc.setFontSize(10);
     doc.text(`Envio: ${shipment}`, 40, 52);
 
@@ -3329,7 +3328,7 @@ export default function App() {
       headStyles: { fillColor: [26, 115, 232] },
     });
 
-    doc.save(`factura-importacion-${String(reference).toLowerCase()}.pdf`);
+    doc.save(`factura-exportacion-${String(reference).toLowerCase()}.pdf`);
   }
 
   async function downloadBillingInvoiceExcel() {
@@ -3360,7 +3359,7 @@ export default function App() {
     const worksheet = XLSX.utils.json_to_sheet(rows);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Factura");
-    const reference = selectedBillingBatch?.containerReference || "importacion";
+    const reference = selectedBillingBatch?.containerReference || "exportacion";
     XLSX.writeFile(workbook, `factura-${String(reference).toLowerCase()}.xlsx`);
   }
 
@@ -4357,7 +4356,7 @@ export default function App() {
           ...current,
           importCosts: {
             tone: "error",
-            message: "message" in data ? data.message ?? "No fue posible cargar la importacion." : "No fue posible cargar la importacion.",
+            message: "message" in data ? data.message ?? "No fue posible cargar la exportacion." : "No fue posible cargar la exportacion.",
           },
         }));
         return;
@@ -4412,7 +4411,7 @@ export default function App() {
       return;
     }
 
-    if (!globalThis.confirm(`Se borrara la importacion ${batch.shipmentReference || batch.containerReference}.`)) {
+    if (!globalThis.confirm(`Se borrara la exportacion ${batch.shipmentReference || batch.containerReference}.`)) {
       return;
     }
 
@@ -4429,7 +4428,7 @@ export default function App() {
           ...current,
           importCosts: {
             tone: "error",
-            message: data.message ?? "No fue posible borrar la importacion.",
+            message: data.message ?? "No fue posible borrar la exportacion.",
           },
         }));
         return;
@@ -4445,7 +4444,7 @@ export default function App() {
         ...current,
         importCosts: {
           tone: "success",
-          message: "Importacion borrada correctamente.",
+          message: "Exportacion borrada correctamente.",
         },
       }));
       await refreshAccountingData();
@@ -5548,7 +5547,7 @@ export default function App() {
         importCosts: {
           tone: "error",
           message: invalidExpense.isUploading
-            ? "Espera a que la factura termine de subirse antes de guardar la importacion."
+            ? "Espera a que la factura termine de subirse antes de guardar la exportacion."
             : "Revisa el nombre y el valor de los gastos agregados.",
         },
       }));
@@ -5609,7 +5608,7 @@ export default function App() {
       if (!response.ok) {
         setAccountingStatuses((current) => ({
           ...current,
-          importCosts: { tone: "error", message: data.message ?? "No fue posible guardar el costo de importacion." },
+          importCosts: { tone: "error", message: data.message ?? "No fue posible guardar el costo de exportacion." },
         }));
         return;
       }
@@ -5619,8 +5618,8 @@ export default function App() {
         importCosts: {
           tone: "success",
           message: editingImportBatchReference
-            ? "Importacion actualizada correctamente."
-            : `Importacion guardada para ${selectedProducts.length} producto${selectedProducts.length === 1 ? "" : "s"}.`,
+            ? "Exportacion actualizada correctamente."
+            : `Exportacion guardada para ${selectedProducts.length} producto${selectedProducts.length === 1 ? "" : "s"}.`,
         },
       }));
       setEditingImportBatchReference("");
@@ -7153,7 +7152,7 @@ export default function App() {
               : activeSection === "catalog"
                 ? "Catalogo"
               : activeSection === "imports"
-                ? "Importaciones"
+                ? "Exportaciones"
                 : activeSection === "import-billing"
                   ? "Facturacion"
               : activeSection === "accounting"
@@ -7178,9 +7177,9 @@ export default function App() {
               : activeSection === "catalog"
                 ? "Arma catalogos por categorias o productos, luego define el precio de venta por cliente con un porcentaje global o ajustes manuales."
               : activeSection === "imports"
-                ? "Registra contenedores, define gastos generales de importacion y distribuye el costo real entre los productos recibidos."
+                ? "Registra contenedores, define gastos generales de exportacion y distribuye el costo real entre los productos recibidos."
                 : activeSection === "import-billing"
-                  ? "Selecciona una importacion guardada, aplica un margen global y calcula precios de venta en USD usando TRM del dia."
+                  ? "Selecciona una exportacion guardada, aplica un margen global y calcula precios de venta en USD usando TRM del dia."
               : activeSection === "accounting"
                 ? "Registra costos fijos y monitorea gastos operacionales para entender la carga mensual del negocio."
               : activeSection === "warehouses"
@@ -7945,12 +7944,12 @@ export default function App() {
               <div className="accounting-block-header">
                 <div>
                   <p className="section-label">Registro de contenedor</p>
-                  <h2>{editingImportBatchReference ? "Modificar importacion" : "Registrar importacion"}</h2>
+                  <h2>{editingImportBatchReference ? "Modificar exportacion" : "Registrar exportacion"}</h2>
                   <p>
                     Crea primero el envio con sus productos y luego agrega o ajusta los gastos que correspondan con sus facturas.
                   </p>
                 </div>
-                <button className="modal-close-button" type="button" onClick={closeImportCostPage}>Volver a importaciones</button>
+                <button className="modal-close-button" type="button" onClick={closeImportCostPage}>Volver a exportaciones</button>
               </div>
 
               <form className="import-page-form" onInputCapture={handlePortalInputCapture} onSubmit={(event) => void handleImportCostSubmit(event)}>
@@ -7968,7 +7967,7 @@ export default function App() {
                   </label>
 
                   <label className="field field-third">
-                    <span>Fecha importacion</span>
+                    <span>Fecha exportacion</span>
                     <input
                       type="date"
                       value={containerImportForm.importDate}
@@ -8436,10 +8435,10 @@ export default function App() {
                   }
                 >
                   {isSavingImportCost
-                    ? "Guardando importacion..."
+                    ? "Guardando exportacion..."
                     : editingImportBatchReference
-                      ? "Guardar cambios de la importacion"
-                      : "Guardar importacion del contenedor"}
+                      ? "Guardar cambios de la exportacion"
+                      : "Guardar exportacion del contenedor"}
                 </button>
               </form>
             </article>
@@ -8466,13 +8465,13 @@ export default function App() {
             <article className="database-card">
               <div className="accounting-block-header">
                 <div>
-                  <p className="section-label">Costo real de importacion</p>
-                  <h2>Importaciones por lote</h2>
+                  <p className="section-label">Costo real de exportacion</p>
+                  <h2>Exportaciones por lote</h2>
                   <p>
                     Registra contenedores completos, define sus gastos generales y distribuye el costo real entre los productos recibidos.
                   </p>
                 </div>
-                <button className="primary-action-button" type="button" onClick={openImportCostPage}>Crear importacion</button>
+                <button className="primary-action-button" type="button" onClick={openImportCostPage}>Crear exportacion</button>
               </div>
 
               <div className="filter-grid">
@@ -8524,7 +8523,7 @@ export default function App() {
                   <tbody>
                     {isLoadingAccounting ? (
                       <tr>
-                        <td colSpan={5} className="empty-table-cell">Cargando importaciones...</td>
+                        <td colSpan={5} className="empty-table-cell">Cargando exportaciones...</td>
                       </tr>
                     ) : filteredImportBatchRows.length > 0 ? (
                       filteredImportBatchRows.map((row) => (
@@ -8538,7 +8537,7 @@ export default function App() {
                               <button
                                 className="table-action-icon"
                                 type="button"
-                                aria-label="Modificar importacion"
+                                aria-label="Modificar exportacion"
                                 title="Modificar"
                                 onClick={() => row.containerReference ? void openImportBatchEdit(row.containerReference) : undefined}
                                 disabled={!row.containerReference}
@@ -8550,7 +8549,7 @@ export default function App() {
                               <button
                                 className="table-action-icon is-danger"
                                 type="button"
-                                aria-label="Borrar importacion"
+                                aria-label="Borrar exportacion"
                                 title="Borrar"
                                 onClick={() => void handleDeleteImportBatch(row)}
                               >
@@ -8562,7 +8561,7 @@ export default function App() {
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={5} className="empty-table-cell">Aun no hay lotes de importacion registrados.</td>
+                        <td colSpan={5} className="empty-table-cell">Aun no hay lotes de exportacion registrados.</td>
                       </tr>
                     )}
                   </tbody>
@@ -8621,8 +8620,8 @@ export default function App() {
               <div className="accounting-block-header">
                 <div>
                   <p className="section-label">Operaciones Col</p>
-                  <h2>Facturacion de importaciones</h2>
-                  <p>Selecciona una importacion guardada para calcular precios de venta en USD desde costos en COP.</p>
+                  <h2>Facturacion de exportaciones</h2>
+                  <p>Selecciona una exportacion guardada para calcular precios de venta en USD desde costos en COP.</p>
                 </div>
               </div>
 
@@ -8655,11 +8654,11 @@ export default function App() {
 
               <div className="import-billing-layout">
                 <aside className="import-billing-list">
-                  <h3>Importaciones guardadas</h3>
+                  <h3>Exportaciones guardadas</h3>
                   {isLoadingAccounting ? (
-                    <p className="warehouse-empty-state">Cargando importaciones...</p>
+                    <p className="warehouse-empty-state">Cargando exportaciones...</p>
                   ) : billingBatchRows.length === 0 ? (
-                    <p className="warehouse-empty-state">No hay importaciones guardadas.</p>
+                    <p className="warehouse-empty-state">No hay exportaciones guardadas.</p>
                   ) : (
                     billingBatchRows.map((row) => (
                       <button
@@ -8680,7 +8679,7 @@ export default function App() {
                   {selectedBillingBatch ? (
                     <div className="import-billing-selected-meta">
                       <p>
-                        <strong>Importacion:</strong> {formatContainerSize(selectedBillingBatch.containerSize)} · {selectedBillingBatch.containerReference}
+                        <strong>Exportacion:</strong> {formatContainerSize(selectedBillingBatch.containerSize)} · {selectedBillingBatch.containerReference}
                       </p>
                       <p>
                         <strong>Envio:</strong> {selectedBillingBatch.shipmentReference || "-"}
@@ -8758,7 +8757,7 @@ export default function App() {
                           })
                         ) : (
                           <tr>
-                            <td colSpan={billingVisibleColumnCount} className="empty-table-cell">Selecciona una importacion para ver el detalle de costos.</td>
+                            <td colSpan={billingVisibleColumnCount} className="empty-table-cell">Selecciona una exportacion para ver el detalle de costos.</td>
                           </tr>
                         )}
                       </tbody>
@@ -8811,7 +8810,7 @@ export default function App() {
                 <div>
                   <p className="section-label">Operaciones Col</p>
                   <h2>Contabilidad mensual (COP)</h2>
-                  <p>Filtra por mes para ver importaciones detalladas, costos adicionales y utilidad estimada en COP.</p>
+                  <p>Filtra por mes para ver exportaciones detalladas, costos adicionales y utilidad estimada en COP.</p>
                 </div>
               </div>
 
@@ -8832,7 +8831,7 @@ export default function App() {
 
               <div className="accounting-kpi-grid">
                 <article className="kpi-card tone-cyan">
-                  <p>Importaciones del mes</p>
+                  <p>Exportaciones del mes</p>
                   <strong>{monthlyImportBatchCount}</strong>
                 </article>
                 <article className="kpi-card tone-amber">
@@ -8898,7 +8897,7 @@ export default function App() {
                       })
                     ) : (
                       <tr>
-                        <td colSpan={8} className="empty-table-cell">No hay importaciones registradas para el mes seleccionado.</td>
+                        <td colSpan={8} className="empty-table-cell">No hay exportaciones registradas para el mes seleccionado.</td>
                       </tr>
                     )}
                   </tbody>
@@ -8915,7 +8914,7 @@ export default function App() {
                 <div className="modal-card inventory-entry-history-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                   <div className="modal-header">
                     <div>
-                      <p className="section-label">Detalle de importacion</p>
+                      <p className="section-label">Detalle de exportacion</p>
                       <h2>{selectedAccountingMonthlyBatch.containerReference ? `${formatContainerSize(selectedAccountingMonthlyBatch.containerSize)} · ${selectedAccountingMonthlyBatch.containerReference}` : formatContainerSize(selectedAccountingMonthlyBatch.containerSize)}</h2>
                       <p>{`${String(selectedAccountingMonthlyBatch.importDate).slice(0, 10)} · ${selectedAccountingMonthlyBatch.shipmentReference || "Sin envio"}`}</p>
                     </div>
