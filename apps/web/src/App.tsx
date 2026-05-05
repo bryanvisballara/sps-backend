@@ -562,6 +562,43 @@ const apiBaseUrl =
   (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:4000/api";
 const cloudinaryCloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME as string | undefined;
 const cloudinaryUploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET as string | undefined;
+const sessionStorageKey = "spste-session-user";
+
+function readPersistedSessionUser(): SessionUser | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(sessionStorageKey);
+
+    if (!storedValue) {
+      return null;
+    }
+
+    const parsedValue = JSON.parse(storedValue) as Partial<SessionUser>;
+
+    if (
+      typeof parsedValue.id !== "string"
+      || typeof parsedValue.name !== "string"
+      || typeof parsedValue.email !== "string"
+      || typeof parsedValue.role !== "string"
+    ) {
+      window.localStorage.removeItem(sessionStorageKey);
+      return null;
+    }
+
+    return {
+      id: parsedValue.id,
+      name: parsedValue.name,
+      email: parsedValue.email,
+      role: parsedValue.role,
+    };
+  } catch {
+    window.localStorage.removeItem(sessionStorageKey);
+    return null;
+  }
+}
 
 const sidebarItems = [
   { key: "dashboard", label: "Dashboard" },
@@ -1774,7 +1811,7 @@ export default function App() {
   const [loginError, setLoginError] = useState("");
   const [activeSection, setActiveSection] = useState<ActiveSection>("inventory");
   const [sellerActiveSection, setSellerActiveSection] = useState<SellerActiveSection>("routes");
-  const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
+  const [sessionUser, setSessionUser] = useState<SessionUser | null>(() => readPersistedSessionUser());
   const [kpis, setKpis] = useState<KpiCard[]>([]);
   const [isLoadingKpis, setIsLoadingKpis] = useState(false);
   const [creationStatuses, setCreationStatuses] = useState<Record<string, CreationStatus>>({});
@@ -1931,6 +1968,19 @@ export default function App() {
   const [catalogPreviewItems, setCatalogPreviewItems] = useState<CatalogPreviewItem[]>([]);
   const [isLoadingCatalogPreview, setIsLoadingCatalogPreview] = useState(false);
   const [catalogPreviewError, setCatalogPreviewError] = useState("");
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (sessionUser) {
+      window.localStorage.setItem(sessionStorageKey, JSON.stringify(sessionUser));
+      return;
+    }
+
+    window.localStorage.removeItem(sessionStorageKey);
+  }, [sessionUser]);
 
   const collectionConfigs = getCollectionConfigs(categoryOptions, supplierOptions);
   const selectedCollection =
@@ -5481,6 +5531,10 @@ export default function App() {
     }
   }
 
+  function handleLogout() {
+    setSessionUser(null);
+  }
+
   async function handleCreationSubmit(event: FormEvent<HTMLFormElement>, config: CollectionConfig) {
     event.preventDefault();
 
@@ -6458,7 +6512,7 @@ export default function App() {
             </button>
           </nav>
 
-          <button className="ghost-button" type="button" onClick={() => setSessionUser(null)}>
+          <button className="ghost-button" type="button" onClick={handleLogout}>
             Cerrar sesion
           </button>
         </aside>
@@ -6919,7 +6973,7 @@ export default function App() {
             </button>
           </nav>
 
-          <button className="ghost-button" type="button" onClick={() => setSessionUser(null)}>
+          <button className="ghost-button" type="button" onClick={handleLogout}>
             Cerrar sesion
           </button>
         </aside>
@@ -7587,7 +7641,7 @@ export default function App() {
               ))}
         </nav>
 
-        <button className="ghost-button" type="button" onClick={() => setSessionUser(null)}>
+        <button className="ghost-button" type="button" onClick={handleLogout}>
           Cerrar sesion
         </button>
       </aside>
