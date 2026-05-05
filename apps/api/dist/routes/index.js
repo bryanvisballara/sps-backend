@@ -2362,7 +2362,7 @@ async function syncDeliveredOrdersIntoLogisticsInvoices() {
             ? ImportCost.find({ productId: { $in: productIds } }).sort({ importDate: -1, createdAt: -1 }).lean()
             : Promise.resolve([]),
         clientIds.length > 0
-            ? CatalogClientPricing.find({ active: { $ne: false }, clientId: { $in: clientIds } })
+            ? CatalogClientPricing.find({ clientId: { $in: clientIds } })
                 .sort({ updatedAt: -1, createdAt: -1 })
                 .lean()
             : Promise.resolve([]),
