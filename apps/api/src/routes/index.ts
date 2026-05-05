@@ -2628,8 +2628,39 @@ apiRouter.put("/management/accounting/import-batches/:containerReference", async
 
 apiRouter.post("/management/accounting/import-batches/:containerReference/invoice-pricing", async (request, response) => {
   try {
+    const parseDecimalValue = (value: unknown) => {
+      if (typeof value === "number") {
+        return Number.isFinite(value) ? value : Number.NaN;
+      }
+
+      if (typeof value !== "string") {
+        return Number.NaN;
+      }
+
+      const trimmed = value.trim();
+
+      if (!trimmed) {
+        return Number.NaN;
+      }
+
+      let normalized = trimmed.replace(/\s+/g, "");
+
+      if (normalized.includes(",") && normalized.includes(".")) {
+        if (normalized.lastIndexOf(",") > normalized.lastIndexOf(".")) {
+          normalized = normalized.replace(/\./g, "").replace(",", ".");
+        } else {
+          normalized = normalized.replace(/,/g, "");
+        }
+      } else if (normalized.includes(",")) {
+        normalized = normalized.replace(",", ".");
+      }
+
+      const parsed = Number(normalized);
+      return Number.isFinite(parsed) ? parsed : Number.NaN;
+    };
+
     const containerReference = typeof request.params.containerReference === "string" ? request.params.containerReference.trim() : "";
-    const trmCopPerUsd = Number(request.body?.trmCopPerUsd ?? 0);
+    const trmCopPerUsd = parseDecimalValue(request.body?.trmCopPerUsd);
     const rawRows: Array<Record<string, unknown>> = Array.isArray(request.body?.rows)
       ? request.body.rows as Array<Record<string, unknown>>
       : [];
@@ -2661,7 +2692,7 @@ apiRouter.post("/management/accounting/import-batches/:containerReference/invoic
     rawRows.forEach((entry: Record<string, unknown>, index: number) => {
       const current = typeof entry === "object" && entry !== null ? entry : {};
       const productId = typeof current.productId === "string" ? current.productId.trim() : "";
-      const saleUsd = Number(current.saleUsd ?? 0);
+      const saleUsd = parseDecimalValue(current.saleUsd);
 
       if (!productId) {
         throw new Error(`La fila ${index + 1} no tiene productId valido.`);
@@ -2679,7 +2710,12 @@ apiRouter.post("/management/accounting/import-batches/:containerReference/invoic
       const productId = String(row.productId);
       const importedQuantity = Number(row.importedQuantity ?? 0);
       const totalImportCost = Number(row.totalImportCost ?? 0);
-      const saleUnitUsd = Number(saleUsdByProductId.get(productId) ?? 0);
+
+      if (!saleUsdByProductId.has(productId)) {
+        throw new Error(`Falta el precio facturado para el producto ${productId}.`);
+      }
+
+      const saleUnitUsd = Number(saleUsdByProductId.get(productId));
       const saleUnitCop = saleUnitUsd * trmCopPerUsd;
       const lineTotalCop = saleUnitCop * importedQuantity;
       const lineUtilityCop = lineTotalCop - totalImportCost;
