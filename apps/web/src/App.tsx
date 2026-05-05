@@ -1680,6 +1680,7 @@ function normalizeUppercaseInputTarget(target: EventTarget | null) {
 
 export default function App() {
   const tablePaginationStateRef = useRef<Record<string, number>>({});
+  const billingAutosaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [email, setEmail] = useState("said@spste.com");
   const [password, setPassword] = useState("123456");
   const [isAuthenticating, setIsAuthenticating] = useState(false);
@@ -1753,6 +1754,7 @@ export default function App() {
   const [billingMarginPercent, setBillingMarginPercent] = useState("25");
   const [billingTrmCopPerUsd, setBillingTrmCopPerUsd] = useState("0");
   const [billingSaleOverrides, setBillingSaleOverrides] = useState<Record<string, string>>({});
+  const [hasPendingBillingPricingChanges, setHasPendingBillingPricingChanges] = useState(false);
   const [isLoadingBillingTrm, setIsLoadingBillingTrm] = useState(false);
   const [accountingFilters, setAccountingFilters] = useState<Record<string, SectionFilters>>({});
   const [accountingMonthFilter, setAccountingMonthFilter] = useState(() => new Date().toISOString().slice(0, 7));
@@ -2287,6 +2289,7 @@ export default function App() {
 
       return next;
     });
+    setHasPendingBillingPricingChanges(true);
   }
 
   const filteredCreationRows = creationRows.filter((row) => {
@@ -2508,6 +2511,45 @@ export default function App() {
       isCancelled = true;
     };
   }, [activeSection, sessionUser]);
+
+  useEffect(() => {
+    const canAccessBilling = sessionUser?.role === "management" || sessionUser?.role === "colombia-ops";
+
+    if (activeSection !== "import-billing" || !canAccessBilling) {
+      return;
+    }
+
+    if (!hasPendingBillingPricingChanges || selectedBillingRows.length === 0 || !selectedBillingBatch?.containerReference) {
+      return;
+    }
+
+    if (!Number.isFinite(billingTrmValue) || billingTrmValue <= 0) {
+      return;
+    }
+
+    if (billingAutosaveTimeoutRef.current) {
+      clearTimeout(billingAutosaveTimeoutRef.current);
+    }
+
+    billingAutosaveTimeoutRef.current = setTimeout(() => {
+      void persistBillingInvoicePricing();
+    }, 900);
+
+    return () => {
+      if (billingAutosaveTimeoutRef.current) {
+        clearTimeout(billingAutosaveTimeoutRef.current);
+        billingAutosaveTimeoutRef.current = null;
+      }
+    };
+  }, [
+    activeSection,
+    billingTrmValue,
+    billingSaleOverrides,
+    hasPendingBillingPricingChanges,
+    selectedBillingBatch?.containerReference,
+    selectedBillingRows,
+    sessionUser,
+  ]);
 
   useEffect(() => {
     if (!selectedAccountingMonthlyBatchKey) {
@@ -3313,6 +3355,7 @@ export default function App() {
       }
 
       await refreshAccountingData();
+      setHasPendingBillingPricingChanges(false);
       return true;
     } catch {
       setAccountingError("No fue posible conectar con el backend para guardar la factura.");
@@ -8689,7 +8732,10 @@ export default function App() {
                     min="0"
                     step="0.01"
                     value={billingTrmCopPerUsd}
-                    onChange={(event) => setBillingTrmCopPerUsd(event.target.value)}
+                    onChange={(event) => {
+                      setBillingTrmCopPerUsd(event.target.value);
+                      setHasPendingBillingPricingChanges(true);
+                    }}
                   />
                   <small>{isLoadingBillingTrm ? "Actualizando TRM..." : "Puedes ajustarla manualmente si hace falta."}</small>
                 </label>
@@ -8792,6 +8838,7 @@ export default function App() {
                                         ...current,
                                         [rowKey]: nextValue,
                                       }));
+                                      setHasPendingBillingPricingChanges(true);
                                     }}
                                   />
                                 </td>
