@@ -2943,7 +2943,8 @@ export default function App() {
     try {
       setIsLoadingInventory(true);
       setInventoryError("");
-      const businessUnit = sessionUser?.role === "warehouse-aruba" ? "aruba" : "colombia";
+      const arubaInventoryRoles = new Set(["warehouse-aruba", "sales-rep-aruba", "management"]);
+      const businessUnit = arubaInventoryRoles.has(String(sessionUser?.role ?? "")) ? "aruba" : "colombia";
       const response = await fetch(`${apiBaseUrl}/management/inventory-summary?businessUnit=${businessUnit}`);
       const data = (await response.json()) as InventorySummaryResponse | { message?: string };
 
