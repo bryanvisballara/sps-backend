@@ -1464,6 +1464,14 @@ function formatAwgCurrency(value: number) {
   }).format(Number.isFinite(value) ? value : 0);
 }
 
+function formatAwgCurrency2(value: number) {
+  return new Intl.NumberFormat("es-CO", {
+    style: "decimal",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number.isFinite(value) ? value : 0);
+}
+
 function formatUsdCurrency(value: number) {
   return new Intl.NumberFormat("es-CO", {
     style: "currency",
@@ -11184,10 +11192,10 @@ export default function App() {
                               <td>{item.productName}</td>
                               <td>{item.stockCurrent ?? "-"}</td>
                               <td className="col-highlight"><strong>{item.quantity}</strong></td>
-                              <td>{unitCostAwg > 0 ? formatAwgCurrency(unitCostAwg) : "-"}</td>
-                              <td>{salePriceAwg > 0 ? formatAwgCurrency(salePriceAwg) : "-"}</td>
-                              <td>{unitCostAwg > 0 || salePriceAwg > 0 ? formatAwgCurrency(unitUtilityAwg) : "-"}</td>
-                              <td>{unitCostAwg > 0 || salePriceAwg > 0 ? formatAwgCurrency(totalUtilityAwg) : "-"}</td>
+                              <td>{unitCostAwg > 0 ? formatAwgCurrency2(unitCostAwg) : "-"}</td>
+                              <td>{salePriceAwg > 0 ? formatAwgCurrency2(salePriceAwg) : "-"}</td>
+                              <td>{unitCostAwg > 0 || salePriceAwg > 0 ? formatAwgCurrency2(unitUtilityAwg) : "-"}</td>
+                              <td>{unitCostAwg > 0 || salePriceAwg > 0 ? formatAwgCurrency2(totalUtilityAwg) : "-"}</td>
                               <td>{item.notes || "-"}</td>
                             </tr>
                           );
