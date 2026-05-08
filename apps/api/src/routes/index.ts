@@ -586,7 +586,9 @@ function normalizeImportCostPayload(body: unknown) {
   }
 
   const payload = body as Record<string, unknown>;
+  const containerTypeValue = typeof payload.containerType === "string" ? payload.containerType.trim().toLowerCase() : "seco";
   const containerSizeValue = typeof payload.containerSize === "string" ? payload.containerSize.trim() : "20ft";
+  const measurementUnitValue = typeof payload.measurementUnit === "string" ? payload.measurementUnit.trim().toLowerCase() : "m3";
   const importDateValue = typeof payload.importDate === "string" ? payload.importDate.trim() : "";
   const notes = typeof payload.notes === "string" ? payload.notes.trim() : "";
   const shipmentReference = typeof payload.shipmentReference === "string" ? payload.shipmentReference.trim() : "";
@@ -616,7 +618,9 @@ function normalizeImportCostPayload(body: unknown) {
     };
   });
 
+  const containerType = containerTypeValue === "refrigerado" ? "refrigerado" : "seco";
   const containerSize = containerSizeValue === "40ft" ? "40ft" : "20ft";
+  const measurementUnit = measurementUnitValue === "pie3" || measurementUnitValue === "kg" ? measurementUnitValue : "m3";
 
   if (!shipmentReference) {
     throw new Error("Ingresa el nombre o tracking del envio antes de guardar.");
@@ -633,7 +637,9 @@ function normalizeImportCostPayload(body: unknown) {
   }
 
   return {
+    containerType,
     containerSize,
+    measurementUnit,
     importDate,
     shipmentReference,
     expenseItems,
@@ -702,7 +708,9 @@ async function buildImportCostRows(
 
     return {
       containerReference,
+      containerType: payload.containerType,
       containerSize: payload.containerSize,
+      measurementUnit: payload.measurementUnit,
       shipmentReference: payload.shipmentReference,
       productId: product._id,
       productName: product.name,
@@ -2593,7 +2601,9 @@ apiRouter.get("/management/accounting/import-batches/:containerReference", async
     const firstRow = batchRows[0];
     response.json({
       containerReference: firstRow.containerReference,
+      containerType: firstRow.containerType ?? "seco",
       containerSize: firstRow.containerSize,
+      measurementUnit: firstRow.measurementUnit ?? "m3",
       shipmentReference: firstRow.shipmentReference ?? "",
       importDate: firstRow.importDate,
       notes: firstRow.notes ?? "",

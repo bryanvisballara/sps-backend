@@ -25,7 +25,9 @@ const importExpenseItemSchema = new Schema(
 const importCostSchema = new Schema(
   {
     containerReference: { type: String, required: true, trim: true },
+    containerType: { type: String, required: true, enum: ["refrigerado", "seco"], default: "seco" },
     containerSize: { type: String, required: true, enum: ["20ft", "40ft"] },
+    measurementUnit: { type: String, required: true, enum: ["m3", "pie3", "kg"], default: "m3" },
     productId: { type: Types.ObjectId, ref: "Product", required: true },
     productName: { type: String, required: true, trim: true },
     productSku: { type: String, required: true, trim: true },

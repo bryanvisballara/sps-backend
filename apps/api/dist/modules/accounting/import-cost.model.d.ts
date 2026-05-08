@@ -2,7 +2,9 @@ import { Schema, Types } from "mongoose";
 export declare const ImportCost: import("mongoose").Model<{
     active: boolean;
     containerReference: string;
+    containerType: "refrigerado" | "seco";
     containerSize: "20ft" | "40ft";
+    measurementUnit: "m3" | "pie3" | "kg";
     productId: {
         prototype?: Types.ObjectId | null | undefined;
         cacheHexString?: unknown;
@@ -85,7 +87,9 @@ export declare const ImportCost: import("mongoose").Model<{
 } & import("mongoose").DefaultTimestampProps, {}, {}, {}, import("mongoose").Document<unknown, {}, {
     active: boolean;
     containerReference: string;
+    containerType: "refrigerado" | "seco";
     containerSize: "20ft" | "40ft";
+    measurementUnit: "m3" | "pie3" | "kg";
     productId: {
         prototype?: Types.ObjectId | null | undefined;
         cacheHexString?: unknown;
@@ -170,7 +174,9 @@ export declare const ImportCost: import("mongoose").Model<{
 }> & {
     active: boolean;
     containerReference: string;
+    containerType: "refrigerado" | "seco";
     containerSize: "20ft" | "40ft";
+    measurementUnit: "m3" | "pie3" | "kg";
     productId: {
         prototype?: Types.ObjectId | null | undefined;
         cacheHexString?: unknown;
@@ -259,7 +265,9 @@ export declare const ImportCost: import("mongoose").Model<{
 }, {
     active: boolean;
     containerReference: string;
+    containerType: "refrigerado" | "seco";
     containerSize: "20ft" | "40ft";
+    measurementUnit: "m3" | "pie3" | "kg";
     productId: {
         prototype?: Types.ObjectId | null | undefined;
         cacheHexString?: unknown;
@@ -342,7 +350,9 @@ export declare const ImportCost: import("mongoose").Model<{
 } & import("mongoose").DefaultTimestampProps, import("mongoose").Document<unknown, {}, import("mongoose").FlatRecord<{
     active: boolean;
     containerReference: string;
+    containerType: "refrigerado" | "seco";
     containerSize: "20ft" | "40ft";
+    measurementUnit: "m3" | "pie3" | "kg";
     productId: {
         prototype?: Types.ObjectId | null | undefined;
         cacheHexString?: unknown;
@@ -427,7 +437,9 @@ export declare const ImportCost: import("mongoose").Model<{
 }>> & import("mongoose").FlatRecord<{
     active: boolean;
     containerReference: string;
+    containerType: "refrigerado" | "seco";
     containerSize: "20ft" | "40ft";
+    measurementUnit: "m3" | "pie3" | "kg";
     productId: {
         prototype?: Types.ObjectId | null | undefined;
         cacheHexString?: unknown;
