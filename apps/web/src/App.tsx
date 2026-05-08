@@ -202,6 +202,7 @@ type CatalogWhatsappDraftAttachment = {
 };
 
 type InventorySummaryRow = {
+  stockRowId: string | null;
   productId: string;
   sku: string;
   name: string;
@@ -1902,6 +1903,10 @@ function roundCurrencyValue(value: number) {
   return Math.round((Number.isFinite(value) ? value : 0) * 100) / 100;
 }
 
+function buildInventoryEntryLotKey(productId: string, expirationDate: string) {
+  return `${productId.trim()}::${expirationDate.trim() || "no-expiration"}`;
+}
+
 function isCreationSectionKey(
   value: string,
 ): value is (typeof creationSectionKeys)[number] {
@@ -2275,7 +2280,32 @@ export default function App() {
       };
     })
     .filter((item) => (item.stockCurrent !== null && Number.isFinite(item.stockCurrent) && item.stockCurrent >= 0) || (Number.isFinite(item.quantity) && item.quantity > 0));
-  const inventoryRowsByProductId = new Map(inventoryRows.map((row) => [row.productId, row]));
+  const inventoryRowsByProductId = inventoryRows.reduce((map, row) => {
+    const current = map.get(row.productId);
+
+    if (current) {
+      const nextQuantity = current.quantity + row.quantity;
+      const nextTotalCost = current.totalCost + row.totalCost;
+      const nextTotalSale = current.totalSale + row.totalSale;
+
+      map.set(row.productId, {
+        ...current,
+        quantity: nextQuantity,
+        totalCost: nextTotalCost,
+        totalSale: nextTotalSale,
+        unitCost: nextQuantity > 0 ? nextTotalCost / nextQuantity : 0,
+        salePrice: nextQuantity > 0 ? nextTotalSale / nextQuantity : 0,
+        isExpiringSoon: current.isExpiringSoon || row.isExpiringSoon,
+        expirationDate: current.expirationDate && row.expirationDate
+          ? (current.expirationDate <= row.expirationDate ? current.expirationDate : row.expirationDate)
+          : current.expirationDate ?? row.expirationDate,
+      });
+      return map;
+    }
+
+    map.set(row.productId, { ...row });
+    return map;
+  }, new Map<string, InventorySummaryRow>());
   const productOptionsById = new Map(productOptions.map((product) => [product.value, product]));
   const warehouseOrderClient = selectedWarehouseOrderDetail
     ? storeOptionsById.get(selectedWarehouseOrderDetail.storeId) ?? null
@@ -3891,10 +3921,12 @@ export default function App() {
       }
     }
 
+    const nextLotKey = buildInventoryEntryLotKey(productId, expirationDate);
+
     setInventoryEntryItems((current) => {
-      if (current.some((item) => item.productId === productId)) {
+      if (current.some((item) => buildInventoryEntryLotKey(item.productId, item.expirationDate) === nextLotKey)) {
         return current.map((item) => (
-          item.productId === productId
+          buildInventoryEntryLotKey(item.productId, item.expirationDate) === nextLotKey
             ? {
                 ...item,
                 quantity: String(quantity),
@@ -4166,6 +4198,7 @@ export default function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          stockRowId: selectedInventoryAdjustmentRow.stockRowId,
           productId: selectedInventoryAdjustmentRow.productId,
           quantity,
           reason: inventoryAdjustmentForm.reason,
@@ -4243,8 +4276,8 @@ export default function App() {
         return { productId, quantity, costUsd, salePriceAwg, expirationDate, productWeightKg };
       });
 
-      if (new Set(normalizedItems.map((item) => item.productId)).size !== normalizedItems.length) {
-        setInventoryEntryStatus({ tone: "error", message: "No repitas productos en el mismo registro de inventario." });
+      if (new Set(normalizedItems.map((item) => buildInventoryEntryLotKey(item.productId, item.expirationDate))).size !== normalizedItems.length) {
+        setInventoryEntryStatus({ tone: "error", message: "No repitas el mismo lote dentro del mismo registro de inventario." });
         return;
       }
 
@@ -7899,7 +7932,7 @@ export default function App() {
                         </tr>
                       ) : filteredInventoryRows.length > 0 ? (
                         filteredInventoryRows.map((row) => (
-                          <tr key={row.productId}>
+                          <tr key={row.stockRowId ?? `${row.productId}-${row.expirationDate ?? "sin-caducidad"}`}>
                             <td>{`${row.name} (${row.sku})`}</td>
                             <td>{row.quantity}</td>
                             <td>{formatCurrencyUpTwoDecimals(row.unitCost)}</td>
@@ -8401,7 +8434,7 @@ export default function App() {
                     <tbody>
                       {dashboardExpiringProducts.length > 0 ? (
                         dashboardExpiringProducts.map((row) => (
-                          <tr key={row.productId}>
+                          <tr key={row.stockRowId ?? `${row.productId}-${row.expirationDate ?? "sin-caducidad"}`}>
                             <td>{row.name}</td>
                             <td>{row.sku}</td>
                             <td>{String(row.expirationDate).slice(0, 10)}</td>
@@ -11361,7 +11394,7 @@ export default function App() {
                       </tr>
                     ) : filteredInventoryRows.length > 0 ? (
                       filteredInventoryRows.map((row) => (
-                        <tr key={row.productId}>
+                        <tr key={row.stockRowId ?? `${row.productId}-${row.expirationDate ?? "sin-caducidad"}`}>
                           <td>{`${row.name} (${row.sku})`}</td>
                           <td>{row.quantity}</td>
                           <td>{formatCurrencyUpTwoDecimals(row.unitCost)}</td>
@@ -12236,7 +12269,7 @@ export default function App() {
                       </thead>
                       <tbody>
                         {selectedWarehouseOrderDetail.items.map((item) => {
-                          const invRow = inventoryRows.find((r) => r.productId === item.productId);
+                          const invRow = inventoryRowsByProductId.get(item.productId);
                           const unitCostAwg = Number(invRow?.unitCost ?? 0);
                           const salePriceAwg = Number(invRow?.salePrice ?? 0);
                           const unitUtilityAwg = salePriceAwg - unitCostAwg;
