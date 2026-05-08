@@ -1769,10 +1769,20 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
         throw new Error(`El producto #${index + 1} no es valido.`);
       }
 
-      const item = entry as { productId?: unknown; quantity?: unknown; costUsd?: unknown };
+      const item = entry as {
+        productId?: unknown;
+        quantity?: unknown;
+        costUsd?: unknown;
+        salePriceAwg?: unknown;
+        expirationDate?: unknown;
+        productWeightKg?: unknown;
+      };
       const productId = typeof item.productId === "string" ? item.productId.trim() : "";
       const quantity = Number(item.quantity ?? 0);
       const costUsd = Number(item.costUsd ?? 0);
+      const salePriceAwg = Number(item.salePriceAwg ?? 0);
+      const expirationDateValue = typeof item.expirationDate === "string" ? item.expirationDate.trim() : "";
+      const productWeightKg = Number(item.productWeightKg ?? 0);
 
       if (!productId) {
         throw new Error(`El producto #${index + 1} no tiene identificador valido.`);
@@ -1786,7 +1796,23 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
         throw new Error(`El costo del producto #${index + 1} debe ser cero o mayor.`);
       }
 
-      return { productId, quantity, costUsd };
+      if (!Number.isFinite(salePriceAwg) || salePriceAwg < 0) {
+        throw new Error(`La venta AWG del producto #${index + 1} debe ser cero o mayor.`);
+      }
+
+      if (!Number.isFinite(productWeightKg) || productWeightKg < 0) {
+        throw new Error(`El peso del producto #${index + 1} debe ser cero o mayor.`);
+      }
+
+      if (expirationDateValue) {
+        const expirationDate = new Date(expirationDateValue);
+
+        if (Number.isNaN(expirationDate.getTime())) {
+          throw new Error(`La fecha de caducidad del producto #${index + 1} no es valida.`);
+        }
+      }
+
+      return { productId, quantity, costUsd, salePriceAwg, expirationDateValue, productWeightKg };
     });
 
     const uniqueProductIds = Array.from(new Set(items.map((item: (typeof items)[number]) => item.productId)));
@@ -1852,6 +1878,9 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
       await Product.findByIdAndUpdate(product._id, {
         arubaPurchaseCostUsd: unitCostUsd,
         arubaUsdToAwgRate: usdToAwgRate,
+        salePrice: item.salePriceAwg,
+        productWeightKg: item.productWeightKg,
+        expirationDate: item.expirationDateValue ? new Date(item.expirationDateValue) : null,
       }, {
         runValidators: true,
       });

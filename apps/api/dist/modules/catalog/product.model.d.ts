@@ -9,6 +9,7 @@ export declare const Product: import("mongoose").Model<{
     supplier: string;
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
+    productWeightKg: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
     inventoryAlert: number;
@@ -28,6 +29,7 @@ export declare const Product: import("mongoose").Model<{
     supplier: string;
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
+    productWeightKg: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
     inventoryAlert: number;
@@ -49,6 +51,7 @@ export declare const Product: import("mongoose").Model<{
     supplier: string;
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
+    productWeightKg: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
     inventoryAlert: number;
@@ -74,6 +77,7 @@ export declare const Product: import("mongoose").Model<{
     supplier: string;
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
+    productWeightKg: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
     inventoryAlert: number;
@@ -93,6 +97,7 @@ export declare const Product: import("mongoose").Model<{
     supplier: string;
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
+    productWeightKg: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
     inventoryAlert: number;
@@ -114,6 +119,7 @@ export declare const Product: import("mongoose").Model<{
     supplier: string;
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
+    productWeightKg: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
     inventoryAlert: number;

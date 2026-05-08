@@ -30,6 +30,7 @@ const productSchema = new Schema(
       },
       default: null,
     },
+    productWeightKg: { type: Number, default: 0, min: 0 },
     expirationDate: { type: Date, default: null },
     unitsPerBox: { type: Number, required: true, min: 1 },
     unitsPerBoxUnit: {
