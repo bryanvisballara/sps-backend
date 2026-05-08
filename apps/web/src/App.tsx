@@ -289,6 +289,10 @@ type ContainerImportProductFormState = {
   purchaseBoxCostOrigin: string;
 };
 
+type ContainerType = "refrigerado" | "seco";
+
+type ContainerMeasurementUnit = "m3" | "pie3" | "kg";
+
 type ImportExpenseDocument = {
   name: string;
   url: string;
@@ -306,12 +310,31 @@ type ImportExpenseItemFormState = {
 };
 
 type ContainerImportFormState = {
+  containerType: ContainerType;
   containerSize: "20ft" | "40ft";
+  measurementUnit: ContainerMeasurementUnit;
   importDate: string;
   shipmentReference: string;
   expenseItems: ImportExpenseItemFormState[];
   notes: string;
   products: ContainerImportProductFormState[];
+};
+
+type ImportContainerTemplateRecord = {
+  id: string;
+  name: string;
+  containerType: ContainerType;
+  containerSize: "20ft" | "40ft";
+  measurementUnit: ContainerMeasurementUnit;
+  notes: string;
+  expenseItems: Array<{
+    key: ImportExpenseItemFormState["key"];
+    label: string;
+    amount: number;
+    documents: ImportExpenseDocument[];
+  }>;
+  products: ContainerImportProductFormState[];
+  updatedAt: string;
 };
 
 type WarehouseLocationRecord = {
@@ -435,7 +458,9 @@ type AccountingView = "overview" | "container-import";
 type ImportCostRecord = {
   _id?: string;
   containerReference?: string;
+  containerType?: ContainerType;
   containerSize?: string;
+  measurementUnit?: ContainerMeasurementUnit;
   shipmentReference?: string;
   expenseItems?: Array<{
     key: string;
@@ -467,7 +492,9 @@ type ImportCostRecord = {
 
 type ImportBatchRecord = {
   containerReference: string;
+  containerType: ContainerType;
   containerSize: "20ft" | "40ft";
+  measurementUnit: ContainerMeasurementUnit;
   shipmentReference: string;
   importDate: string;
   notes: string;
@@ -595,6 +622,8 @@ const apiBaseUrl =
 const cloudinaryCloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME as string | undefined;
 const cloudinaryUploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET as string | undefined;
 const sessionStorageKey = "spste-session-user";
+const containerImportTemplateStorageKey = "spste-import-container-templates";
+const cubicFeetPerCubicMeter = 35.3147;
 const dashboardKpiSectionMap: Record<string, ActiveSection> = {
   Clientes: "clients",
   Productos: "products",
@@ -639,6 +668,47 @@ function readPersistedSessionUser(): SessionUser | null {
   } catch {
     window.localStorage.removeItem(sessionStorageKey);
     return null;
+  }
+}
+
+function readPersistedImportContainerTemplates(): ImportContainerTemplateRecord[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(containerImportTemplateStorageKey);
+
+    if (!storedValue) {
+      return [];
+    }
+
+    const parsedValue = JSON.parse(storedValue);
+
+    if (!Array.isArray(parsedValue)) {
+      window.localStorage.removeItem(containerImportTemplateStorageKey);
+      return [];
+    }
+
+    return parsedValue.filter((entry): entry is ImportContainerTemplateRecord => {
+      if (typeof entry !== "object" || entry === null) {
+        return false;
+      }
+
+      const current = entry as Record<string, unknown>;
+      return (
+        typeof current.id === "string"
+        && typeof current.name === "string"
+        && typeof current.containerType === "string"
+        && typeof current.containerSize === "string"
+        && typeof current.measurementUnit === "string"
+        && Array.isArray(current.products)
+        && Array.isArray(current.expenseItems)
+      );
+    });
+  } catch {
+    window.localStorage.removeItem(containerImportTemplateStorageKey);
+    return [];
   }
 }
 
@@ -738,6 +808,17 @@ const containerSizeOptions = [
   { value: "40ft", label: "40 pies" },
 ] as const;
 
+const containerTypeOptions = [
+  { value: "refrigerado", label: "Refrigerado" },
+  { value: "seco", label: "Seco" },
+] as const;
+
+const containerMeasurementUnitOptions = [
+  { value: "m3", label: "m3" },
+  { value: "pie3", label: "pie3" },
+  { value: "kg", label: "kg" },
+] as const;
+
 const importExpenseTypeOptions = [
   { value: "freight", label: "Flete" },
   { value: "customs", label: "Nacionalizacion" },
@@ -764,6 +845,11 @@ const inventoryAdjustmentReasonOptions = [
 const containerCapacityBySize = {
   "20ft": 30,
   "40ft": 60,
+} as const;
+
+const containerCapacityKgBySize = {
+  "20ft": 24000,
+  "40ft": 48000,
 } as const;
 
 const phoneCountryOptions = [
@@ -1730,7 +1816,9 @@ function createInventoryEntryDraftItem(productId = ""): InventoryEntryDraftItem 
 
 function createInitialContainerImportForm(products: ProductOption[]): ContainerImportFormState {
   return {
+    containerType: "seco",
     containerSize: "20ft",
+    measurementUnit: "m3",
     importDate: new Date().toISOString().slice(0, 10),
     shipmentReference: "",
     expenseItems: [],
@@ -1739,12 +1827,20 @@ function createInitialContainerImportForm(products: ProductOption[]): ContainerI
   };
 }
 
+function formatContainerType(value: ContainerType) {
+  return containerTypeOptions.find((option) => option.value === value)?.label ?? value;
+}
+
 function formatContainerSize(value: string) {
   return containerSizeOptions.find((option) => option.value === value)?.label ?? value;
 }
 
 function getContainerCapacityCubicMeters(value: ContainerImportFormState["containerSize"]) {
   return containerCapacityBySize[value] ?? 30;
+}
+
+function getContainerCapacityKilograms(value: ContainerImportFormState["containerSize"]) {
+  return containerCapacityKgBySize[value] ?? 24000;
 }
 
 function calculateProductBoxVolumeCubicMeters(product: Pick<ProductOption, "boxLengthCm" | "boxWidthCm" | "boxHeightCm">) {
@@ -1772,6 +1868,32 @@ function formatCubicMeters(value: number) {
     minimumFractionDigits: value < 10 ? 2 : 1,
     maximumFractionDigits: value < 10 ? 2 : 1,
   }).format(Number.isFinite(value) ? value : 0)} m3`;
+}
+
+function formatCubicFeet(value: number) {
+  return `${new Intl.NumberFormat("es-CO", {
+    minimumFractionDigits: value < 100 ? 2 : 1,
+    maximumFractionDigits: value < 100 ? 2 : 1,
+  }).format(Number.isFinite(value) ? value : 0)} pie3`;
+}
+
+function formatKilograms(value: number) {
+  return `${new Intl.NumberFormat("es-CO", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(Number.isFinite(value) ? value : 0)} kg`;
+}
+
+function formatContainerMeasure(value: number, unit: ContainerMeasurementUnit) {
+  if (unit === "kg") {
+    return formatKilograms(value);
+  }
+
+  if (unit === "pie3") {
+    return formatCubicFeet(value);
+  }
+
+  return formatCubicMeters(value);
 }
 
 function roundCurrencyValue(value: number) {
@@ -1943,6 +2065,12 @@ export default function App() {
   const [containerImportForm, setContainerImportForm] = useState<ContainerImportFormState>(() =>
     createInitialContainerImportForm([]),
   );
+  const [importContainerTemplates, setImportContainerTemplates] = useState<ImportContainerTemplateRecord[]>(() =>
+    readPersistedImportContainerTemplates(),
+  );
+  const [selectedImportTemplateId, setSelectedImportTemplateId] = useState("");
+  const [saveImportAsTemplate, setSaveImportAsTemplate] = useState(false);
+  const [importTemplateName, setImportTemplateName] = useState("");
   const [warehouseLocationForm, setWarehouseLocationForm] = useState<WarehouseLocationFormState>(() =>
     createInitialWarehouseLocationForm(),
   );
@@ -2024,6 +2152,14 @@ export default function App() {
 
     window.localStorage.removeItem(sessionStorageKey);
   }, [sessionUser]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(containerImportTemplateStorageKey, JSON.stringify(importContainerTemplates));
+  }, [importContainerTemplates]);
 
   const collectionConfigs = getCollectionConfigs(categoryOptions, supplierOptions);
   const selectedCollection =
@@ -2233,6 +2369,8 @@ export default function App() {
   }, []);
   const selectedContainerImportProducts = containerImportForm.products.filter((product) => product.selected);
   const selectedContainerCapacityCubicMeters = getContainerCapacityCubicMeters(containerImportForm.containerSize);
+  const selectedContainerCapacityKilograms = getContainerCapacityKilograms(containerImportForm.containerSize);
+  const isContainerMeasurementKg = containerImportForm.measurementUnit === "kg";
   const selectedContainerVolumeMetrics = containerProductMetrics.filter((metric) => metric.currentProduct.selected);
   const selectedContainerImportQuantity = selectedContainerImportProducts.reduce(
     (sum, product) => sum + Number(product.importedQuantity || 0),
@@ -2261,12 +2399,22 @@ export default function App() {
     (sum, metric) => sum + metric.estimatedVolumeCubicMeters,
     0,
   );
-  const selectedContainerRemainingCubicMeters = selectedContainerCapacityCubicMeters - selectedContainerUsedCubicMeters;
-  const selectedContainerOverflowCubicMeters = Math.max(selectedContainerUsedCubicMeters - selectedContainerCapacityCubicMeters, 0);
-  const selectedContainerFillPercentage = selectedContainerCapacityCubicMeters > 0
-    ? Math.min((selectedContainerUsedCubicMeters / selectedContainerCapacityCubicMeters) * 100, 100)
+  const selectedContainerCapacityByUnit = isContainerMeasurementKg
+    ? selectedContainerCapacityKilograms
+    : containerImportForm.measurementUnit === "pie3"
+      ? selectedContainerCapacityCubicMeters * cubicFeetPerCubicMeter
+      : selectedContainerCapacityCubicMeters;
+  const selectedContainerUsedByUnit = isContainerMeasurementKg
+    ? selectedContainerImportQuantity
+    : containerImportForm.measurementUnit === "pie3"
+      ? selectedContainerUsedCubicMeters * cubicFeetPerCubicMeter
+      : selectedContainerUsedCubicMeters;
+  const selectedContainerRemainingByUnit = selectedContainerCapacityByUnit - selectedContainerUsedByUnit;
+  const selectedContainerOverflowByUnit = Math.max(selectedContainerUsedByUnit - selectedContainerCapacityByUnit, 0);
+  const selectedContainerFillPercentage = selectedContainerCapacityByUnit > 0
+    ? Math.min((selectedContainerUsedByUnit / selectedContainerCapacityByUnit) * 100, 100)
     : 0;
-  const selectedContainerMetricsWithoutVolume = selectedContainerVolumeMetrics.filter(
+  const selectedContainerMetricsWithoutVolume = isContainerMeasurementKg ? [] : selectedContainerVolumeMetrics.filter(
     (metric) => metric.importedQuantity > 0 && !metric.hasVolumeConfig,
   );
   const currentMonthKey = new Date().toISOString().slice(0, 7);
@@ -4874,12 +5022,18 @@ export default function App() {
   function openImportCostPage() {
     clearAccountingStatus("importCosts");
     setEditingImportBatchReference("");
+    setSelectedImportTemplateId("");
+    setSaveImportAsTemplate(false);
+    setImportTemplateName("");
     setContainerImportForm(createInitialContainerImportForm(productOptions));
     setAccountingView("container-import");
   }
 
   function closeImportCostPage() {
     setEditingImportBatchReference("");
+    setSelectedImportTemplateId("");
+    setSaveImportAsTemplate(false);
+    setImportTemplateName("");
     setAccountingView("overview");
   }
 
@@ -4903,7 +5057,9 @@ export default function App() {
 
       const productMap = new Map(data.products.map((product) => [product.productId, product]));
       setContainerImportForm({
+        containerType: data.containerType ?? "seco",
         containerSize: data.containerSize ?? "20ft",
+        measurementUnit: data.measurementUnit ?? "m3",
         importDate: String(data.importDate).slice(0, 10),
         shipmentReference: data.shipmentReference ?? "",
         expenseItems: (data.expenseItems ?? []).map((expense) =>
@@ -4936,6 +5092,9 @@ export default function App() {
           };
         }),
       });
+      setSelectedImportTemplateId("");
+      setSaveImportAsTemplate(false);
+      setImportTemplateName("");
       setAccountingView("container-import");
     } catch {
       setAccountingStatuses((current) => ({
@@ -5180,6 +5339,104 @@ export default function App() {
             }
           : expense,
       ),
+    }));
+  }
+
+  function saveCurrentImportFormAsTemplate() {
+    const fallbackName = `Plantilla ${formatContainerType(containerImportForm.containerType)} ${formatContainerSize(containerImportForm.containerSize)} ${containerImportForm.measurementUnit.toUpperCase()}`;
+    const nextTemplateName = importTemplateName.trim() || fallbackName;
+    const now = new Date().toISOString();
+    const normalizedName = nextTemplateName.toLowerCase();
+
+    const templatePayload: Omit<ImportContainerTemplateRecord, "id"> = {
+      name: nextTemplateName,
+      containerType: containerImportForm.containerType,
+      containerSize: containerImportForm.containerSize,
+      measurementUnit: containerImportForm.measurementUnit,
+      notes: containerImportForm.notes,
+      expenseItems: containerImportForm.expenseItems.map((expense) => ({
+        key: expense.key,
+        label: expense.label,
+        amount: Number(expense.amount || 0),
+        documents: expense.documents,
+      })),
+      products: containerImportForm.products.map((product) => ({ ...product })),
+      updatedAt: now,
+    };
+
+    let storedName = nextTemplateName;
+
+    setImportContainerTemplates((current) => {
+      const existingTemplate = current.find((template) => template.name.trim().toLowerCase() === normalizedName);
+
+      if (existingTemplate) {
+        storedName = existingTemplate.name;
+        return current.map((template) =>
+          template.id === existingTemplate.id
+            ? {
+                ...templatePayload,
+                id: existingTemplate.id,
+                name: existingTemplate.name,
+              }
+            : template,
+        );
+      }
+
+      const createdTemplate: ImportContainerTemplateRecord = {
+        ...templatePayload,
+        id: `import-template-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      };
+
+      storedName = createdTemplate.name;
+      return [createdTemplate, ...current].slice(0, 30);
+    });
+
+    return storedName;
+  }
+
+  function applySelectedImportTemplate(templateId: string) {
+    const selectedTemplate = importContainerTemplates.find((template) => template.id === templateId);
+
+    if (!selectedTemplate) {
+      return;
+    }
+
+    const productsById = new Map(selectedTemplate.products.map((product) => [product.productId, product]));
+
+    setContainerImportForm((current) => ({
+      ...current,
+      containerType: selectedTemplate.containerType,
+      containerSize: selectedTemplate.containerSize,
+      measurementUnit: selectedTemplate.measurementUnit,
+      notes: selectedTemplate.notes,
+      expenseItems: selectedTemplate.expenseItems.map((expense) =>
+        createImportExpenseItem(expense.key, {
+          label: expense.label,
+          amount: String(expense.amount),
+          documents: expense.documents,
+        }),
+      ),
+      products: buildContainerImportProducts(productOptions).map((product) => {
+        const templateProduct = productsById.get(product.productId);
+
+        if (!templateProduct) {
+          return product;
+        }
+
+        return {
+          ...product,
+          selected: templateProduct.selected,
+          boxCount: templateProduct.boxCount,
+          importedQuantity: templateProduct.importedQuantity,
+          purchaseUnitCostOrigin: templateProduct.purchaseUnitCostOrigin,
+          purchaseBoxCostOrigin: templateProduct.purchaseBoxCostOrigin,
+        };
+      }),
+    }));
+
+    setAccountingStatuses((current) => ({
+      ...current,
+      importCosts: { tone: "success", message: `Plantilla ${selectedTemplate.name} aplicada.` },
     }));
   }
 
@@ -5578,7 +5835,7 @@ export default function App() {
   }
 
   function handleContainerImportFieldChange(
-    field: Exclude<keyof ContainerImportFormState, "products">,
+    field: "containerType" | "containerSize" | "measurementUnit" | "importDate" | "shipmentReference" | "notes",
     value: string,
   ) {
     setContainerImportForm((current) => ({
@@ -6108,12 +6365,12 @@ export default function App() {
       return;
     }
 
-    if (selectedContainerOverflowCubicMeters > 0) {
+    if (selectedContainerOverflowByUnit > 0) {
       setAccountingStatuses((current) => ({
         ...current,
         importCosts: {
           tone: "error",
-          message: `El contenedor supera su capacidad por ${formatCubicMeters(selectedContainerOverflowCubicMeters)}. Ajusta cantidades o cambia el tamano del contenedor.`,
+          message: `El contenedor supera su capacidad por ${formatContainerMeasure(selectedContainerOverflowByUnit, containerImportForm.measurementUnit)}. Ajusta cantidades o cambia el tamano del contenedor.`,
         },
       }));
       return;
@@ -6128,7 +6385,9 @@ export default function App() {
         method: editingImportBatchReference ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          containerType: containerImportForm.containerType,
           containerSize: containerImportForm.containerSize,
+          measurementUnit: containerImportForm.measurementUnit,
           importDate: containerImportForm.importDate,
           shipmentReference: containerImportForm.shipmentReference.trim(),
           expenseItems: containerImportForm.expenseItems.map((expense) => ({
@@ -6156,16 +6415,21 @@ export default function App() {
         return;
       }
 
+      const storedTemplateName = saveImportAsTemplate ? saveCurrentImportFormAsTemplate() : "";
+
       setAccountingStatuses((current) => ({
         ...current,
         importCosts: {
           tone: "success",
           message: editingImportBatchReference
-            ? "Exportacion actualizada correctamente."
-            : `Exportacion guardada para ${selectedProducts.length} producto${selectedProducts.length === 1 ? "" : "s"}.`,
+            ? `Exportacion actualizada correctamente.${storedTemplateName ? ` Plantilla ${storedTemplateName} guardada.` : ""}`
+            : `Exportacion guardada para ${selectedProducts.length} producto${selectedProducts.length === 1 ? "" : "s"}.${storedTemplateName ? ` Plantilla ${storedTemplateName} guardada.` : ""}`,
         },
       }));
       setEditingImportBatchReference("");
+      setSelectedImportTemplateId("");
+      setSaveImportAsTemplate(false);
+      setImportTemplateName("");
       setContainerImportForm(createInitialContainerImportForm(productOptions));
       setAccountingView("overview");
       await refreshAccountingData();
@@ -8829,6 +9093,41 @@ export default function App() {
 
               <form className="import-page-form" onInputCapture={handlePortalInputCapture} onSubmit={(event) => void handleImportCostSubmit(event)}>
                 <div className="creation-form import-page-grid">
+                  <label className="field field-full">
+                    <span>Plantilla guardada</span>
+                    <div className="catalog-form-actions">
+                      <select
+                        value={selectedImportTemplateId}
+                        onChange={(event) => setSelectedImportTemplateId(event.target.value)}
+                      >
+                        <option value="">Selecciona una plantilla</option>
+                        {importContainerTemplates.map((template) => (
+                          <option key={template.id} value={template.id}>{template.name}</option>
+                        ))}
+                      </select>
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={() => applySelectedImportTemplate(selectedImportTemplateId)}
+                        disabled={!selectedImportTemplateId}
+                      >
+                        Aplicar plantilla
+                      </button>
+                    </div>
+                  </label>
+
+                  <label className="field field-third">
+                    <span>Tipo de contenedor</span>
+                    <select
+                      value={containerImportForm.containerType}
+                      onChange={(event) => handleContainerImportFieldChange("containerType", event.target.value)}
+                    >
+                      {containerTypeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+
                   <label className="field field-third">
                     <span>Tamano del contenedor</span>
                     <select
@@ -8836,6 +9135,18 @@ export default function App() {
                       onChange={(event) => handleContainerImportFieldChange("containerSize", event.target.value)}
                     >
                       {containerSizeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="field field-third">
+                    <span>Unidades de medida</span>
+                    <select
+                      value={containerImportForm.measurementUnit}
+                      onChange={(event) => handleContainerImportFieldChange("measurementUnit", event.target.value)}
+                    >
+                      {containerMeasurementUnitOptions.map((option) => (
                         <option key={option.value} value={option.value}>{option.label}</option>
                       ))}
                     </select>
@@ -9028,6 +9339,10 @@ export default function App() {
 
                 <div className="import-summary-grid">
                   <article className="import-summary-card">
+                    <p>Tipo de contenedor</p>
+                    <strong>{formatContainerType(containerImportForm.containerType)}</strong>
+                  </article>
+                  <article className="import-summary-card">
                     <p>Contenedor</p>
                     <strong>{formatContainerSize(containerImportForm.containerSize)}</strong>
                   </article>
@@ -9036,20 +9351,16 @@ export default function App() {
                     <strong>{selectedContainerImportProducts.length}</strong>
                   </article>
                   <article className="import-summary-card">
-                    <p>Unidades seleccionadas</p>
-                    <strong>{selectedContainerImportQuantity}</strong>
-                  </article>
-                  <article className="import-summary-card">
                     <p>Gastos generales</p>
                     <strong>{formatCurrency(containerGeneralCostsTotal)}</strong>
                   </article>
                 </div>
 
                 <div className="container-capacity-panel">
-                  <article className={`container-visual-card ${selectedContainerOverflowCubicMeters > 0 ? "is-overflow" : ""}`}>
+                  <article className={`container-visual-card ${selectedContainerOverflowByUnit > 0 ? "is-overflow" : ""}`}>
                     <div className="container-visual-header">
                       <div>
-                        <p className="section-label">Espacio del contenedor</p>
+                        <p className="section-label">Capacidad del contenedor</p>
                         <h3>Capacidad ocupada</h3>
                       </div>
                       <strong>{Math.min(selectedContainerFillPercentage, 100).toFixed(0)}%</strong>
@@ -9068,19 +9379,19 @@ export default function App() {
 
                     <div className="container-visual-stats">
                       <div>
-                        <span>Capacidad total</span>
-                        <strong>{formatCubicMeters(selectedContainerCapacityCubicMeters)}</strong>
+                        <span>Capacidad total ({containerImportForm.measurementUnit})</span>
+                        <strong>{formatContainerMeasure(selectedContainerCapacityByUnit, containerImportForm.measurementUnit)}</strong>
                       </div>
                       <div>
-                        <span>Espacio usado</span>
-                        <strong>{formatCubicMeters(selectedContainerUsedCubicMeters)}</strong>
+                        <span>Usado ({containerImportForm.measurementUnit})</span>
+                        <strong>{formatContainerMeasure(selectedContainerUsedByUnit, containerImportForm.measurementUnit)}</strong>
                       </div>
                       <div>
-                        <span>{selectedContainerOverflowCubicMeters > 0 ? "Exceso" : "Espacio restante"}</span>
+                        <span>{selectedContainerOverflowByUnit > 0 ? "Exceso" : "Disponible"}</span>
                         <strong>
-                          {selectedContainerOverflowCubicMeters > 0
-                            ? formatCubicMeters(selectedContainerOverflowCubicMeters)
-                            : formatCubicMeters(Math.max(selectedContainerRemainingCubicMeters, 0))}
+                          {selectedContainerOverflowByUnit > 0
+                            ? formatContainerMeasure(selectedContainerOverflowByUnit, containerImportForm.measurementUnit)
+                            : formatContainerMeasure(Math.max(selectedContainerRemainingByUnit, 0), containerImportForm.measurementUnit)}
                         </strong>
                       </div>
                     </div>
@@ -9110,7 +9421,16 @@ export default function App() {
                               </span>
                             </div>
                             <strong>
-                              {metric.hasVolumeConfig ? formatCubicMeters(metric.estimatedVolumeCubicMeters) : "Sin volumen"}
+                              {metric.hasVolumeConfig
+                                ? formatContainerMeasure(
+                                    containerImportForm.measurementUnit === "pie3"
+                                      ? metric.estimatedVolumeCubicMeters * cubicFeetPerCubicMeter
+                                      : metric.estimatedVolumeCubicMeters,
+                                    containerImportForm.measurementUnit === "kg" ? "m3" : containerImportForm.measurementUnit,
+                                  )
+                                : isContainerMeasurementKg
+                                  ? "No aplica"
+                                  : "Sin volumen"}
                             </strong>
                           </article>
                         ))}
@@ -9125,13 +9445,13 @@ export default function App() {
                       </p>
                     ) : null}
 
-                    {selectedContainerOverflowCubicMeters > 0 ? (
+                    {selectedContainerOverflowByUnit > 0 ? (
                       <p className="form-feedback error">
-                        El contenedor ya esta sobrecargado por {formatCubicMeters(selectedContainerOverflowCubicMeters)}.
+                        El contenedor ya esta sobrecargado por {formatContainerMeasure(selectedContainerOverflowByUnit, containerImportForm.measurementUnit)}.
                       </p>
                     ) : selectedContainerVolumeMetrics.length > 0 ? (
                       <p className="form-feedback success">
-                        Quedan disponibles {formatCubicMeters(Math.max(selectedContainerRemainingCubicMeters, 0))} dentro del contenedor.
+                        Quedan disponibles {formatContainerMeasure(Math.max(selectedContainerRemainingByUnit, 0), containerImportForm.measurementUnit)} dentro del contenedor.
                       </p>
                     ) : null}
                   </article>
@@ -9154,12 +9474,12 @@ export default function App() {
                       <span style={{ width: `${Math.min(selectedContainerFillPercentage, 100)}%` }} />
                     </div>
                     <p className="container-load-float-meta">
-                      {formatCubicMeters(selectedContainerUsedCubicMeters)} usados de {formatCubicMeters(selectedContainerCapacityCubicMeters)}
+                      {formatContainerMeasure(selectedContainerUsedByUnit, containerImportForm.measurementUnit)} usados de {formatContainerMeasure(selectedContainerCapacityByUnit, containerImportForm.measurementUnit)}
                     </p>
-                    <p className={`container-load-float-status ${selectedContainerOverflowCubicMeters > 0 ? "is-over" : ""}`}>
-                      {selectedContainerOverflowCubicMeters > 0
-                        ? `Exceso: ${formatCubicMeters(selectedContainerOverflowCubicMeters)}`
-                        : `Disponible: ${formatCubicMeters(Math.max(selectedContainerRemainingCubicMeters, 0))}`}
+                    <p className={`container-load-float-status ${selectedContainerOverflowByUnit > 0 ? "is-over" : ""}`}>
+                      {selectedContainerOverflowByUnit > 0
+                        ? `Exceso: ${formatContainerMeasure(selectedContainerOverflowByUnit, containerImportForm.measurementUnit)}`
+                        : `Disponible: ${formatContainerMeasure(Math.max(selectedContainerRemainingByUnit, 0), containerImportForm.measurementUnit)}`}
                     </p>
                   </aside>
 
@@ -9299,6 +9619,30 @@ export default function App() {
                 </div>
 
                 {accountingStatuses.importCosts ? <p className={`form-feedback ${accountingStatuses.importCosts.tone}`}>{accountingStatuses.importCosts.message}</p> : null}
+
+                <div className="creation-form import-page-grid">
+                  <label className="field field-half">
+                    <span>Guardar esta configuracion como plantilla</span>
+                    <select
+                      value={saveImportAsTemplate ? "yes" : "no"}
+                      onChange={(event) => setSaveImportAsTemplate(event.target.value === "yes")}
+                    >
+                      <option value="no">No</option>
+                      <option value="yes">Si</option>
+                    </select>
+                  </label>
+
+                  <label className="field field-half">
+                    <span>Nombre de plantilla (opcional)</span>
+                    <input
+                      type="text"
+                      value={importTemplateName}
+                      placeholder="Si lo dejas vacio, se usa un nombre predeterminado"
+                      onChange={(event) => setImportTemplateName(event.target.value)}
+                      disabled={!saveImportAsTemplate}
+                    />
+                  </label>
+                </div>
 
                 <button
                   className="submit-button"
