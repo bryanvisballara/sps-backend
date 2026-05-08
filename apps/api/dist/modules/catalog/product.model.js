@@ -25,9 +25,15 @@ const productSchema = new Schema({
         },
         default: null,
     },
+    presentation: {
+        type: String,
+        enum: ["kg", "lb", "unidad", "paquete", "caja"],
+        default: "unidad",
+        trim: true,
+    },
     productWeightKg: { type: Number, default: 0, min: 0 },
     expirationDate: { type: Date, default: null },
-    unitsPerBox: { type: Number, required: true, min: 1 },
+    unitsPerBox: { type: Number, default: 0, min: 0 },
     unitsPerBoxUnit: {
         type: String,
         enum: ["kg", "lb", "unidad", "paquete"],

@@ -9,6 +9,7 @@ export declare const Product: import("mongoose").Model<{
     supplier: string;
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
+    presentation: "kg" | "lb" | "unidad" | "paquete" | "caja";
     productWeightKg: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
@@ -29,6 +30,7 @@ export declare const Product: import("mongoose").Model<{
     supplier: string;
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
+    presentation: "kg" | "lb" | "unidad" | "paquete" | "caja";
     productWeightKg: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
@@ -51,6 +53,7 @@ export declare const Product: import("mongoose").Model<{
     supplier: string;
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
+    presentation: "kg" | "lb" | "unidad" | "paquete" | "caja";
     productWeightKg: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
@@ -77,6 +80,7 @@ export declare const Product: import("mongoose").Model<{
     supplier: string;
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
+    presentation: "kg" | "lb" | "unidad" | "paquete" | "caja";
     productWeightKg: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
@@ -97,6 +101,7 @@ export declare const Product: import("mongoose").Model<{
     supplier: string;
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
+    presentation: "kg" | "lb" | "unidad" | "paquete" | "caja";
     productWeightKg: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
@@ -119,6 +124,7 @@ export declare const Product: import("mongoose").Model<{
     supplier: string;
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
+    presentation: "kg" | "lb" | "unidad" | "paquete" | "caja";
     productWeightKg: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
