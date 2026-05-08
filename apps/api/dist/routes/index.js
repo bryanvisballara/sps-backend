@@ -677,6 +677,36 @@ function resolveWarehouseStockStatus(availableUnits, minUnits) {
     }
     return "healthy";
 }
+function normalizeOptionalDateValue(value) {
+    if (!value) {
+        return null;
+    }
+    const date = value instanceof Date ? value : new Date(String(value));
+    if (Number.isNaN(date.getTime())) {
+        return null;
+    }
+    return new Date(`${date.toISOString().slice(0, 10)}T00:00:00.000Z`);
+}
+function compareWarehouseStockLotsByConsumptionPriority(left, right) {
+    const leftExpiration = normalizeOptionalDateValue(left.expirationDate);
+    const rightExpiration = normalizeOptionalDateValue(right.expirationDate);
+    if (leftExpiration && rightExpiration) {
+        const diff = leftExpiration.getTime() - rightExpiration.getTime();
+        if (diff !== 0) {
+            return diff;
+        }
+    }
+    else if (leftExpiration) {
+        return -1;
+    }
+    else if (rightExpiration) {
+        return 1;
+    }
+    return String(left.createdAt ?? "").localeCompare(String(right.createdAt ?? ""));
+}
+function buildInventoryLotKey(productId, expirationDateValue) {
+    return `${productId.trim()}::${expirationDateValue.trim() || "no-expiration"}`;
+}
 async function applyOrderInventoryDeduction(order) {
     const quantitiesByProductId = order.items.reduce((map, item) => {
         const productId = String(item.productId ?? "").trim();
@@ -696,7 +726,7 @@ async function applyOrderInventoryDeduction(order) {
         if (existingAutomaticDeduction) {
             continue;
         }
-        const stockRows = await WarehouseStock.find({ productId }).sort({ availableUnits: -1, createdAt: 1 });
+        const stockRows = (await WarehouseStock.find({ productId }).lean()).sort(compareWarehouseStockLotsByConsumptionPriority);
         if (stockRows.length > 0) {
             const availableUnits = stockRows.reduce((sum, row) => sum + Number(row.availableUnits ?? 0), 0);
             if (quantityToDeduct > availableUnits) {
@@ -1189,15 +1219,13 @@ apiRouter.get("/management/inventory-summary", async (request, response) => {
     const now = new Date();
     const twoMonthsLater = new Date(now);
     twoMonthsLater.setMonth(twoMonthsLater.getMonth() + 2);
-    const rows = products.map((product) => {
+    const rows = products.flatMap((product) => {
         const productId = String(product._id);
         const productImportRows = importCostRowsByProduct.get(productId) ?? [];
         const productStockRows = stockRowsByProduct.get(productId) ?? [];
         const latestImportRow = productImportRows[0] ?? null;
         const importedQuantity = productImportRows.reduce((sum, row) => sum + Number(row.importedQuantity ?? 0), 0);
-        const availableUnitsFromStocks = productStockRows.reduce((sum, row) => sum + Number(row.availableUnits ?? 0), 0);
         const deductedUnits = adjustmentsByProduct.get(productId) ?? 0;
-        const quantity = productStockRows.length > 0 ? availableUnitsFromStocks : Math.max(importedQuantity - deductedUnits, 0);
         const arubaPurchaseCostUsd = Number(product.arubaPurchaseCostUsd ?? 0);
         const arubaUsdToAwgRate = Number(product.arubaUsdToAwgRate ?? 1.79);
         const arubaUnitCostAwg = arubaPurchaseCostUsd * arubaUsdToAwgRate;
@@ -1205,8 +1233,6 @@ apiRouter.get("/management/inventory-summary", async (request, response) => {
             ? Number(arubaUnitCostAwg > 0 ? arubaUnitCostAwg : product.cost ?? 0)
             : Number(latestImportRow?.landedUnitCost ?? product.cost ?? 0);
         const salePrice = Number(product.salePrice ?? 0);
-        const totalCost = quantity * unitCost;
-        const totalSale = quantity * salePrice;
         const importRowQuantity = Number(latestImportRow?.importedQuantity ?? 0);
         const expenseCategoryTotals = (latestImportRow?.expenseItems ?? []).reduce((sum, expense) => {
             const key = String(expense?.key ?? "other");
@@ -1224,7 +1250,7 @@ apiRouter.get("/management/inventory-summary", async (request, response) => {
             ? {
                 containerReference: latestImportRow.containerReference ?? "",
                 shipmentReference: latestImportRow.shipmentReference ?? "",
-                importDate: latestImportRow.importDate,
+                importDate: String(latestImportRow.importDate),
                 importQuantity: importRowQuantity,
                 purchaseUnitCost: Number(latestImportRow.purchaseUnitCostLocal ?? latestImportRow.purchaseUnitCostOrigin ?? product.cost ?? 0),
                 expenseRows: (latestImportRow.expenseItems ?? []).map((expense, index) => {
@@ -1244,31 +1270,54 @@ apiRouter.get("/management/inventory-summary", async (request, response) => {
                 totalUnitCost: unitCost,
             }
             : null;
-        const expirationDate = product.expirationDate instanceof Date
-            ? product.expirationDate
-            : product.expirationDate
-                ? new Date(product.expirationDate)
-                : null;
-        const isExpiringSoon = Boolean(expirationDate &&
-            !Number.isNaN(expirationDate.getTime()) &&
-            expirationDate >= now &&
-            expirationDate <= twoMonthsLater);
-        return {
-            productId,
-            sku: product.sku,
-            name: product.name,
-            quantity,
-            unitCost,
-            totalCost,
-            salePrice,
-            totalSale,
-            unitCostBreakdown,
-            expirationDate: expirationDate ? expirationDate.toISOString() : null,
-            isExpiringSoon,
-        };
+        if (productStockRows.length === 0) {
+            const quantity = Math.max(importedQuantity - deductedUnits, 0);
+            const expirationDate = normalizeOptionalDateValue(product.expirationDate);
+            const isExpiringSoon = Boolean(expirationDate &&
+                expirationDate >= now &&
+                expirationDate <= twoMonthsLater);
+            return [{
+                    stockRowId: "",
+                    productId,
+                    sku: product.sku,
+                    name: product.name,
+                    quantity,
+                    unitCost,
+                    totalCost: quantity * unitCost,
+                    salePrice,
+                    totalSale: quantity * salePrice,
+                    unitCostBreakdown,
+                    expirationDate: expirationDate ? expirationDate.toISOString() : null,
+                    isExpiringSoon,
+                }];
+        }
+        return [...productStockRows]
+            .filter((stockRow) => Number(stockRow.availableUnits ?? 0) > 0)
+            .sort(compareWarehouseStockLotsByConsumptionPriority)
+            .map((stockRow) => {
+            const quantity = Number(stockRow.availableUnits ?? 0);
+            const expirationDate = normalizeOptionalDateValue(stockRow.expirationDate ?? product.expirationDate);
+            const isExpiringSoon = Boolean(expirationDate &&
+                expirationDate >= now &&
+                expirationDate <= twoMonthsLater);
+            return {
+                stockRowId: String(stockRow._id ?? ""),
+                productId,
+                sku: product.sku,
+                name: product.name,
+                quantity,
+                unitCost,
+                totalCost: quantity * unitCost,
+                salePrice,
+                totalSale: quantity * salePrice,
+                unitCostBreakdown,
+                expirationDate: expirationDate ? expirationDate.toISOString() : null,
+                isExpiringSoon,
+            };
+        });
     });
     const kpis = {
-        totalProducts: rows.length,
+        totalProducts: new Set(rows.map((row) => row.productId)).size,
         totalUnits: rows.reduce((sum, row) => sum + row.quantity, 0),
         totalInventoryCost: rows.reduce((sum, row) => sum + row.totalCost, 0),
         expiringSoon: rows.filter((row) => row.isExpiringSoon).length,
@@ -1306,6 +1355,7 @@ apiRouter.get("/management/inventory-summary", async (request, response) => {
 apiRouter.post("/management/inventory-adjustments", async (request, response) => {
     try {
         const productId = typeof request.body?.productId === "string" ? request.body.productId.trim() : "";
+        const stockRowId = typeof request.body?.stockRowId === "string" ? request.body.stockRowId.trim() : "";
         const quantity = Number(request.body?.quantity ?? 0);
         const reason = typeof request.body?.reason === "string" ? request.body.reason.trim() : "";
         const notes = typeof request.body?.notes === "string" ? request.body.notes.trim() : "";
@@ -1323,7 +1373,7 @@ apiRouter.post("/management/inventory-adjustments", async (request, response) =>
         }
         const [product, stockRows, importRows, previousAdjustments] = await Promise.all([
             Product.findById(productId).lean(),
-            WarehouseStock.find({ productId }).sort({ availableUnits: -1, createdAt: 1 }),
+            WarehouseStock.find(stockRowId ? { _id: stockRowId, productId } : { productId }).lean(),
             ImportCost.find({ productId, active: { $ne: false } }).lean(),
             InventoryAdjustment.find({ productId }).lean(),
         ]);
@@ -1331,7 +1381,8 @@ apiRouter.post("/management/inventory-adjustments", async (request, response) =>
             response.status(404).json({ message: "El producto no existe." });
             return;
         }
-        const currentStock = stockRows.reduce((sum, row) => sum + Number(row.availableUnits ?? 0), 0);
+        const sortedStockRows = [...stockRows].sort(compareWarehouseStockLotsByConsumptionPriority);
+        const currentStock = sortedStockRows.reduce((sum, row) => sum + Number(row.availableUnits ?? 0), 0);
         const importedQuantity = importRows.reduce((sum, row) => sum + Number(row.importedQuantity ?? 0), 0);
         const deductedQuantity = previousAdjustments.reduce((sum, row) => sum + Number(row.quantity ?? 0), 0);
         const availableQuantity = stockRows.length > 0 ? currentStock : Math.max(importedQuantity - deductedQuantity, 0);
@@ -1339,9 +1390,9 @@ apiRouter.post("/management/inventory-adjustments", async (request, response) =>
             response.status(400).json({ message: `Solo hay ${availableQuantity} unidades disponibles para sacar.` });
             return;
         }
-        if (stockRows.length > 0) {
+        if (sortedStockRows.length > 0) {
             let remaining = quantity;
-            for (const stockRow of stockRows) {
+            for (const stockRow of sortedStockRows) {
                 if (remaining <= 0) {
                     break;
                 }
@@ -1360,7 +1411,7 @@ apiRouter.post("/management/inventory-adjustments", async (request, response) =>
             quantity,
             reason,
             notes,
-            source: stockRows.length > 0 ? "warehouse-stock" : "import-fallback",
+            source: sortedStockRows.length > 0 ? "warehouse-stock" : "import-fallback",
         });
         response.status(201).json({
             message: "Salida de inventario registrada correctamente.",
@@ -1418,11 +1469,11 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
             }
             return { productId, quantity, costUsd, salePriceAwg, expirationDateValue, productWeightKg };
         });
-        const uniqueProductIds = Array.from(new Set(items.map((item) => item.productId)));
-        if (uniqueProductIds.length !== items.length) {
-            response.status(400).json({ message: "No repitas el mismo producto dentro del mismo registro de inventario." });
+        if (new Set(items.map((item) => buildInventoryLotKey(item.productId, item.expirationDateValue))).size !== items.length) {
+            response.status(400).json({ message: "No repitas el mismo lote dentro del mismo registro de inventario." });
             return;
         }
+        const uniqueProductIds = Array.from(new Set(items.map((item) => item.productId)));
         const warehouse = warehouseId
             ? await Warehouse.findById(warehouseId).lean()
             : await Warehouse.findOne({ active: { $ne: false } }).sort({ createdAt: 1 }).lean();
@@ -1439,9 +1490,11 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
                 response.status(404).json({ message: `El producto ${item.productId} no existe o esta inactivo.` });
                 return;
             }
+            const normalizedExpirationDate = normalizeOptionalDateValue(item.expirationDateValue);
             const existingStockRow = await WarehouseStock.findOne({
                 productId: product._id,
                 warehouseCode: warehouse.code,
+                expirationDate: normalizedExpirationDate,
             }).lean();
             const currentAvailableUnits = Number(existingStockRow?.availableUnits ?? 0);
             const nextAvailableUnits = currentAvailableUnits + item.quantity;
@@ -1452,6 +1505,7 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
             }, {
                 productId: product._id,
                 warehouseCode: warehouse.code,
+                expirationDate: normalizedExpirationDate,
                 availableUnits: nextAvailableUnits,
                 minUnits,
                 status: resolveWarehouseStockStatus(nextAvailableUnits, minUnits),

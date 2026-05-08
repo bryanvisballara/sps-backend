@@ -14,6 +14,7 @@ export declare const WarehouseStock: import("mongoose").Model<{
     availableUnits: number;
     reservedUnits: number;
     minUnits: number;
+    expirationDate?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps, {}, {}, {}, import("mongoose").Document<unknown, {}, {
     status: "healthy" | "low" | "critical";
     productId: {
@@ -29,6 +30,7 @@ export declare const WarehouseStock: import("mongoose").Model<{
     availableUnits: number;
     reservedUnits: number;
     minUnits: number;
+    expirationDate?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps, {}, {
     timestamps: true;
 }> & {
@@ -46,6 +48,7 @@ export declare const WarehouseStock: import("mongoose").Model<{
     availableUnits: number;
     reservedUnits: number;
     minUnits: number;
+    expirationDate?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps & {
     _id: Types.ObjectId;
 } & {
@@ -67,6 +70,7 @@ export declare const WarehouseStock: import("mongoose").Model<{
     availableUnits: number;
     reservedUnits: number;
     minUnits: number;
+    expirationDate?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps, import("mongoose").Document<unknown, {}, import("mongoose").FlatRecord<{
     status: "healthy" | "low" | "critical";
     productId: {
@@ -82,6 +86,7 @@ export declare const WarehouseStock: import("mongoose").Model<{
     availableUnits: number;
     reservedUnits: number;
     minUnits: number;
+    expirationDate?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps>, {}, import("mongoose").MergeType<import("mongoose").DefaultSchemaOptions, {
     timestamps: true;
 }>> & import("mongoose").FlatRecord<{
@@ -99,6 +104,7 @@ export declare const WarehouseStock: import("mongoose").Model<{
     availableUnits: number;
     reservedUnits: number;
     minUnits: number;
+    expirationDate?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps> & {
     _id: Types.ObjectId;
 } & {
