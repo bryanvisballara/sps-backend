@@ -139,6 +139,7 @@ type ProductOption = {
   label: string;
   sku: string;
   salePrice: number;
+  productWeightKg: number;
   variableSalePrice: boolean;
   unitsPerBox: number;
   unitsPerBoxUnit: string;
@@ -278,6 +279,9 @@ type InventoryEntryDraftItem = {
   productId: string;
   quantity: string;
   costUsd: string;
+  salePriceAwg: string;
+  expirationDate: string;
+  productWeightKg: string;
 };
 
 type ContainerImportProductFormState = {
@@ -1456,10 +1460,7 @@ function getCollectionConfigs(
         { name: "category", label: "Categoria", type: "select", options: categoryOptions },
         { name: "supplier", label: "Proveedor", type: "select", options: supplierOptions },
         { name: "imageFile", label: "Imagen del producto", type: "file" },
-        { name: "salePrice", label: "Venta (AWG)", type: "number", placeholder: "16500", width: "third" },
-        { name: "arubaPurchaseCostUsd", label: "Costo Aruba (USD)", type: "number", placeholder: "4.50", width: "third" },
-        { name: "arubaUsdToAwgRate", label: "Tasa USD->AWG", type: "number", placeholder: "1.79", width: "third" },
-        { name: "expirationDate", label: "Fecha de caducidad", type: "date", width: "full" },
+        { name: "productWeightKg", label: "Peso por unidad (kg)", type: "number", placeholder: "0.35", width: "third" },
         { name: "boxDimensionsTitle", label: "Tamano de caja", type: "group-title" },
         { name: "boxLengthCm", label: "Largo (cm)", type: "number", placeholder: "40", width: "third" },
         { name: "boxWidthCm", label: "Ancho (cm)", type: "number", placeholder: "30", width: "third" },
@@ -1473,9 +1474,7 @@ function getCollectionConfigs(
         { key: "name", label: "Producto" },
         { key: "category", label: "Categoria" },
         { key: "supplier", label: "Proveedor" },
-        { key: "arubaPurchaseCostUsd", label: "Costo USD Aruba" },
-        { key: "arubaUsdToAwgRate", label: "Tasa USD/AWG" },
-        { key: "expirationDate", label: "Caducidad" },
+        { key: "productWeightKg", label: "Peso (kg/u)" },
         { key: "salePrice", label: "Venta" },
       ],
     },
@@ -1811,6 +1810,9 @@ function createInventoryEntryDraftItem(productId = ""): InventoryEntryDraftItem 
     productId,
     quantity: "",
     costUsd: "",
+    salePriceAwg: "",
+    expirationDate: "",
+    productWeightKg: "",
   };
 }
 
@@ -1982,7 +1984,7 @@ export default function App() {
   const [isCreationModalOpen, setIsCreationModalOpen] = useState(false);
   const [editingRow, setEditingRow] = useState<Record<string, unknown> | null>(null);
   const [clientProductDraft, setClientProductDraft] = useState<ClientProductDraft>({ productIds: [] });
-  const [isVariableSalePrice, setIsVariableSalePrice] = useState(false);
+  const [, setIsVariableSalePrice] = useState(false);
   const [isLoadingCreationRows, setIsLoadingCreationRows] = useState(false);
   const [creationRowsError, setCreationRowsError] = useState("");
   const [databaseRows, setDatabaseRows] = useState<Record<string, Array<Record<string, unknown>>>>({});
@@ -2002,7 +2004,14 @@ export default function App() {
   const [isImportingInventoryExcel, setIsImportingInventoryExcel] = useState(false);
   const [inventoryExcelFileName, setInventoryExcelFileName] = useState("");
   const [isInventoryEntryItemModalOpen, setIsInventoryEntryItemModalOpen] = useState(false);
-  const [inventoryEntryItemDraft, setInventoryEntryItemDraft] = useState({ productId: "", quantity: "", costUsd: "" });
+  const [inventoryEntryItemDraft, setInventoryEntryItemDraft] = useState({
+    productId: "",
+    quantity: "",
+    costUsd: "",
+    salePriceAwg: "",
+    expirationDate: "",
+    productWeightKg: "",
+  });
   const [selectedInventoryEntryHistoryGroupId, setSelectedInventoryEntryHistoryGroupId] = useState("");
   const [inventoryEntryStatus, setInventoryEntryStatus] = useState<CreationStatus | null>(null);
   const [isSavingInventoryEntry, setIsSavingInventoryEntry] = useState(false);
@@ -2336,10 +2345,13 @@ export default function App() {
       boxCount: number;
       importedQuantity: number;
       unitsPerBox: number;
+      unitWeightKg: number;
+      estimatedWeightKg: number;
       boxVolumeCubicMeters: number;
       estimatedBoxes: number;
       estimatedVolumeCubicMeters: number;
       hasVolumeConfig: boolean;
+      hasWeightConfig: boolean;
     }>
   >((metrics, product) => {
     const currentProduct = containerImportProductsById.get(product.value);
@@ -2350,6 +2362,7 @@ export default function App() {
 
     const importedQuantity = Number(currentProduct.importedQuantity || 0);
     const unitsPerBox = Number(product.unitsPerBox || 0);
+    const unitWeightKg = Number(product.productWeightKg || 0);
     const boxVolumeCubicMeters = calculateProductBoxVolumeCubicMeters(product);
     const estimatedBoxes = calculateEstimatedBoxes(importedQuantity, unitsPerBox);
 
@@ -2359,10 +2372,13 @@ export default function App() {
       boxCount: Number(currentProduct.boxCount || 0),
       importedQuantity,
       unitsPerBox,
+      unitWeightKg,
+      estimatedWeightKg: importedQuantity * unitWeightKg,
       boxVolumeCubicMeters,
       estimatedBoxes,
       estimatedVolumeCubicMeters: estimatedBoxes * boxVolumeCubicMeters,
       hasVolumeConfig: unitsPerBox > 0 && boxVolumeCubicMeters > 0,
+      hasWeightConfig: unitWeightKg > 0,
     });
 
     return metrics;
@@ -2405,7 +2421,7 @@ export default function App() {
       ? selectedContainerCapacityCubicMeters * cubicFeetPerCubicMeter
       : selectedContainerCapacityCubicMeters;
   const selectedContainerUsedByUnit = isContainerMeasurementKg
-    ? selectedContainerImportQuantity
+    ? selectedContainerVolumeMetrics.reduce((sum, metric) => sum + metric.estimatedWeightKg, 0)
     : containerImportForm.measurementUnit === "pie3"
       ? selectedContainerUsedCubicMeters * cubicFeetPerCubicMeter
       : selectedContainerUsedCubicMeters;
@@ -2414,9 +2430,17 @@ export default function App() {
   const selectedContainerFillPercentage = selectedContainerCapacityByUnit > 0
     ? Math.min((selectedContainerUsedByUnit / selectedContainerCapacityByUnit) * 100, 100)
     : 0;
-  const selectedContainerMetricsWithoutVolume = isContainerMeasurementKg ? [] : selectedContainerVolumeMetrics.filter(
-    (metric) => metric.importedQuantity > 0 && !metric.hasVolumeConfig,
-  );
+  const selectedContainerMetricsWithoutVolume = selectedContainerVolumeMetrics.filter((metric) => {
+    if (!(metric.importedQuantity > 0)) {
+      return false;
+    }
+
+    if (isContainerMeasurementKg) {
+      return !metric.hasWeightConfig;
+    }
+
+    return !metric.hasVolumeConfig;
+  });
   const currentMonthKey = new Date().toISOString().slice(0, 7);
   const accountingKpis: KpiCard[] = [
     { label: "Costos fijos registrados", value: fixedCostRows.length, tone: "cyan" },
@@ -3481,6 +3505,7 @@ export default function App() {
             label: String(product.name ?? ""),
             sku: String(product.sku ?? ""),
             salePrice: roundCurrencyValue(Number(product.salePrice ?? 0)),
+            productWeightKg: Number(product.productWeightKg ?? 0),
             variableSalePrice: Boolean(product.variableSalePrice),
             unitsPerBox: Number(product.unitsPerBox ?? 0),
             unitsPerBoxUnit: String(product.unitsPerBoxUnit ?? "unidad"),
@@ -3719,12 +3744,29 @@ export default function App() {
     ));
   }
 
-  function updateInventoryEntryRow(id: string, field: "productId" | "quantity" | "costUsd", value: string) {
-    setInventoryEntryItems((current) => current.map((item) => (
-      item.id === id
-        ? { ...item, [field]: value }
-        : item
-    )));
+  function updateInventoryEntryRow(
+    id: string,
+    field: "productId" | "quantity" | "costUsd" | "salePriceAwg" | "expirationDate" | "productWeightKg",
+    value: string,
+  ) {
+    setInventoryEntryItems((current) => current.map((item) => {
+      if (item.id !== id) {
+        return item;
+      }
+
+      if (field === "productId") {
+        const selectedProduct = productOptions.find((product) => product.value === value);
+
+        return {
+          ...item,
+          productId: value,
+          salePriceAwg: item.salePriceAwg || String(selectedProduct?.salePrice ?? ""),
+          productWeightKg: item.productWeightKg || String(selectedProduct?.productWeightKg ?? ""),
+        };
+      }
+
+      return { ...item, [field]: value };
+    }));
   }
 
   function loadInventoryEntryHistoryGroupForEdit(groupId: string) {
@@ -3756,6 +3798,9 @@ export default function App() {
       productId: item.productId,
       quantity: String(item.quantity),
       costUsd: String(Number(item.entryCostUsd ?? 0)),
+      salePriceAwg: String(productOptions.find((option) => option.value === item.productId)?.salePrice ?? ""),
+      expirationDate: "",
+      productWeightKg: String(productOptions.find((option) => option.value === item.productId)?.productWeightKg ?? ""),
     })));
     setInventoryEntryStatus({
       tone: "success",
@@ -3784,7 +3829,17 @@ export default function App() {
   }
 
   function openInventoryEntryItemModal() {
-    setInventoryEntryItemDraft({ productId: productOptions[0]?.value ?? "", quantity: "", costUsd: "" });
+    const initialProductId = productOptions[0]?.value ?? "";
+    const initialProduct = productOptions.find((product) => product.value === initialProductId);
+
+    setInventoryEntryItemDraft({
+      productId: initialProductId,
+      quantity: "",
+      costUsd: "",
+      salePriceAwg: String(initialProduct?.salePrice ?? ""),
+      expirationDate: "",
+      productWeightKg: String(initialProduct?.productWeightKg ?? ""),
+    });
     setIsInventoryEntryItemModalOpen(true);
   }
 
@@ -3798,6 +3853,9 @@ export default function App() {
     const productId = inventoryEntryItemDraft.productId.trim();
     const quantity = Number(inventoryEntryItemDraft.quantity || 0);
     const costUsd = Number(inventoryEntryItemDraft.costUsd || 0);
+    const salePriceAwg = Number(inventoryEntryItemDraft.salePriceAwg || 0);
+    const productWeightKg = Number(inventoryEntryItemDraft.productWeightKg || 0);
+    const expirationDate = inventoryEntryItemDraft.expirationDate.trim();
 
     if (!productId) {
       setInventoryEntryStatus({ tone: "error", message: "Selecciona un producto para agregarlo a la tabla." });
@@ -3814,11 +3872,37 @@ export default function App() {
       return;
     }
 
+    if (!Number.isFinite(salePriceAwg) || salePriceAwg < 0) {
+      setInventoryEntryStatus({ tone: "error", message: "La venta AWG debe ser cero o mayor." });
+      return;
+    }
+
+    if (!Number.isFinite(productWeightKg) || productWeightKg < 0) {
+      setInventoryEntryStatus({ tone: "error", message: "El peso por unidad debe ser cero o mayor." });
+      return;
+    }
+
+    if (expirationDate) {
+      const date = new Date(expirationDate);
+
+      if (Number.isNaN(date.getTime())) {
+        setInventoryEntryStatus({ tone: "error", message: "La fecha de caducidad no es valida." });
+        return;
+      }
+    }
+
     setInventoryEntryItems((current) => {
       if (current.some((item) => item.productId === productId)) {
         return current.map((item) => (
           item.productId === productId
-            ? { ...item, quantity: String(quantity), costUsd: String(costUsd) }
+            ? {
+                ...item,
+                quantity: String(quantity),
+                costUsd: String(costUsd),
+                salePriceAwg: String(salePriceAwg),
+                expirationDate,
+                productWeightKg: String(productWeightKg),
+              }
             : item
         ));
       }
@@ -3828,6 +3912,9 @@ export default function App() {
         productId,
         quantity: String(quantity),
         costUsd: String(costUsd),
+        salePriceAwg: String(salePriceAwg),
+        expirationDate,
+        productWeightKg: String(productWeightKg),
       }];
     });
 
@@ -4022,6 +4109,9 @@ export default function App() {
           productId: item.productId,
           quantity: String(item.quantity),
           costUsd: String(item.costUsd),
+          salePriceAwg: "",
+          expirationDate: "",
+          productWeightKg: "",
         })),
       );
       setInventoryExcelFileName(file.name);
@@ -4118,6 +4208,9 @@ export default function App() {
         const productId = item.productId.trim();
         const quantity = Number(item.quantity || 0);
         const costUsd = Number(item.costUsd || 0);
+        const salePriceAwg = Number(item.salePriceAwg || 0);
+        const productWeightKg = Number(item.productWeightKg || 0);
+        const expirationDate = item.expirationDate.trim();
 
         if (!productId) {
           throw new Error(`Selecciona el producto en la fila ${index + 1}.`);
@@ -4131,7 +4224,23 @@ export default function App() {
           throw new Error(`El costo en USD de la fila ${index + 1} debe ser cero o mayor.`);
         }
 
-        return { productId, quantity, costUsd };
+        if (!Number.isFinite(salePriceAwg) || salePriceAwg < 0) {
+          throw new Error(`La venta AWG de la fila ${index + 1} debe ser cero o mayor.`);
+        }
+
+        if (!Number.isFinite(productWeightKg) || productWeightKg < 0) {
+          throw new Error(`El peso por unidad de la fila ${index + 1} debe ser cero o mayor.`);
+        }
+
+        if (expirationDate) {
+          const date = new Date(expirationDate);
+
+          if (Number.isNaN(date.getTime())) {
+            throw new Error(`La caducidad de la fila ${index + 1} no es valida.`);
+          }
+        }
+
+        return { productId, quantity, costUsd, salePriceAwg, expirationDate, productWeightKg };
       });
 
       if (new Set(normalizedItems.map((item) => item.productId)).size !== normalizedItems.length) {
@@ -5974,12 +6083,12 @@ export default function App() {
     };
 
     if (config.key === "products") {
-      payload.variableSalePrice = isVariableSalePrice;
+      payload.variableSalePrice = Boolean(editingRow?.variableSalePrice ?? false);
+      payload.salePrice = Number(editingRow?.salePrice ?? 0);
       payload.cost = 0;
-
-      if (isVariableSalePrice) {
-        payload.salePrice = null;
-      }
+      payload.arubaPurchaseCostUsd = Number(editingRow?.arubaPurchaseCostUsd ?? 0);
+      payload.arubaUsdToAwgRate = Number(editingRow?.arubaUsdToAwgRate ?? 1.79);
+      payload.expirationDate = typeof editingRow?.expirationDate === "string" ? editingRow.expirationDate : null;
 
       if (productImage.isUploading) {
         setCreationStatuses((current) => ({
@@ -6090,6 +6199,7 @@ export default function App() {
             label: String(product.name ?? ""),
             sku: String(product.sku ?? ""),
             salePrice: roundCurrencyValue(Number(product.salePrice ?? 0)),
+            productWeightKg: Number(product.productWeightKg ?? 0),
             variableSalePrice: Boolean(product.variableSalePrice),
             unitsPerBox: Number(product.unitsPerBox ?? 0),
             unitsPerBoxUnit: String(product.unitsPerBoxUnit ?? "unidad"),
@@ -6359,7 +6469,9 @@ export default function App() {
         ...current,
         importCosts: {
           tone: "error",
-          message: `Configura unidades por caja y dimensiones para ${selectedContainerMetricsWithoutVolume[0].product.label} antes de planear este contenedor.`,
+          message: containerImportForm.measurementUnit === "kg"
+            ? `Configura el peso por unidad para ${selectedContainerMetricsWithoutVolume[0].product.label} antes de planear este contenedor por peso.`
+            : `Configura unidades por caja y dimensiones para ${selectedContainerMetricsWithoutVolume[0].product.label} antes de planear este contenedor.`,
         },
       }));
       return;
@@ -7986,6 +8098,39 @@ export default function App() {
                             </label>
 
                             <label className="field field-full">
+                              <span>Venta AWG por unidad</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={item.salePriceAwg}
+                                placeholder="0.00"
+                                onChange={(event) => updateInventoryEntryRow(item.id, "salePriceAwg", event.target.value)}
+                              />
+                            </label>
+
+                            <label className="field field-full">
+                              <span>Peso por unidad (kg)</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={item.productWeightKg}
+                                placeholder="0.00"
+                                onChange={(event) => updateInventoryEntryRow(item.id, "productWeightKg", event.target.value)}
+                              />
+                            </label>
+
+                            <label className="field field-full">
+                              <span>Fecha de caducidad</span>
+                              <input
+                                type="date"
+                                value={item.expirationDate}
+                                onChange={(event) => updateInventoryEntryRow(item.id, "expirationDate", event.target.value)}
+                              />
+                            </label>
+
+                            <label className="field field-full">
                               <span>Costo AWG total (calculado)</span>
                               <input type="number" readOnly value={getInventoryEntryCostAwg(item.costUsd)} placeholder="0.00" />
                             </label>
@@ -9421,15 +9566,17 @@ export default function App() {
                               </span>
                             </div>
                             <strong>
-                              {metric.hasVolumeConfig
-                                ? formatContainerMeasure(
-                                    containerImportForm.measurementUnit === "pie3"
-                                      ? metric.estimatedVolumeCubicMeters * cubicFeetPerCubicMeter
-                                      : metric.estimatedVolumeCubicMeters,
-                                    containerImportForm.measurementUnit === "kg" ? "m3" : containerImportForm.measurementUnit,
-                                  )
-                                : isContainerMeasurementKg
-                                  ? "No aplica"
+                              {containerImportForm.measurementUnit === "kg"
+                                ? metric.hasWeightConfig
+                                  ? formatContainerMeasure(metric.estimatedWeightKg, "kg")
+                                  : "Sin peso"
+                                : metric.hasVolumeConfig
+                                  ? formatContainerMeasure(
+                                      containerImportForm.measurementUnit === "pie3"
+                                        ? metric.estimatedVolumeCubicMeters * cubicFeetPerCubicMeter
+                                        : metric.estimatedVolumeCubicMeters,
+                                      containerImportForm.measurementUnit,
+                                    )
                                   : "Sin volumen"}
                             </strong>
                           </article>
@@ -9441,7 +9588,9 @@ export default function App() {
 
                     {selectedContainerMetricsWithoutVolume.length > 0 ? (
                       <p className="form-feedback error">
-                        Hay productos seleccionados sin unidades por caja o sin dimensiones configuradas. Ajustalos en Productos antes de cerrar este plan.
+                        {containerImportForm.measurementUnit === "kg"
+                          ? "Hay productos seleccionados sin peso por unidad configurado. Ajustalos en Productos antes de cerrar este plan."
+                          : "Hay productos seleccionados sin unidades por caja o sin dimensiones configuradas. Ajustalos en Productos antes de cerrar este plan."}
                       </p>
                     ) : null}
 
@@ -11585,6 +11734,9 @@ export default function App() {
                       <th>Cantidad</th>
                       <th>Costo USD total</th>
                       <th>Costo AWG total</th>
+                      <th>Venta AWG/u</th>
+                      <th>Peso kg/u</th>
+                      <th>Caducidad</th>
                       <th>Accion</th>
                     </tr>
                   </thead>
@@ -11611,6 +11763,39 @@ export default function App() {
                             <td>{item.costUsd || "0"}</td>
                             <td>{getInventoryEntryCostAwg(item.costUsd) || "0"}</td>
                             <td>
+                              <input
+                                className="inventory-entry-inline-input"
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={item.salePriceAwg}
+                                placeholder="0"
+                                onChange={(event) => updateInventoryEntryRow(item.id, "salePriceAwg", event.target.value)}
+                                disabled={isImportingInventoryExcel || isSavingInventoryEntry}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                className="inventory-entry-inline-input"
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={item.productWeightKg}
+                                placeholder="0"
+                                onChange={(event) => updateInventoryEntryRow(item.id, "productWeightKg", event.target.value)}
+                                disabled={isImportingInventoryExcel || isSavingInventoryEntry}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                className="inventory-entry-inline-input"
+                                type="date"
+                                value={item.expirationDate}
+                                onChange={(event) => updateInventoryEntryRow(item.id, "expirationDate", event.target.value)}
+                                disabled={isImportingInventoryExcel || isSavingInventoryEntry}
+                              />
+                            </td>
+                            <td>
                               <button
                                 className="table-action-icon is-danger"
                                 type="button"
@@ -11626,7 +11811,7 @@ export default function App() {
                       })
                     ) : (
                       <tr>
-                        <td colSpan={5} className="empty-table-cell">Aun no hay productos agregados.</td>
+                        <td colSpan={8} className="empty-table-cell">Aun no hay productos agregados.</td>
                       </tr>
                     )}
                   </tbody>
@@ -11786,7 +11971,15 @@ export default function App() {
                         <span>Producto</span>
                         <select
                           value={inventoryEntryItemDraft.productId}
-                          onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, productId: event.target.value }))}
+                          onChange={(event) => {
+                            const selectedProduct = productOptions.find((product) => product.value === event.target.value);
+                            setInventoryEntryItemDraft((current) => ({
+                              ...current,
+                              productId: event.target.value,
+                              salePriceAwg: current.salePriceAwg || String(selectedProduct?.salePrice ?? ""),
+                              productWeightKg: current.productWeightKg || String(selectedProduct?.productWeightKg ?? ""),
+                            }));
+                          }}
                         >
                           <option value="">Selecciona un producto</option>
                           {productOptions.map((product) => (
@@ -11816,6 +12009,39 @@ export default function App() {
                           value={inventoryEntryItemDraft.costUsd}
                           placeholder="0.00"
                           onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, costUsd: event.target.value }))}
+                        />
+                      </label>
+
+                      <label className="field">
+                        <span>Venta AWG por unidad</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={inventoryEntryItemDraft.salePriceAwg}
+                          placeholder="0.00"
+                          onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, salePriceAwg: event.target.value }))}
+                        />
+                      </label>
+
+                      <label className="field">
+                        <span>Peso por unidad (kg)</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={inventoryEntryItemDraft.productWeightKg}
+                          placeholder="0.00"
+                          onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, productWeightKg: event.target.value }))}
+                        />
+                      </label>
+
+                      <label className="field">
+                        <span>Fecha de caducidad</span>
+                        <input
+                          type="date"
+                          value={inventoryEntryItemDraft.expirationDate}
+                          onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, expirationDate: event.target.value }))}
                         />
                       </label>
 
@@ -12091,32 +12317,7 @@ export default function App() {
                       key={field.name}
                     >
                       <span>{field.label}</span>
-                      {selectedCollection.key === "products" && field.name === "salePrice" ? (
-                        <div className="field-with-toggle">
-                          <div className="field-toggle-row">
-                            <input
-                              id="variable-sale-price"
-                              className="field-price-toggle-input"
-                              type="checkbox"
-                              checked={isVariableSalePrice}
-                              onChange={(event) => setIsVariableSalePrice(event.target.checked)}
-                            />
-                            <span className="field-price-toggle">Valor cambiante</span>
-                          </div>
-
-                          <input
-                            className={isVariableSalePrice ? "is-disabled" : ""}
-                            type="number"
-                            name="salePrice"
-                            min="0"
-                            step="0.01"
-                            placeholder={field.placeholder}
-                            defaultValue={getFormFieldInitialValue(field, editingRow)}
-                            disabled={isVariableSalePrice}
-                            required={!isVariableSalePrice}
-                          />
-                        </div>
-                      ) : field.type === "select" ? (
+                      {field.type === "select" ? (
                         <select
                           name={field.name}
                           defaultValue={getFormFieldInitialValue(field, editingRow)}
@@ -12174,7 +12375,7 @@ export default function App() {
                           name={field.name}
                           placeholder={field.placeholder}
                           defaultValue={getFormFieldInitialValue(field, editingRow)}
-                          required={!(selectedCollection.key === "products" && field.name === "expirationDate")}
+                          required
                         />
                       )}
                     </label>
