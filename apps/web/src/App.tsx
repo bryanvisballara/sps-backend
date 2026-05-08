@@ -140,6 +140,7 @@ type ProductOption = {
   sku: string;
   salePrice: number;
   productWeightKg: number;
+  presentation: string;
   variableSalePrice: boolean;
   unitsPerBox: number;
   unitsPerBoxUnit: string;
@@ -839,6 +840,14 @@ const unitsPerBoxUnitOptions = [
   { value: "paquete", label: "PAQUETE" },
 ];
 
+const productPresentationOptions = [
+  { value: "kg", label: "KG" },
+  { value: "lb", label: "LB" },
+  { value: "unidad", label: "UNIDAD" },
+  { value: "paquete", label: "PAQUETE" },
+  { value: "caja", label: "CAJA" },
+];
+
 const inventoryAdjustmentReasonOptions = [
   { value: "vencido", label: "Se vencio" },
   { value: "danado", label: "Llego danado" },
@@ -1144,6 +1153,10 @@ function getFormFieldInitialValue(field: FieldConfig, row: Record<string, unknow
     return "";
   }
 
+  if (field.name === "presentation" && !row) {
+    return "unidad";
+  }
+
   if (field.name === "unitsPerBoxUnit" && !row) {
     return "unidad";
   }
@@ -1167,6 +1180,10 @@ function getFormFieldInitialValue(field: FieldConfig, row: Record<string, unknow
   const value = row[field.name];
 
   if (value === null || value === undefined || value === "") {
+    if (field.name === "presentation") {
+      return "unidad";
+    }
+
     if (field.name === "unitsPerBoxUnit") {
       return "unidad";
     }
@@ -1461,13 +1478,12 @@ function getCollectionConfigs(
         { name: "category", label: "Categoria", type: "select", options: categoryOptions },
         { name: "supplier", label: "Proveedor", type: "select", options: supplierOptions },
         { name: "imageFile", label: "Imagen del producto", type: "file" },
+        { name: "presentation", label: "Presentacion", type: "select", options: productPresentationOptions, width: "third" },
         { name: "productWeightKg", label: "Peso por unidad (kg)", type: "number", placeholder: "0.35", width: "third" },
         { name: "boxDimensionsTitle", label: "Tamano de caja", type: "group-title" },
         { name: "boxLengthCm", label: "Largo (cm)", type: "number", placeholder: "40", width: "third" },
         { name: "boxWidthCm", label: "Ancho (cm)", type: "number", placeholder: "30", width: "third" },
         { name: "boxHeightCm", label: "Alto (cm)", type: "number", placeholder: "25", width: "third" },
-        { name: "unitsPerBox", label: "Unidades x caja", type: "number", placeholder: "24", width: "two-third" },
-        { name: "unitsPerBoxUnit", label: "Unidad de medicion", type: "select", options: unitsPerBoxUnitOptions, width: "third" },
         { name: "inventoryAlert", label: "Alerta de inventario", type: "number", placeholder: "20" },
       ],
       tableColumns: [
@@ -1990,6 +2006,7 @@ export default function App() {
   const [editingRow, setEditingRow] = useState<Record<string, unknown> | null>(null);
   const [clientProductDraft, setClientProductDraft] = useState<ClientProductDraft>({ productIds: [] });
   const [, setIsVariableSalePrice] = useState(false);
+  const [productPresentationDraft, setProductPresentationDraft] = useState("unidad");
   const [isLoadingCreationRows, setIsLoadingCreationRows] = useState(false);
   const [creationRowsError, setCreationRowsError] = useState("");
   const [databaseRows, setDatabaseRows] = useState<Record<string, Array<Record<string, unknown>>>>({});
@@ -3536,6 +3553,7 @@ export default function App() {
             sku: String(product.sku ?? ""),
             salePrice: roundCurrencyValue(Number(product.salePrice ?? 0)),
             productWeightKg: Number(product.productWeightKg ?? 0),
+            presentation: String(product.presentation ?? "unidad"),
             variableSalePrice: Boolean(product.variableSalePrice),
             unitsPerBox: Number(product.unitsPerBox ?? 0),
             unitsPerBoxUnit: String(product.unitsPerBoxUnit ?? "unidad"),
@@ -5143,6 +5161,7 @@ export default function App() {
     setEditingRow(null);
     setClientProductDraft(createInitialClientProductDraft());
     setIsVariableSalePrice(false);
+    setProductPresentationDraft("unidad");
 
     if (selectedCollection.key === "products") {
       clearProductImage();
@@ -5589,6 +5608,7 @@ export default function App() {
 
     if (selectedCollection.key === "products") {
       setIsVariableSalePrice(false);
+      setProductPresentationDraft("unidad");
       clearProductImage();
     }
   }
@@ -5623,6 +5643,7 @@ export default function App() {
 
     if (selectedCollection.key === "products") {
       setIsVariableSalePrice(getProductVariableSalePriceValue(row));
+      setProductPresentationDraft(typeof row.presentation === "string" && row.presentation.trim() ? row.presentation.trim() : "unidad");
       const existingImageUrl = typeof row.imageUrl === "string" ? row.imageUrl.trim() : "";
 
       if (existingImageUrl) {
@@ -6122,6 +6143,30 @@ export default function App() {
       payload.arubaPurchaseCostUsd = Number(editingRow?.arubaPurchaseCostUsd ?? 0);
       payload.arubaUsdToAwgRate = Number(editingRow?.arubaUsdToAwgRate ?? 1.79);
       payload.expirationDate = typeof editingRow?.expirationDate === "string" ? editingRow.expirationDate : null;
+      payload.presentation = productPresentationDraft;
+
+      if (productPresentationDraft === "caja") {
+        const unitsPerBox = Number(payload.unitsPerBox ?? 0);
+
+        if (!Number.isFinite(unitsPerBox) || unitsPerBox <= 0) {
+          setCreationStatuses((current) => ({
+            ...current,
+            [config.key]: { tone: "error", message: "Define cuanto contenido trae cada caja antes de guardar." },
+          }));
+          return;
+        }
+
+        if (!String(payload.unitsPerBoxUnit ?? "").trim()) {
+          setCreationStatuses((current) => ({
+            ...current,
+            [config.key]: { tone: "error", message: "Selecciona la unidad de medicion dentro de la caja." },
+          }));
+          return;
+        }
+      } else {
+        payload.unitsPerBox = 0;
+        payload.unitsPerBoxUnit = "unidad";
+      }
 
       if (productImage.isUploading) {
         setCreationStatuses((current) => ({
@@ -6233,6 +6278,7 @@ export default function App() {
             sku: String(product.sku ?? ""),
             salePrice: roundCurrencyValue(Number(product.salePrice ?? 0)),
             productWeightKg: Number(product.productWeightKg ?? 0),
+            presentation: String(product.presentation ?? "unidad"),
             variableSalePrice: Boolean(product.variableSalePrice),
             unitsPerBox: Number(product.unitsPerBox ?? 0),
             unitsPerBoxUnit: String(product.unitsPerBoxUnit ?? "unidad"),
@@ -12353,8 +12399,16 @@ export default function App() {
                       {field.type === "select" ? (
                         <select
                           name={field.name}
-                          defaultValue={getFormFieldInitialValue(field, editingRow)}
+                          value={selectedCollection.key === "products" && field.name === "presentation"
+                            ? productPresentationDraft
+                            : undefined}
+                          defaultValue={selectedCollection.key === "products" && field.name === "presentation"
+                            ? undefined
+                            : getFormFieldInitialValue(field, editingRow)}
                           required
+                          onChange={selectedCollection.key === "products" && field.name === "presentation"
+                            ? (event) => setProductPresentationDraft(event.target.value)
+                            : undefined}
                           disabled={
                             (field.name === "category" || field.name === "supplier") &&
                             field.options?.length === 0
@@ -12414,6 +12468,45 @@ export default function App() {
                     </label>
                   );
                 })}
+
+                {selectedCollection.key === "products" && productPresentationDraft === "caja" ? (
+                  <>
+                    <label className="field field-third">
+                      <span>Unidad dentro de la caja</span>
+                      <select
+                        name="unitsPerBoxUnit"
+                        defaultValue={getFormFieldInitialValue({
+                          name: "unitsPerBoxUnit",
+                          label: "Unidad dentro de la caja",
+                          type: "select",
+                          options: unitsPerBoxUnitOptions,
+                        }, editingRow)}
+                        required
+                      >
+                        {unitsPerBoxUnitOptions.map((option) => (
+                          <option key={`units-per-box-unit-${option.value}`} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="field field-two-third">
+                      <span>Contenido por caja</span>
+                      <input
+                        type="number"
+                        name="unitsPerBox"
+                        min="0"
+                        step="any"
+                        placeholder="24"
+                        defaultValue={getFormFieldInitialValue({
+                          name: "unitsPerBox",
+                          label: "Contenido por caja",
+                          type: "number",
+                        }, editingRow)}
+                        required
+                      />
+                    </label>
+                  </>
+                ) : null}
 
                 {selectedCollection.key === "clients" ? (
                   <div className="client-product-assignment form-span-full">
