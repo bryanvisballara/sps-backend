@@ -327,7 +327,8 @@ type ContainerImportFormState = {
 };
 
 type ImportContainerTemplateRecord = {
-  id: string;
+  id?: string;
+  _id?: string;
   name: string;
   containerType: ContainerType;
   containerSize: "20ft" | "40ft";
@@ -677,43 +678,21 @@ function readPersistedSessionUser(): SessionUser | null {
   }
 }
 
-function readPersistedImportContainerTemplates(): ImportContainerTemplateRecord[] {
-  if (typeof window === "undefined") {
+async function readPersistedImportContainerTemplates(userId: string): Promise<ImportContainerTemplateRecord[]> {
+  if (typeof window === "undefined" || !userId) {
     return [];
   }
 
   try {
-    const storedValue = window.localStorage.getItem(containerImportTemplateStorageKey);
+    const response = await fetch(`${apiBaseUrl}/management/import-templates?userId=${encodeURIComponent(userId)}`);
 
-    if (!storedValue) {
+    if (!response.ok) {
       return [];
     }
 
-    const parsedValue = JSON.parse(storedValue);
-
-    if (!Array.isArray(parsedValue)) {
-      window.localStorage.removeItem(containerImportTemplateStorageKey);
-      return [];
-    }
-
-    return parsedValue.filter((entry): entry is ImportContainerTemplateRecord => {
-      if (typeof entry !== "object" || entry === null) {
-        return false;
-      }
-
-      const current = entry as Record<string, unknown>;
-      return (
-        typeof current.id === "string"
-        && typeof current.name === "string"
-        && typeof current.containerType === "string"
-        && typeof current.containerSize === "string"
-        && typeof current.measurementUnit === "string"
-        && Array.isArray(current.products)
-        && Array.isArray(current.expenseItems)
-      );
-    });
+    const templates = (await response.json()) as ImportContainerTemplateRecord[];
+    return templates;
   } catch {
-    window.localStorage.removeItem(containerImportTemplateStorageKey);
     return [];
   }
 }
@@ -826,10 +805,10 @@ const containerMeasurementUnitOptions = [
 ] as const;
 
 const importExpenseTypeOptions = [
-  { value: "freight", label: "Flete" },
-  { value: "customs", label: "Nacionalizacion" },
-  { value: "inlandLogistics", label: "Transporte a bodega" },
-  { value: "taxes", label: "Impuestos" },
+  { value: "labor", label: "Mano de obra" },
+  { value: "portTransport", label: "Transporte a puerto" },
+  { value: "customsAgency", label: "Agencia aduanal" },
+  { value: "portFees", label: "Gastos de puerto" },
   { value: "other", label: "Otro" },
 ] as const;
 
@@ -1854,6 +1833,10 @@ function formatContainerSize(value: string) {
   return containerSizeOptions.find((option) => option.value === value)?.label ?? value;
 }
 
+function getTemplateId(template: ImportContainerTemplateRecord): string {
+  return template._id || template.id || "";
+}
+
 function getContainerCapacityCubicMeters(value: ContainerImportFormState["containerSize"]) {
   return containerCapacityBySize[value] ?? 30;
 }
@@ -2096,12 +2079,13 @@ export default function App() {
   const [containerImportForm, setContainerImportForm] = useState<ContainerImportFormState>(() =>
     createInitialContainerImportForm([]),
   );
-  const [importContainerTemplates, setImportContainerTemplates] = useState<ImportContainerTemplateRecord[]>(() =>
-    readPersistedImportContainerTemplates(),
-  );
+  const [importContainerTemplates, setImportContainerTemplates] = useState<ImportContainerTemplateRecord[]>([]);
+  const [isLoadingImportTemplates, setIsLoadingImportTemplates] = useState(false);
   const [selectedImportTemplateId, setSelectedImportTemplateId] = useState("");
+  const [isImportTemplateMenuOpen, setIsImportTemplateMenuOpen] = useState(false);
   const [saveImportAsTemplate, setSaveImportAsTemplate] = useState(false);
   const [importTemplateName, setImportTemplateName] = useState("");
+  const importTemplateMenuRef = useRef<HTMLDivElement | null>(null);
   const [warehouseLocationForm, setWarehouseLocationForm] = useState<WarehouseLocationFormState>(() =>
     createInitialWarehouseLocationForm(),
   );
@@ -2185,12 +2169,40 @@ export default function App() {
   }, [sessionUser]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (!sessionUser) {
+      setImportContainerTemplates([]);
       return;
     }
 
-    window.localStorage.setItem(containerImportTemplateStorageKey, JSON.stringify(importContainerTemplates));
-  }, [importContainerTemplates]);
+    void (async () => {
+      setIsLoadingImportTemplates(true);
+      const templates = await readPersistedImportContainerTemplates(sessionUser.id);
+      setImportContainerTemplates(templates);
+      setIsLoadingImportTemplates(false);
+    })();
+  }, [sessionUser]);
+
+  useEffect(() => {
+    function handleDocumentPointerDown(event: PointerEvent) {
+      if (!isImportTemplateMenuOpen) {
+        return;
+      }
+
+      const target = event.target as Node | null;
+
+      if (target && importTemplateMenuRef.current?.contains(target)) {
+        return;
+      }
+
+      setIsImportTemplateMenuOpen(false);
+    }
+
+    document.addEventListener("pointerdown", handleDocumentPointerDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handleDocumentPointerDown);
+    };
+  }, [isImportTemplateMenuOpen]);
 
   const collectionConfigs = getCollectionConfigs(categoryOptions, supplierOptions);
   const selectedCollection =
@@ -5503,13 +5515,24 @@ export default function App() {
     }));
   }
 
-  function saveCurrentImportFormAsTemplate() {
+  async function saveCurrentImportFormAsTemplate() {
+    if (!sessionUser) {
+      setAccountingStatuses({
+        importCosts: { tone: "error", message: "Debes estar logueado para guardar plantillas." },
+      });
+      return "";
+    }
+
     const fallbackName = `Plantilla ${formatContainerType(containerImportForm.containerType)} ${formatContainerSize(containerImportForm.containerSize)} ${containerImportForm.measurementUnit.toUpperCase()}`;
     const nextTemplateName = importTemplateName.trim() || fallbackName;
-    const now = new Date().toISOString();
     const normalizedName = nextTemplateName.toLowerCase();
 
-    const templatePayload: Omit<ImportContainerTemplateRecord, "id"> = {
+    const existingTemplate = importContainerTemplates.find(
+      (template) => template.name.trim().toLowerCase() === normalizedName,
+    );
+
+    const templatePayload = {
+      userId: sessionUser.id,
       name: nextTemplateName,
       containerType: containerImportForm.containerType,
       containerSize: containerImportForm.containerSize,
@@ -5522,41 +5545,57 @@ export default function App() {
         documents: expense.documents,
       })),
       products: containerImportForm.products.map((product) => ({ ...product })),
-      updatedAt: now,
     };
 
-    let storedName = nextTemplateName;
-
-    setImportContainerTemplates((current) => {
-      const existingTemplate = current.find((template) => template.name.trim().toLowerCase() === normalizedName);
+    try {
+      let result: ImportContainerTemplateRecord;
 
       if (existingTemplate) {
-        storedName = existingTemplate.name;
-        return current.map((template) =>
-          template.id === existingTemplate.id
-            ? {
-                ...templatePayload,
-                id: existingTemplate.id,
-                name: existingTemplate.name,
-              }
-            : template,
-        );
+        const response = await fetch(`${apiBaseUrl}/management/import-templates/${getTemplateId(existingTemplate)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(templatePayload),
+        });
+
+        if (!response.ok) {
+          throw new Error("No fue posible actualizar la plantilla.");
+        }
+
+        result = (await response.json()) as ImportContainerTemplateRecord;
+      } else {
+        const response = await fetch(`${apiBaseUrl}/management/import-templates`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(templatePayload),
+        });
+
+        if (!response.ok) {
+          throw new Error("No fue posible guardar la plantilla.");
+        }
+
+        result = (await response.json()) as ImportContainerTemplateRecord;
       }
 
-      const createdTemplate: ImportContainerTemplateRecord = {
-        ...templatePayload,
-        id: `import-template-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      };
+      setImportContainerTemplates((current) =>
+        existingTemplate
+          ? current.map((template) => (getTemplateId(template) === getTemplateId(existingTemplate) ? result : template))
+          : [result, ...current],
+      );
 
-      storedName = createdTemplate.name;
-      return [createdTemplate, ...current].slice(0, 30);
-    });
-
-    return storedName;
+      return result.name;
+    } catch (error) {
+      setAccountingStatuses({
+        importCosts: {
+          tone: "error",
+          message: error instanceof Error ? error.message : "Error al guardar la plantilla.",
+        },
+      });
+      return "";
+    }
   }
 
-  function applySelectedImportTemplate(templateId: string) {
-    const selectedTemplate = importContainerTemplates.find((template) => template.id === templateId);
+  async function applySelectedImportTemplate(templateId: string) {
+    const selectedTemplate = importContainerTemplates.find((template) => String(template._id ?? template.id) === templateId);
 
     if (!selectedTemplate) {
       return;
@@ -6132,7 +6171,8 @@ export default function App() {
     const form = event.currentTarget;
     const editingId = typeof editingRow?._id === "string" ? editingRow._id : "";
     const isEditing = editingId.length > 0;
-    const payload = buildPayload(new FormData(form), config.fields) as Record<string, string | number | boolean | string[] | null> & {
+    const formData = new FormData(form);
+    const payload = buildPayload(formData, config.fields) as Record<string, string | number | boolean | string[] | null> & {
       imageUrl?: string;
     };
 
@@ -6146,6 +6186,8 @@ export default function App() {
       payload.presentation = productPresentationDraft;
 
       if (productPresentationDraft === "caja") {
+        payload.unitsPerBox = Number(formData.get("unitsPerBox") ?? 0);
+        payload.unitsPerBoxUnit = String(formData.get("unitsPerBoxUnit") ?? "").trim();
         const unitsPerBox = Number(payload.unitsPerBox ?? 0);
 
         if (!Number.isFinite(unitsPerBox) || unitsPerBox <= 0) {
@@ -9319,18 +9361,47 @@ export default function App() {
                 <div className="creation-form import-page-grid">
                   <label className="field field-full">
                     <span>Plantilla guardada</span>
-                    <div className="catalog-form-actions">
-                      <select
-                        value={selectedImportTemplateId}
-                        onChange={(event) => setSelectedImportTemplateId(event.target.value)}
-                      >
-                        <option value="">Selecciona una plantilla</option>
-                        {importContainerTemplates.map((template) => (
-                          <option key={template.id} value={template.id}>{template.name}</option>
-                        ))}
-                      </select>
+                    <div className="import-template-actions" ref={importTemplateMenuRef}>
                       <button
-                        className="ghost-button"
+                        className={`import-template-trigger ${isImportTemplateMenuOpen ? "is-open" : ""}`}
+                        type="button"
+                        onClick={() => setIsImportTemplateMenuOpen((current) => !current)}
+                      >
+                        <span className="import-template-trigger-label">
+                          {selectedImportTemplateId
+                            ? importContainerTemplates.find((template) => getTemplateId(template) === selectedImportTemplateId)?.name ?? "Selecciona una plantilla"
+                            : "Selecciona una plantilla"}
+                        </span>
+                        <span className="import-template-trigger-caret">▾</span>
+                      </button>
+
+                      {isImportTemplateMenuOpen ? (
+                        <div className="import-template-menu" role="listbox" aria-label="Plantillas guardadas">
+                          {importContainerTemplates.length > 0 ? (
+                            importContainerTemplates.map((template) => {
+                              const templateId = getTemplateId(template);
+                              return (
+                              <button
+                                key={templateId}
+                                className={`import-template-menu-item ${selectedImportTemplateId === templateId ? "is-selected" : ""}`}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedImportTemplateId(templateId);
+                                  setIsImportTemplateMenuOpen(false);
+                                }}
+                              >
+                                <span>{template.name}</span>
+                              </button>
+                            );
+                            })
+                          ) : (
+                            <div className="import-template-menu-empty">No hay plantillas guardadas.</div>
+                          )}
+                        </div>
+                      ) : null}
+
+                      <button
+                        className="import-template-apply-button"
                         type="button"
                         onClick={() => applySelectedImportTemplate(selectedImportTemplateId)}
                         disabled={!selectedImportTemplateId}
@@ -12384,6 +12455,17 @@ export default function App() {
                     );
                   }
 
+                  const fieldLabel =
+                    selectedCollection.key === "products" && field.name === "productWeightKg"
+                      ? {
+                          kg: "Peso por KG (kg)",
+                          lb: "Peso por LB (kg)",
+                          unidad: "Peso por UNIDAD (kg)",
+                          paquete: "Peso por PAQUETE (kg)",
+                          caja: "Peso por CAJA (kg)",
+                        }[productPresentationDraft] ?? "Peso por unidad (kg)"
+                      : field.label;
+
                   return (
                     <label
                       className={`field ${
@@ -12395,7 +12477,7 @@ export default function App() {
                       }`}
                       key={field.name}
                     >
-                      <span>{field.label}</span>
+                      <span>{fieldLabel}</span>
                       {field.type === "select" ? (
                         <select
                           name={field.name}
