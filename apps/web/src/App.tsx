@@ -12059,7 +12059,7 @@ export default function App() {
                         )}
 
                         <label className="field field-small">
-                          <span>Monto USD</span>
+                          <span>Monto florin</span>
                           <input
                             type="number"
                             min="0"
@@ -12103,7 +12103,7 @@ export default function App() {
                             <p>{expense.label}</p>
                           </div>
                           <div className="field field-small">
-                            <span>Monto USD</span>
+                            <span>Monto florin</span>
                             <p>{expense.amount}</p>
                           </div>
                         </div>
