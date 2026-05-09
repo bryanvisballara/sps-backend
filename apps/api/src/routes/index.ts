@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { Response, Router } from "express";
+import { Request, Response, Router } from "express";
 import twilio from "twilio";
 import * as XLSX from "xlsx";
 
@@ -2043,7 +2043,7 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
   }
 });
 
-apiRouter.delete("/management/inventory-entries/:groupId", async (request, response) => {
+async function handleDeleteInventoryEntryGroup(request: Request, response: Response) {
   try {
     const groupId = typeof request.params.groupId === "string" ? request.params.groupId.trim() : "";
     const adjustmentIds = Array.isArray(request.body?.adjustmentIds)
@@ -2192,7 +2192,11 @@ apiRouter.delete("/management/inventory-entries/:groupId", async (request, respo
   } catch (error) {
     sendCreationError(response, error);
   }
-});
+}
+
+apiRouter.delete("/management/inventory-entries/:groupId", handleDeleteInventoryEntryGroup);
+
+apiRouter.post("/management/inventory-entries/:groupId/delete", handleDeleteInventoryEntryGroup);
 
 apiRouter.post("/management/inventory-entries/fix-legacy-unit-costs", async (_request, response) => {
   try {
