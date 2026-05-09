@@ -2109,7 +2109,18 @@ async function handleDeleteInventoryEntryGroup(request: Request, response: Respo
       const warehouse = warehouseCache.get(warehouseCacheKey);
 
       if (!warehouse || !warehouse.code) {
-        response.status(400).json({ message: "No fue posible identificar la bodega de la entrada para borrarla." });
+        await InventoryAdjustment.updateMany(
+          {
+            _id: { $in: adjustments.map((adjustment) => adjustment._id) },
+          },
+          {
+            $set: { hiddenFromHistory: true },
+          },
+        );
+
+        response.json({
+          message: "La entrada se oculto del historial porque no tiene bodega identificable para revertir inventario.",
+        });
         return;
       }
 
