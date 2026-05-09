@@ -270,10 +270,19 @@ type InventoryEntryHistoryGroup = {
   totalUnits: number;
 };
 
-type InventoryAdjustmentFormState = {
-  quantity: string;
-  reason: string;
-  notes: string;
+type InventoryEntryExpenseItem = {
+  id: string;
+  key: string;
+  label: string;
+  amount: string;
+  saved?: boolean;
+};
+
+type InventoryEntryFormState = {
+  warehouseId: string;
+  usdToAwgRate: string;
+  items: InventoryEntryDraftItem[];
+  expenseItems: InventoryEntryExpenseItem[];
 };
 
 type InventoryEntryDraftItem = {
@@ -284,6 +293,12 @@ type InventoryEntryDraftItem = {
   salePriceAwg: string;
   expirationDate: string;
   productWeightKg: string;
+};
+
+type InventoryAdjustmentFormState = {
+  quantity: string;
+  reason: string;
+  notes: string;
 };
 
 type ContainerImportProductFormState = {
@@ -809,6 +824,13 @@ const importExpenseTypeOptions = [
   { value: "portTransport", label: "Transporte a puerto" },
   { value: "customsAgency", label: "Agencia aduanal" },
   { value: "portFees", label: "Gastos de puerto" },
+  { value: "other", label: "Otro" },
+] as const;
+
+const inventoryEntryExpenseTypeOptions = [
+  { value: "maritime-agent", label: "Agente maritimo" },
+  { value: "customs", label: "Nacionalizacion" },
+  { value: "port-transport", label: "Flete puerto - bodega" },
   { value: "other", label: "Otro" },
 ] as const;
 
@@ -1800,6 +1822,20 @@ function createInitialLogisticsInvoiceForm(): LogisticsInvoiceFormState {
   };
 }
 
+function createInventoryEntryExpenseItem(
+  key: string = "maritime-agent",
+  overrides?: Partial<Omit<InventoryEntryExpenseItem, "id" | "key">>,
+): InventoryEntryExpenseItem {
+  const defaultLabel = inventoryEntryExpenseTypeOptions.find((option) => option.value === key)?.label ?? "Otro";
+
+  return {
+    id: `${key}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    key,
+    label: key === "other" ? overrides?.label ?? "" : defaultLabel,
+    amount: overrides?.amount ?? "",
+  };
+}
+
 function createInventoryEntryDraftItem(productId = ""): InventoryEntryDraftItem {
   return {
     id: `inventory-entry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -2006,6 +2042,7 @@ export default function App() {
   const [inventoryEntryItems, setInventoryEntryItems] = useState<InventoryEntryDraftItem[]>(() => [
     createInventoryEntryDraftItem(),
   ]);
+  const [inventoryEntryExpenseItems, setInventoryEntryExpenseItems] = useState<InventoryEntryExpenseItem[]>([]);
   const [isImportingInventoryExcel, setIsImportingInventoryExcel] = useState(false);
   const [inventoryExcelFileName, setInventoryExcelFileName] = useState("");
   const [isInventoryEntryItemModalOpen, setIsInventoryEntryItemModalOpen] = useState(false);
@@ -3770,6 +3807,7 @@ export default function App() {
     setInventoryEntryWarehouseId(selectedWarehouseId || warehouseOptions[0]?.value || "");
     setInventoryUsdToAwgRate("1.79");
     setInventoryEntryItems([createInventoryEntryDraftItem()]);
+    setInventoryEntryExpenseItems([]);
     setIsInventoryEntryModalOpen(true);
   }
 
@@ -3783,6 +3821,7 @@ export default function App() {
     setInventoryEntryWarehouseId(selectedWarehouseId || warehouseOptions[0]?.value || "");
     setInventoryUsdToAwgRate("1.79");
     setInventoryEntryItems([createInventoryEntryDraftItem()]);
+    setInventoryEntryExpenseItems([]);
     setInventoryExcelFileName("");
     setActiveSection("inventory-entry");
   }
@@ -4311,6 +4350,25 @@ export default function App() {
         return;
       }
 
+      // Validate additional expense items
+      const normalizedExpenses = inventoryEntryExpenseItems.map((expense, index) => {
+        const amount = Number(expense.amount || 0);
+
+        if (!Number.isFinite(amount) || amount < 0) {
+          throw new Error(`El monto del costo adicional #${index + 1} debe ser cero o mayor.`);
+        }
+
+        if (expense.key === "other" && !expense.label.trim()) {
+          throw new Error(`El costo adicional personalizado #${index + 1} debe tener un nombre.`);
+        }
+
+        return {
+          key: expense.key,
+          label: expense.label,
+          amount,
+        };
+      });
+
       setIsSavingInventoryEntry(true);
       setInventoryEntryStatus(null);
       const response = await fetch(`${apiBaseUrl}/management/inventory-entries`, {
@@ -4320,6 +4378,7 @@ export default function App() {
           warehouseId: inventoryEntryWarehouseId,
           usdToAwgRate,
           items: normalizedItems,
+          additionalExpenses: normalizedExpenses,
         }),
       });
       const data = (await response.json()) as { message?: string };
@@ -4340,6 +4399,27 @@ export default function App() {
     } finally {
       setIsSavingInventoryEntry(false);
     }
+  }
+
+  function addInventoryEntryExpenseItem() {
+    setInventoryEntryExpenseItems((current) => [...current, createInventoryEntryExpenseItem()]);
+  }
+
+  function removeInventoryEntryExpenseItem(itemId: string) {
+    setInventoryEntryExpenseItems((current) => current.filter((expense) => expense.id !== itemId));
+  }
+
+  function updateInventoryEntryExpenseItem(itemId: string, updates: Partial<Omit<InventoryEntryExpenseItem, "id">>) {
+    setInventoryEntryExpenseItems((current) =>
+      current.map((expense) =>
+        expense.id === itemId
+          ? {
+              ...expense,
+              ...updates,
+            }
+          : expense,
+      ),
+    );
   }
 
   async function refreshCatalogs() {
@@ -11860,6 +11940,116 @@ export default function App() {
                 {inventoryEntryStatus ? <p className={`form-feedback ${inventoryEntryStatus.tone}`}>{inventoryEntryStatus.message}</p> : null}
 
               </form>
+            </article>
+
+            <article className="database-card">
+              <div className="creation-header database-header">
+                <div>
+                  <h2>Costos adicionales</h2>
+                  <p>Agrega gastos adicionales que se distribuiran entre todos los productos.</p>
+                </div>
+              </div>
+
+              {inventoryEntryExpenseItems.filter((e) => !e.saved).length === 0 ? (
+                <p className="empty-state">No hay costos adicionales registrados. Agrega uno con el boton de abajo.</p>
+              ) : (
+                <div className="import-expense-list">
+                  {inventoryEntryExpenseItems.filter((e) => !e.saved).map((expense) => (
+                    <div key={expense.id} className="import-expense-card">
+                      <div className="import-expense-card-fields">
+                        <label className="field field-small">
+                          <span>Tipo</span>
+                          <select
+                            value={expense.key}
+                            onChange={(event) => {
+                              const selectedKey = event.target.value;
+                              updateInventoryEntryExpenseItem(expense.id, {
+                                key: selectedKey,
+                                label: selectedKey === "other" ? expense.label : inventoryEntryExpenseTypeOptions.find((opt) => opt.value === selectedKey)?.label ?? "",
+                              });
+                            }}
+                          >
+                            {inventoryEntryExpenseTypeOptions.map((option) => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                        </label>
+
+                        {expense.key === "other" && (
+                          <label className="field field-small">
+                            <span>Descripcion personalizada</span>
+                            <input
+                              type="text"
+                              value={expense.label}
+                              placeholder="Ej: Agente de aduanas"
+                              onChange={(event) => updateInventoryEntryExpenseItem(expense.id, { label: event.target.value })}
+                            />
+                          </label>
+                        )}
+
+                        <label className="field field-small">
+                          <span>Monto USD</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={expense.amount}
+                            placeholder="0"
+                            onChange={(event) => updateInventoryEntryExpenseItem(expense.id, { amount: event.target.value })}
+                          />
+                        </label>
+                      </div>
+
+                      <button
+                        className="table-action-icon is-danger"
+                        type="button"
+                        aria-label="Quitar costo"
+                        title="Quitar"
+                        onClick={() => removeInventoryEntryExpenseItem(expense.id)}
+                      >
+                        x
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="catalog-form-actions inventory-adjustment-actions">
+                <button className="ghost-button" type="button" onClick={addInventoryEntryExpenseItem}>
+                  + Agregar costo adicional
+                </button>
+              </div>
+
+              {inventoryEntryExpenseItems.some((e) => e.saved) && (
+                <>
+                  <hr />
+                  <div className="import-expense-list">
+                    {inventoryEntryExpenseItems.filter((e) => e.saved).map((expense) => (
+                      <div key={expense.id} className="import-expense-card is-saved">
+                        <div className="import-expense-card-fields">
+                          <div className="field field-small">
+                            <span>Tipo</span>
+                            <p>{expense.label}</p>
+                          </div>
+                          <div className="field field-small">
+                            <span>Monto USD</span>
+                            <p>{expense.amount}</p>
+                          </div>
+                        </div>
+                        <button
+                          className="table-action-icon is-danger"
+                          type="button"
+                          aria-label="Quitar costo"
+                          title="Quitar"
+                          onClick={() => removeInventoryEntryExpenseItem(expense.id)}
+                        >
+                          x
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </article>
 
             <article className="database-card">

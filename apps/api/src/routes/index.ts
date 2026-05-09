@@ -1850,6 +1850,7 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
     const warehouseId = typeof request.body?.warehouseId === "string" ? request.body.warehouseId.trim() : "";
     const usdToAwgRate = Number(request.body?.usdToAwgRate ?? 0);
     const rawItems: unknown[] = Array.isArray(request.body?.items) ? request.body.items : [];
+    const rawAdditionalExpenses: unknown[] = Array.isArray(request.body?.additionalExpenses) ? request.body.additionalExpenses : [];
 
     if (!Number.isFinite(usdToAwgRate) || usdToAwgRate <= 0) {
       response.status(400).json({ message: "Ingresa una tasa valida en USD@AWG mayor a cero." });
@@ -1860,6 +1861,35 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
       response.status(400).json({ message: "Agrega al menos un producto para registrar inventario." });
       return;
     }
+
+    // Parse additional expenses
+    const additionalExpenses = rawAdditionalExpenses.map((expense: unknown, index: number) => {
+      if (typeof expense !== "object" || expense === null) {
+        throw new Error(`El costo adicional #${index + 1} no es valido.`);
+      }
+
+      const exp = expense as {
+        key?: unknown;
+        label?: unknown;
+        amount?: unknown;
+      };
+      const key = typeof exp.key === "string" ? exp.key.trim() : "";
+      const label = typeof exp.label === "string" ? exp.label.trim() : "";
+      const amount = Number(exp.amount ?? 0);
+
+      if (!Number.isFinite(amount) || amount < 0) {
+        throw new Error(`El monto del costo adicional #${index + 1} debe ser cero o mayor.`);
+      }
+
+      if (key === "other" && !label) {
+        throw new Error(`El costo adicional personalizado #${index + 1} debe tener un nombre.`);
+      }
+
+      return { key, label, amount };
+    });
+
+    // Calculate total additional expenses
+    const totalAdditionalExpenses = additionalExpenses.reduce((sum, exp) => sum + exp.amount, 0);
 
     const items = rawItems.map((entry: unknown, index: number) => {
       if (typeof entry !== "object" || entry === null) {
@@ -1916,6 +1946,10 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
       response.status(400).json({ message: "No repitas el mismo lote dentro del mismo registro de inventario." });
       return;
     }
+
+    // Calculate total quantity across all items for distributing additional expenses
+    const totalQuantity = items.reduce((sum, item: (typeof items)[number]) => sum + item.quantity, 0);
+    const additionalExpensePerUnit = totalQuantity > 0 ? totalAdditionalExpenses / totalQuantity : 0;
 
     const uniqueProductIds = Array.from(new Set(items.map((item: (typeof items)[number]) => item.productId)));
 
@@ -1974,9 +2008,11 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
       );
 
       const unitCostUsd = item.quantity > 0 ? item.costUsd / item.quantity : item.costUsd;
+      // Include distributed additional expenses in the unit cost
+      const totalUnitCostUsd = unitCostUsd + additionalExpensePerUnit;
 
       await Product.findByIdAndUpdate(product._id, {
-        arubaPurchaseCostUsd: unitCostUsd,
+        arubaPurchaseCostUsd: totalUnitCostUsd,
         arubaUsdToAwgRate: usdToAwgRate,
         salePrice: item.salePriceAwg,
         productWeightKg: item.productWeightKg,
@@ -1994,7 +2030,7 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
         entryWarehouseId: String(warehouse._id),
         entryWarehouseName: String(warehouse.name ?? ""),
         entryUsdToAwgRate: usdToAwgRate,
-        entryCostUsd: unitCostUsd,
+        entryCostUsd: totalUnitCostUsd,
         source: "inventory-entry",
       });
     }
