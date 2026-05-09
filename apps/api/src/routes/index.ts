@@ -1424,6 +1424,23 @@ apiRouter.put("/warehouse/orders/:id/complete", async (request, response) => {
   }
 });
 
+apiRouter.delete("/warehouse/orders/:id", async (request, response) => {
+  try {
+    const order = await Order.findByIdAndDelete(request.params.id).lean();
+
+    if (!order) {
+      response.status(404).json({ message: "El pedido no existe." });
+      return;
+    }
+
+    response.json({
+      message: "Pedido borrado correctamente.",
+    });
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
 apiRouter.get("/management/kpis", async (_request, response) => {
   const [users, clients, categories, products, suppliers, warehouses, routes] = await Promise.all([
     User.countDocuments({ active: true }),
