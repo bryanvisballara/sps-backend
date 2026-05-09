@@ -1879,7 +1879,7 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
       const amount = Number(exp.amount ?? 0);
 
       if (!Number.isFinite(amount) || amount < 0) {
-        throw new Error(`El monto del costo adicional #${index + 1} debe ser cero o mayor.`);
+        throw new Error(`El monto en florines del costo adicional #${index + 1} debe ser cero o mayor.`);
       }
 
       if (key === "other" && !label) {
@@ -1889,8 +1889,8 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
       return { key, label, amount };
     });
 
-    // Calculate total additional expenses
-    const totalAdditionalExpenses = additionalExpenses.reduce((sum, exp) => sum + exp.amount, 0);
+    // Additional expenses are entered in AWG/florins and converted to USD before affecting unit cost.
+    const totalAdditionalExpensesAwg = additionalExpenses.reduce((sum, exp) => sum + exp.amount, 0);
 
     const items = rawItems.map((entry: unknown, index: number) => {
       if (typeof entry !== "object" || entry === null) {
@@ -1950,7 +1950,8 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
 
     // Calculate total quantity across all items for distributing additional expenses
     const totalQuantity = items.reduce((sum, item: (typeof items)[number]) => sum + item.quantity, 0);
-    const additionalExpensePerUnit = totalQuantity > 0 ? totalAdditionalExpenses / totalQuantity : 0;
+    const additionalExpensePerUnitAwg = totalQuantity > 0 ? totalAdditionalExpensesAwg / totalQuantity : 0;
+    const additionalExpensePerUnitUsd = usdToAwgRate > 0 ? additionalExpensePerUnitAwg / usdToAwgRate : 0;
 
     const uniqueProductIds = Array.from(new Set(items.map((item: (typeof items)[number]) => item.productId)));
 
@@ -2010,7 +2011,7 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
 
       const unitCostUsd = item.quantity > 0 ? item.costUsd / item.quantity : item.costUsd;
       // Include distributed additional expenses in the unit cost
-      const totalUnitCostUsd = unitCostUsd + additionalExpensePerUnit;
+      const totalUnitCostUsd = unitCostUsd + additionalExpensePerUnitUsd;
 
       await Product.findByIdAndUpdate(product._id, {
         arubaPurchaseCostUsd: totalUnitCostUsd,
