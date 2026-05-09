@@ -2055,6 +2055,7 @@ export default function App() {
     productWeightKg: "",
   });
   const [selectedInventoryEntryHistoryGroupId, setSelectedInventoryEntryHistoryGroupId] = useState("");
+  const [deletingInventoryEntryHistoryGroupId, setDeletingInventoryEntryHistoryGroupId] = useState("");
   const [inventoryEntryStatus, setInventoryEntryStatus] = useState<CreationStatus | null>(null);
   const [isSavingInventoryEntry, setIsSavingInventoryEntry] = useState(false);
   const [inventoryFilter, setInventoryFilter] = useState<"all" | "expiring-soon">("all");
@@ -3914,6 +3915,52 @@ export default function App() {
 
   function closeInventoryEntryHistoryGroupDetails() {
     setSelectedInventoryEntryHistoryGroupId("");
+  }
+
+  async function handleDeleteInventoryEntryHistoryGroup(group: InventoryEntryHistoryGroup) {
+    if (!group.id) {
+      setInventoryEntryStatus({ tone: "error", message: "No fue posible identificar la entrada de inventario." });
+      return;
+    }
+
+    if (!globalThis.confirm(`Se borrara la entrada de inventario del ${String(group.createdAt).slice(0, 10)}.`)) {
+      return;
+    }
+
+    try {
+      setDeletingInventoryEntryHistoryGroupId(group.id);
+      setInventoryEntryStatus(null);
+      const response = await fetch(`${apiBaseUrl}/management/inventory-entries/${encodeURIComponent(group.id)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          adjustmentIds: group.items.map((item) => item.id),
+        }),
+      });
+      const data = (await response.json()) as { message?: string };
+
+      if (!response.ok) {
+        setInventoryEntryStatus({
+          tone: "error",
+          message: data.message ?? "No fue posible borrar la entrada de inventario.",
+        });
+        return;
+      }
+
+      if (selectedInventoryEntryHistoryGroupId === group.id) {
+        closeInventoryEntryHistoryGroupDetails();
+      }
+
+      await refreshInventorySummary();
+      setInventoryEntryStatus({
+        tone: "success",
+        message: data.message ?? "Entrada de inventario borrada correctamente.",
+      });
+    } catch {
+      setInventoryEntryStatus({ tone: "error", message: "No fue posible conectar con el backend." });
+    } finally {
+      setDeletingInventoryEntryHistoryGroupId("");
+    }
   }
 
   function getInventoryEntryCostAwg(costUsdValue: string) {
@@ -12196,6 +12243,7 @@ export default function App() {
                       inventoryEntryHistoryGroups.map((group) => {
                         const canEditGroup = Number(group.usdToAwgRate || 0) > 0
                           && group.items.every((item) => Number.isFinite(Number(item.entryCostUsd ?? 0)));
+                        const isDeletingGroup = deletingInventoryEntryHistoryGroupId === group.id;
 
                         return (
                           <tr key={`inventory-entry-group-${group.id}`}>
@@ -12225,10 +12273,22 @@ export default function App() {
                                   aria-label="Ver detalle del inventario agregado"
                                   title="Ver listado"
                                   onClick={() => openInventoryEntryHistoryGroupDetails(group.id)}
+                                  disabled={isDeletingGroup}
                                 >
                                   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                     <path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z" fill="currentColor" />
                                   </svg>
+                                </button>
+
+                                <button
+                                  className="table-action-icon is-danger"
+                                  type="button"
+                                  aria-label="Eliminar registro de inventario agregado"
+                                  title="Eliminar"
+                                  disabled={isDeletingGroup}
+                                  onClick={() => void handleDeleteInventoryEntryHistoryGroup(group)}
+                                >
+                                  x
                                 </button>
                               </div>
                             </td>
