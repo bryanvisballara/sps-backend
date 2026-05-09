@@ -18,6 +18,7 @@ import { roleSummary } from "../modules/dashboard/dashboard.service.js";
 import { InventoryAdjustment } from "../modules/inventory/inventory-adjustment.model.js";
 import { WarehouseLocation } from "../modules/inventory/warehouse-location.model.js";
 import { WarehouseStock } from "../modules/inventory/warehouse-stock.model.js";
+import { ImportTemplate } from "../modules/imports/import-template.model.js";
 import { Order } from "../modules/orders/order.model.js";
 import { Product } from "../modules/catalog/product.model.js";
 import { SalesRoute } from "../modules/routes/route.model.js";
@@ -3338,6 +3339,106 @@ apiRouter.delete("/management/warehouse-locations/:id", async (request, response
     }
 
     response.json({ message: "Ubicacion borrada correctamente." });
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.get("/management/import-templates", async (request, response) => {
+  try {
+    const userId = typeof request.query.userId === "string" ? request.query.userId : "";
+
+    if (!userId) {
+      response.status(400).json({ message: "userId is required" });
+      return;
+    }
+
+    const templates = await ImportTemplate.find({ userId }).lean();
+    response.json(templates);
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.post("/management/import-templates", async (request, response) => {
+  try {
+    const userId = typeof request.body.userId === "string" ? request.body.userId : "";
+    const name = typeof request.body.name === "string" ? request.body.name.trim() : "";
+
+    if (!userId || !name) {
+      response.status(400).json({ message: "userId and name are required" });
+      return;
+    }
+
+    const template = new ImportTemplate({
+      userId,
+      name,
+      containerType: request.body.containerType,
+      containerSize: request.body.containerSize,
+      measurementUnit: request.body.measurementUnit,
+      notes: request.body.notes || "",
+      expenseItems: request.body.expenseItems || [],
+      products: request.body.products || [],
+    });
+
+    await template.save();
+    response.status(201).json(template.toObject());
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.put("/management/import-templates/:id", async (request, response) => {
+  try {
+    const userId = typeof request.body.userId === "string" ? request.body.userId : "";
+
+    if (!userId) {
+      response.status(400).json({ message: "userId is required" });
+      return;
+    }
+
+    const template = await ImportTemplate.findOneAndUpdate(
+      { _id: request.params.id, userId },
+      {
+        name: request.body.name,
+        containerType: request.body.containerType,
+        containerSize: request.body.containerSize,
+        measurementUnit: request.body.measurementUnit,
+        notes: request.body.notes,
+        expenseItems: request.body.expenseItems,
+        products: request.body.products,
+      },
+      { new: true, runValidators: true },
+    ).lean();
+
+    if (!template) {
+      response.status(404).json({ message: "Template not found" });
+      return;
+    }
+
+    response.json(template);
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.delete("/management/import-templates/:id", async (request, response) => {
+  try {
+    const userId = typeof request.query.userId === "string" ? request.query.userId : "";
+
+    if (!userId) {
+      response.status(400).json({ message: "userId is required" });
+      return;
+    }
+
+    const template = await ImportTemplate.findOneAndDelete({ _id: request.params.id, userId });
+
+    if (!template) {
+      response.status(404).json({ message: "Template not found" });
+      return;
+    }
+
+    response.json({ message: "Template deleted successfully" });
   } catch (error) {
     sendCreationError(response, error);
   }
