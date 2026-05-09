@@ -9,6 +9,7 @@ const inventoryAdjustmentSchema = new Schema({
     entryWarehouseName: { type: String, trim: true, default: "" },
     entryUsdToAwgRate: { type: Number, min: 0, default: 0 },
     entryCostUsd: { type: Number, min: 0, default: 0 },
+    hiddenFromHistory: { type: Boolean, default: false },
     source: {
         type: String,
         enum: ["warehouse-stock", "import-fallback", "inventory-entry"],

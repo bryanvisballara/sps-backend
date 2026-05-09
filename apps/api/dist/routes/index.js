@@ -1324,7 +1324,8 @@ apiRouter.get("/management/inventory-summary", async (request, response) => {
         expiringSoon: rows.filter((row) => row.isExpiringSoon).length,
     };
     const productById = new Map(products.map((product) => [String(product._id), product]));
-    const history = [...inventoryAdjustments]
+    const history = inventoryAdjustments
+        .filter((adjustment) => !Boolean(adjustment.hiddenFromHistory))
         .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
         .map((adjustment) => {
         const product = productById.get(String(adjustment.productId));
@@ -1642,8 +1643,13 @@ async function handleDeleteInventoryEntryGroup(request, response) {
             }).lean();
             const totalAvailable = stockRows.reduce((sum, stockRow) => sum + Number(stockRow.availableUnits ?? 0), 0);
             if (totalAvailable < removal.quantity) {
-                response.status(400).json({
-                    message: `No se puede borrar la entrada porque ${removal.quantity - totalAvailable} unidad${removal.quantity - totalAvailable === 1 ? "" : "es"} ya no estan disponibles en ${removal.warehouseName}.`,
+                await InventoryAdjustment.updateMany({
+                    _id: { $in: adjustments.map((adjustment) => adjustment._id) },
+                }, {
+                    $set: { hiddenFromHistory: true },
+                });
+                response.json({
+                    message: `La entrada se oculto del historial porque ${removal.quantity - totalAvailable} unidad${removal.quantity - totalAvailable === 1 ? "" : "es"} ya fueron consumidas en ${removal.warehouseName}.`,
                 });
                 return;
             }
