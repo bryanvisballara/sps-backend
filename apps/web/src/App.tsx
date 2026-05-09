@@ -3930,14 +3930,38 @@ export default function App() {
     try {
       setDeletingInventoryEntryHistoryGroupId(group.id);
       setInventoryEntryStatus(null);
-      const response = await fetch(`${apiBaseUrl}/management/inventory-entries/${encodeURIComponent(group.id)}`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          adjustmentIds: group.items.map((item) => item.id),
-        }),
-      });
-      const data = (await response.json()) as { message?: string };
+      const payload = {
+        adjustmentIds: group.items.map((item) => item.id),
+      };
+      const baseDeleteUrl = `${apiBaseUrl}/management/inventory-entries/${encodeURIComponent(group.id)}`;
+      const requestDelete = async (url: string, method: "DELETE" | "POST") => {
+        const response = await fetch(url, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const rawBody = await response.text();
+
+        try {
+          return {
+            response,
+            data: rawBody ? JSON.parse(rawBody) as { message?: string } : {},
+          };
+        } catch {
+          return {
+            response,
+            data: {} as { message?: string },
+          };
+        }
+      };
+
+      let deleteResult = await requestDelete(baseDeleteUrl, "DELETE");
+
+      if (deleteResult.response.status === 404) {
+        deleteResult = await requestDelete(`${baseDeleteUrl}/delete`, "POST");
+      }
+
+      const { response, data } = deleteResult;
 
       if (!response.ok) {
         setInventoryEntryStatus({
