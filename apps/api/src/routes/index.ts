@@ -2043,6 +2043,157 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
   }
 });
 
+apiRouter.delete("/management/inventory-entries/:groupId", async (request, response) => {
+  try {
+    const groupId = typeof request.params.groupId === "string" ? request.params.groupId.trim() : "";
+    const adjustmentIds = Array.isArray(request.body?.adjustmentIds)
+      ? request.body.adjustmentIds
+        .filter((value: unknown): value is string => typeof value === "string")
+        .map((value: string) => value.trim())
+        .filter(Boolean)
+      : [];
+
+    if (!groupId && adjustmentIds.length === 0) {
+      response.status(400).json({ message: "No fue posible identificar la entrada de inventario a borrar." });
+      return;
+    }
+
+    let adjustments = await InventoryAdjustment.find({
+      source: "inventory-entry",
+      ...(groupId ? { entryGroupId: groupId } : {}),
+    }).lean();
+
+    if (adjustments.length === 0 && adjustmentIds.length > 0) {
+      adjustments = await InventoryAdjustment.find({
+        _id: { $in: adjustmentIds },
+        source: "inventory-entry",
+      }).lean();
+    }
+
+    if (adjustments.length === 0) {
+      response.status(404).json({ message: "La entrada de inventario ya no existe." });
+      return;
+    }
+
+    const warehouseCache = new Map<string, { code?: string; name?: string } | null>();
+    const removals = new Map<string, {
+      productId: string;
+      warehouseCode: string;
+      warehouseName: string;
+      quantity: number;
+    }>();
+
+    for (const adjustment of adjustments) {
+      const productId = String(adjustment.productId ?? "").trim();
+      const quantity = Number(adjustment.quantity ?? 0);
+      const warehouseId = String(adjustment.entryWarehouseId ?? "").trim();
+      const warehouseName = String(adjustment.entryWarehouseName ?? "").trim();
+      const warehouseCacheKey = warehouseId || `name:${warehouseName.toLowerCase()}`;
+
+      if (!productId || !(quantity > 0)) {
+        response.status(400).json({ message: "La entrada contiene productos invalidos y no se puede borrar." });
+        return;
+      }
+
+      if (!warehouseCache.has(warehouseCacheKey)) {
+        const warehouse = warehouseId
+          ? await Warehouse.findById(warehouseId).lean()
+          : warehouseName
+            ? await Warehouse.findOne({ name: warehouseName }).lean()
+            : null;
+
+        warehouseCache.set(warehouseCacheKey, warehouse);
+      }
+
+      const warehouse = warehouseCache.get(warehouseCacheKey);
+
+      if (!warehouse || !warehouse.code) {
+        response.status(400).json({ message: "No fue posible identificar la bodega de la entrada para borrarla." });
+        return;
+      }
+
+      const removalKey = `${productId}::${String(warehouse.code)}`;
+      const currentRemoval = removals.get(removalKey) ?? {
+        productId,
+        warehouseCode: String(warehouse.code),
+        warehouseName: String(warehouse.name ?? warehouseName),
+        quantity: 0,
+      };
+
+      currentRemoval.quantity += quantity;
+      removals.set(removalKey, currentRemoval);
+    }
+
+    const stockRowsByRemovalKey = new Map<string, Array<{
+      _id: unknown;
+      availableUnits?: number;
+      minUnits?: number;
+      expirationDate?: Date | string | null;
+      createdAt?: Date | string | null;
+    }>>();
+
+    for (const [removalKey, removal] of removals.entries()) {
+      const stockRows = await WarehouseStock.find({
+        productId: removal.productId,
+        warehouseCode: removal.warehouseCode,
+      }).lean();
+      const totalAvailable = stockRows.reduce(
+        (sum: number, stockRow: (typeof stockRows)[number]) => sum + Number(stockRow.availableUnits ?? 0),
+        0,
+      );
+
+      if (totalAvailable < removal.quantity) {
+        response.status(400).json({
+          message: `No se puede borrar la entrada porque ${removal.quantity - totalAvailable} unidad${removal.quantity - totalAvailable === 1 ? "" : "es"} ya no estan disponibles en ${removal.warehouseName}.`,
+        });
+        return;
+      }
+
+      stockRowsByRemovalKey.set(removalKey, stockRows);
+    }
+
+    for (const [removalKey, removal] of removals.entries()) {
+      const stockRows = stockRowsByRemovalKey.get(removalKey) ?? [];
+      let remaining = removal.quantity;
+
+      for (const stockRow of [...stockRows].sort(compareWarehouseStockLotsByConsumptionPriority).reverse()) {
+        if (remaining <= 0) {
+          break;
+        }
+
+        const rowAvailable = Number(stockRow.availableUnits ?? 0);
+        const deductedFromRow = Math.min(rowAvailable, remaining);
+
+        if (deductedFromRow <= 0) {
+          continue;
+        }
+
+        const nextAvailableUnits = rowAvailable - deductedFromRow;
+        remaining -= deductedFromRow;
+
+        await WarehouseStock.findByIdAndUpdate(
+          stockRow._id,
+          {
+            availableUnits: nextAvailableUnits,
+            status: resolveWarehouseStockStatus(nextAvailableUnits, Number(stockRow.minUnits ?? 0)),
+          },
+          { runValidators: true },
+        );
+      }
+    }
+
+    await InventoryAdjustment.deleteMany({
+      _id: { $in: adjustments.map((adjustment) => adjustment._id) },
+    });
+
+    response.json({
+      message: `Entrada de inventario borrada correctamente (${adjustments.length} movimiento${adjustments.length === 1 ? "" : "s"}).`,
+    });
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
 apiRouter.post("/management/inventory-entries/fix-legacy-unit-costs", async (_request, response) => {
   try {
     const legacyAdjustments = await InventoryAdjustment.find({
