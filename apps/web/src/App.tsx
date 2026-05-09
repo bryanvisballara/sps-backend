@@ -2158,6 +2158,7 @@ export default function App() {
   const [warehouseOrdersError, setWarehouseOrdersError] = useState("");
   const [isLoadingWarehouseOrders, setIsLoadingWarehouseOrders] = useState(false);
   const [selectedWarehouseOrderDetail, setSelectedWarehouseOrderDetail] = useState<SellerOrderRecord | null>(null);
+  const [deletingWarehouseOrderId, setDeletingWarehouseOrderId] = useState("");
   const [warehouseOrderChecklist, setWarehouseOrderChecklist] = useState<Record<string, boolean>>({});
   const [warehouseOrderCompletionStatus, setWarehouseOrderCompletionStatus] = useState<CreationStatus | null>(null);
   const [isCompletingWarehouseOrder, setIsCompletingWarehouseOrder] = useState(false);
@@ -4789,6 +4790,45 @@ export default function App() {
 
     const fileName = sanitizePdfFileName(`factura-${order.storeName}-${order.routeName}-${generatedAt}`) || "factura-pedido";
     pdf.save(`${fileName}.pdf`);
+  }
+
+  async function handleDeleteCompletedWarehouseOrder(order: SellerOrderRecord) {
+    if (!order._id) {
+      setWarehouseOrderCompletionStatus({ tone: "error", message: "No fue posible identificar el pedido." });
+      return;
+    }
+
+    if (!globalThis.confirm(`Se borrara el pedido de ${order.storeName}.`)) {
+      return;
+    }
+
+    try {
+      setDeletingWarehouseOrderId(order._id);
+      setWarehouseOrderCompletionStatus(null);
+      const response = await fetch(`${apiBaseUrl}/warehouse/orders/${order._id}`, {
+        method: "DELETE",
+      });
+      const data = (await response.json()) as { message?: string };
+
+      if (!response.ok) {
+        setWarehouseOrderCompletionStatus({
+          tone: "error",
+          message: data.message ?? "No fue posible borrar el pedido.",
+        });
+        return;
+      }
+
+      setWarehouseOrders((current) => current.filter((currentOrder) => currentOrder._id !== order._id));
+      setSelectedWarehouseOrderDetail((current) => (current?._id === order._id ? null : current));
+      setWarehouseOrderCompletionStatus({
+        tone: "success",
+        message: data.message ?? "Pedido borrado correctamente.",
+      });
+    } catch {
+      setWarehouseOrderCompletionStatus({ tone: "error", message: "No fue posible conectar con el backend." });
+    } finally {
+      setDeletingWarehouseOrderId("");
+    }
   }
 
   function handleSectionFilterChange(field: keyof SectionFilters, value: string) {
@@ -12566,6 +12606,12 @@ export default function App() {
                 <p className="management-table-meta">{warehouseCompletedOrders.length} pedidos</p>
               </div>
 
+              {warehouseOrderCompletionStatus ? (
+                <p className={`form-feedback ${warehouseOrderCompletionStatus.tone === "error" ? "error" : "success"}`}>
+                  {warehouseOrderCompletionStatus.message}
+                </p>
+              ) : null}
+
               <div className="table-wrap">
                 <table className="data-table">
                   <thead>
@@ -12586,6 +12632,7 @@ export default function App() {
                     ) : warehouseCompletedOrders.length > 0 ? (
                       warehouseCompletedOrders.map((order) => {
                         const totalUnits = order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+                        const isDeletingOrder = deletingWarehouseOrderId === order._id;
 
                         return (
                           <tr key={order._id}>
@@ -12600,6 +12647,7 @@ export default function App() {
                                 type="button"
                                 aria-label="Reimprimir factura"
                                 title="Reimprimir factura"
+                                disabled={isDeletingOrder}
                                 onClick={() => void handlePrintCompletedOrderSummary(order)}
                               >
                                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -12611,11 +12659,22 @@ export default function App() {
                                 type="button"
                                 aria-label="Ver detalle del pedido"
                                 title="Ver detalle"
+                                disabled={isDeletingOrder}
                                 onClick={() => setSelectedWarehouseOrderDetail(order)}
                               >
                                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                   <path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z" fill="currentColor" />
                                 </svg>
+                              </button>
+                              <button
+                                className="table-action-icon is-danger"
+                                type="button"
+                                aria-label="Borrar pedido"
+                                title="Borrar pedido"
+                                disabled={isDeletingOrder}
+                                onClick={() => void handleDeleteCompletedWarehouseOrder(order)}
+                              >
+                                x
                               </button>
                             </td>
                           </tr>
