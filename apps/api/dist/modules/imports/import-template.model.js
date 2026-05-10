@@ -22,12 +22,12 @@ const importTemplateSchema = new Schema({
     products: [
         {
             productId: { type: String, required: true },
-            productName: { type: String, required: true },
-            productSku: { type: String, required: true },
-            quantity: { type: Number, required: true, min: 0 },
-            unitCost: { type: Number, required: true, min: 0 },
-            boxCost: { type: Number, required: true, min: 0 },
-            boxVolume: { type: Number, required: true, min: 0 },
+            selected: { type: Boolean, default: false },
+            boxCount: { type: String, default: "" },
+            importedQuantity: { type: String, default: "" },
+            purchaseUnitCostOrigin: { type: String, default: "" },
+            purchaseBoxCostOrigin: { type: String, default: "" },
+            expirationDate: { type: String, default: "" },
         },
     ],
 }, {

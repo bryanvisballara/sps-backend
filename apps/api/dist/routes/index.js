@@ -20,6 +20,7 @@ import { ImportTemplate } from "../modules/imports/import-template.model.js";
 import { Order } from "../modules/orders/order.model.js";
 import { Product } from "../modules/catalog/product.model.js";
 import { SalesRoute } from "../modules/routes/route.model.js";
+import { OperationsClient } from "../modules/stores/operations-client.model.js";
 import { Store } from "../modules/stores/store.model.js";
 import { Supplier } from "../modules/suppliers/supplier.model.js";
 import { User } from "../modules/users/user.model.js";
@@ -354,8 +355,20 @@ async function normalizeClientPayload(body) {
     if (!name) {
         throw new Error("El nombre comercial del cliente es obligatorio.");
     }
-    const assignedProductIds = Array.isArray(payload.assignedProductIds)
-        ? payload.assignedProductIds
+    const uniqueAssignedProductIds = await normalizeAssignedProductIds(payload.assignedProductIds);
+    return {
+        name,
+        managerName: typeof payload.managerName === "string" ? payload.managerName.trim() : "",
+        email: typeof payload.email === "string" ? payload.email.trim() : "",
+        phoneCountryCode: typeof payload.phoneCountryCode === "string" ? payload.phoneCountryCode.trim() : "",
+        phone: typeof payload.phone === "string" ? payload.phone.trim() : "",
+        address: typeof payload.address === "string" ? payload.address.trim() : "",
+        assignedProductIds: uniqueAssignedProductIds,
+    };
+}
+async function normalizeAssignedProductIds(value) {
+    const assignedProductIds = Array.isArray(value)
+        ? value
             .filter((entry) => typeof entry === "string")
             .map((entry) => entry.trim())
             .filter(Boolean)
@@ -367,15 +380,12 @@ async function normalizeClientPayload(body) {
             throw new Error("Uno o varios productos asignados al cliente ya no existen o estan inactivos.");
         }
     }
-    return {
-        name,
-        managerName: typeof payload.managerName === "string" ? payload.managerName.trim() : "",
-        email: typeof payload.email === "string" ? payload.email.trim() : "",
-        phoneCountryCode: typeof payload.phoneCountryCode === "string" ? payload.phoneCountryCode.trim() : "",
-        phone: typeof payload.phone === "string" ? payload.phone.trim() : "",
-        address: typeof payload.address === "string" ? payload.address.trim() : "",
-        assignedProductIds: uniqueAssignedProductIds,
-    };
+    return uniqueAssignedProductIds;
+}
+async function normalizeOperationsClientPayload(body) {
+    const payload = await normalizeClientPayload(body);
+    const { assignedProductIds: _assignedProductIds, ...operationsClientPayload } = payload;
+    return operationsClientPayload;
 }
 async function resolveCatalogProducts(catalog) {
     const explicitProductIds = Array.isArray(catalog.productIds)
@@ -449,14 +459,22 @@ function normalizeImportCostPayload(body) {
         const importedQuantity = Number(currentProduct.importedQuantity ?? 0);
         const purchaseUnitCostOrigin = Number(currentProduct.purchaseUnitCostOrigin ?? 0);
         const purchaseBoxCostOrigin = Number(currentProduct.purchaseBoxCostOrigin ?? 0);
+        const expirationDateValue = typeof currentProduct.expirationDate === "string" ? currentProduct.expirationDate.trim() : "";
         if (!productId || importedQuantity < 0 || purchaseUnitCostOrigin < 0 || purchaseBoxCostOrigin < 0) {
             throw new Error("Cada producto debe incluir referencia valida, cantidad y costos validos.");
+        }
+        if (expirationDateValue) {
+            const expirationDate = new Date(expirationDateValue);
+            if (Number.isNaN(expirationDate.getTime())) {
+                throw new Error(`La fecha de caducidad del producto #${index + 1} no es valida.`);
+            }
         }
         return {
             productId,
             importedQuantity,
             purchaseUnitCostOrigin,
             purchaseBoxCostOrigin,
+            expirationDateValue,
         };
     });
     const containerType = containerTypeValue === "refrigerado" ? "refrigerado" : "seco";
@@ -537,6 +555,7 @@ async function buildImportCostRows(payload, containerReference) {
             productSku: product.sku,
             seasonLabel: "",
             importDate: payload.importDate,
+            expirationDate: normalizeOptionalDateValue(row.expirationDateValue),
             importedQuantity: row.importedQuantity,
             purchaseUnitCostOrigin: row.purchaseUnitCostOrigin,
             exchangeRate: 1,
@@ -870,6 +889,49 @@ apiRouter.get("/sales/stores/:id/products", async (request, response) => {
         sendCreationError(response, error);
     }
 });
+apiRouter.put("/sales/stores/:id/assigned-products", async (request, response) => {
+    try {
+        const salesRepId = typeof request.body?.salesRepId === "string" ? request.body.salesRepId.trim() : "";
+        const assignedProductIds = await normalizeAssignedProductIds(request.body?.assignedProductIds);
+        if (!salesRepId) {
+            response.status(400).json({ message: "Indica el vendedor que actualiza el cliente." });
+            return;
+        }
+        const [salesRep, store] = await Promise.all([
+            User.findById(salesRepId).lean(),
+            Store.findById(request.params.id).lean(),
+        ]);
+        if (!salesRep || salesRep.role !== "sales-rep-aruba") {
+            response.status(404).json({ message: "El vendedor no existe o no esta habilitado." });
+            return;
+        }
+        if (!store) {
+            response.status(404).json({ message: "El cliente no existe." });
+            return;
+        }
+        await Store.findByIdAndUpdate(store._id, {
+            assignedProductIds,
+        }, {
+            runValidators: true,
+        });
+        response.json({
+            message: `Productos actualizados para ${store.name}.`,
+            store: {
+                _id: String(store._id),
+                name: store.name,
+                address: store.address ?? "",
+                code: store.code ?? "",
+                email: store.email ?? "",
+                phone: store.phone ?? "",
+                managerName: store.managerName ?? "",
+                assignedProductIds,
+            },
+        });
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
 apiRouter.get("/sales/orders", async (request, response) => {
     const salesRepId = typeof request.query.salesRepId === "string" ? request.query.salesRepId.trim() : "";
     if (!salesRepId) {
@@ -1008,6 +1070,33 @@ apiRouter.put("/sales/orders/:id", async (request, response) => {
         sendCreationError(response, error);
     }
 });
+apiRouter.delete("/sales/orders/:id", async (request, response) => {
+    try {
+        const salesRepId = typeof request.query.salesRepId === "string" ? request.query.salesRepId.trim() : "";
+        const order = await Order.findById(request.params.id);
+        if (!order) {
+            response.status(404).json({ message: "El pedido no existe." });
+            return;
+        }
+        if (!salesRepId || order.salesRepId !== salesRepId) {
+            response.status(400).json({ message: "El pedido no pertenece al vendedor seleccionado." });
+            return;
+        }
+        if (!canEditSellerOrder(order.createdAt instanceof Date ? order.createdAt : new Date(order.createdAt))) {
+            response.status(400).json({ message: "El tiempo para borrar el pedido ha caducado." });
+            return;
+        }
+        if (order.status === "delivered") {
+            response.status(400).json({ message: "No puedes borrar un pedido ya completado." });
+            return;
+        }
+        await Order.findByIdAndDelete(order._id);
+        response.json({ message: "Pedido borrado correctamente." });
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
 apiRouter.get("/warehouse/orders", async (_request, response) => {
     try {
         const orders = await Order.find()
@@ -1136,6 +1225,10 @@ apiRouter.get("/management/users", async (_request, response) => {
 });
 apiRouter.get("/management/clients", async (_request, response) => {
     const clients = await Store.find().sort({ createdAt: -1 }).lean();
+    response.json(clients);
+});
+apiRouter.get("/management/ops-clients", async (_request, response) => {
+    const clients = await OperationsClient.find().sort({ createdAt: -1 }).lean();
     response.json(clients);
 });
 apiRouter.get("/management/categories", async (_request, response) => {
@@ -1543,6 +1636,7 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
             await WarehouseStock.findOneAndUpdate({
                 productId: product._id,
                 warehouseCode: warehouse.code,
+                expirationDate: normalizedExpirationDate,
             }, {
                 productId: product._id,
                 warehouseCode: warehouse.code,
@@ -1765,6 +1859,26 @@ apiRouter.post("/management/inventory-entries/import-excel", async (request, res
             return;
         }
         const normalizeText = (value) => String(value ?? "").trim();
+        const normalizeExcelDateValue = (value) => {
+            if (value instanceof Date && !Number.isNaN(value.getTime())) {
+                return value.toISOString().slice(0, 10);
+            }
+            if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+                const parsed = XLSX.SSF.parse_date_code(value);
+                if (parsed) {
+                    const parsedDate = new Date(Date.UTC(parsed.y, parsed.m - 1, parsed.d));
+                    if (!Number.isNaN(parsedDate.getTime())) {
+                        return parsedDate.toISOString().slice(0, 10);
+                    }
+                }
+            }
+            const normalized = normalizeText(value);
+            if (!normalized) {
+                return "";
+            }
+            const parsed = new Date(normalized);
+            return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().slice(0, 10);
+        };
         const getRowField = (row, candidates) => {
             for (const key of candidates) {
                 if (key in row && String(row[key] ?? "").trim().length > 0) {
@@ -1780,6 +1894,7 @@ apiRouter.post("/management/inventory-entries/import-excel", async (request, res
             productName: normalizeText(getRowField(row, ["PRODUCTO", "Producto", "productName", "PRODUCT_NAME"])),
             quantity: Number(getRowField(row, ["CANTIDAD", "cantidad", "quantity", "UNIDADES"])),
             saleUsd: Number(getRowField(row, ["PRECIO_VENTA_USD", "VENTA_USD", "venta_usd", "SALE_USD", "VENTA"])),
+            expirationDate: normalizeExcelDateValue(getRowField(row, ["CADUCIDAD", "FECHA_CADUCIDAD", "EXPIRATION_DATE", "expirationDate", "fechaCaducidad"])),
         }));
         const productIds = parsedRows.map((row) => row.productId).filter(Boolean);
         const skus = parsedRows.map((row) => row.sku.toLowerCase()).filter(Boolean);
@@ -1807,6 +1922,7 @@ apiRouter.post("/management/inventory-entries/import-excel", async (request, res
                 costUsd: row.saleUsd,
                 productName: String(product.name ?? ""),
                 productSku: String(product.sku ?? ""),
+                expirationDate: row.expirationDate,
             };
         });
         const uniqueProductCount = new Set(detectedItems.map((item) => item.productId)).size;
@@ -1887,6 +2003,19 @@ apiRouter.post("/management/clients", async (request, response) => {
         sendCreationError(response, error);
     }
 });
+apiRouter.post("/management/ops-clients", async (request, response) => {
+    try {
+        const payload = await normalizeOperationsClientPayload(request.body);
+        const client = await OperationsClient.create({
+            code: buildInternalCode("OCL"),
+            ...payload,
+        });
+        response.status(201).json(client);
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
 apiRouter.put("/management/clients/:id", async (request, response) => {
     try {
         const payload = await normalizeClientPayload(request.body);
@@ -1904,9 +2033,39 @@ apiRouter.put("/management/clients/:id", async (request, response) => {
         sendCreationError(response, error);
     }
 });
+apiRouter.put("/management/ops-clients/:id", async (request, response) => {
+    try {
+        const payload = await normalizeOperationsClientPayload(request.body);
+        const client = await OperationsClient.findByIdAndUpdate(request.params.id, payload, {
+            new: true,
+            runValidators: true,
+        });
+        if (!client) {
+            response.status(404).json({ message: "El cliente no existe." });
+            return;
+        }
+        response.json(client);
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
 apiRouter.delete("/management/clients/:id", async (request, response) => {
     try {
         const client = await Store.findByIdAndDelete(request.params.id);
+        if (!client) {
+            response.status(404).json({ message: "El cliente no existe." });
+            return;
+        }
+        response.json({ message: "Cliente borrado correctamente." });
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
+apiRouter.delete("/management/ops-clients/:id", async (request, response) => {
+    try {
+        const client = await OperationsClient.findByIdAndDelete(request.params.id);
         if (!client) {
             response.status(404).json({ message: "El cliente no existe." });
             return;
@@ -2339,6 +2498,7 @@ apiRouter.get("/management/accounting/import-batches/:containerReference", async
                 productId: String(row.productId),
                 importedQuantity: Number(row.importedQuantity ?? 0),
                 purchaseUnitCostOrigin: Number(row.purchaseUnitCostOrigin ?? 0),
+                expirationDate: normalizeOptionalDateValue(row.expirationDate)?.toISOString().slice(0, 10) ?? "",
             })),
         });
     }
@@ -2392,6 +2552,7 @@ apiRouter.post("/management/accounting/import-batches/:containerReference/invoic
             return Number.isFinite(parsed) ? parsed : Number.NaN;
         };
         const containerReference = typeof request.params.containerReference === "string" ? request.params.containerReference.trim() : "";
+        const invoiceClientId = typeof request.body?.clientId === "string" ? request.body.clientId.trim() : "";
         const trmCopPerUsd = parseDecimalValue(request.body?.trmCopPerUsd);
         const rawRows = Array.isArray(request.body?.rows)
             ? request.body.rows
@@ -2404,13 +2565,24 @@ apiRouter.post("/management/accounting/import-batches/:containerReference/invoic
             response.status(400).json({ message: "Define una TRM valida (COP por 1 USD) para guardar la factura." });
             return;
         }
+        if (!invoiceClientId) {
+            response.status(400).json({ message: "Selecciona el cliente de la factura antes de guardar." });
+            return;
+        }
         if (rawRows.length === 0) {
             response.status(400).json({ message: "La factura no contiene productos para guardar." });
             return;
         }
-        const batchRows = await ImportCost.find({ containerReference, active: { $ne: false } }).lean();
+        const [batchRows, invoiceClient] = await Promise.all([
+            ImportCost.find({ containerReference, active: { $ne: false } }).lean(),
+            OperationsClient.findById(invoiceClientId).lean(),
+        ]);
         if (batchRows.length === 0) {
             response.status(404).json({ message: "El lote de exportacion no existe." });
+            return;
+        }
+        if (!invoiceClient) {
+            response.status(404).json({ message: "El cliente seleccionado para la factura ya no existe." });
             return;
         }
         const saleUsdByProductId = new Map();
@@ -2448,6 +2620,13 @@ apiRouter.post("/management/accounting/import-batches/:containerReference/invoic
                             invoicedLineTotalCop: lineTotalCop,
                             invoicedLineUtilityCop: lineUtilityCop,
                             invoiceGeneratedAt: now,
+                            invoiceClientId,
+                            invoiceClientCode: String(invoiceClient.code ?? ""),
+                            invoiceClientName: String(invoiceClient.name ?? ""),
+                            invoiceClientManagerName: String(invoiceClient.managerName ?? ""),
+                            invoiceClientEmail: String(invoiceClient.email ?? ""),
+                            invoiceClientPhone: String(invoiceClient.phone ?? ""),
+                            invoiceClientAddress: String(invoiceClient.address ?? ""),
                         },
                     },
                 },

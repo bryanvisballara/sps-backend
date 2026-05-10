@@ -9,12 +9,12 @@ export interface ImportExpenseItemRecord {
 }
 export interface ContainerImportProductRecord {
     productId: string;
-    productName: string;
-    productSku: string;
-    quantity: number;
-    unitCost: number;
-    boxCost: number;
-    boxVolume: number;
+    selected: boolean;
+    boxCount: string;
+    importedQuantity: string;
+    purchaseUnitCostOrigin: string;
+    purchaseBoxCostOrigin: string;
+    expirationDate: string;
 }
 export interface ImportTemplateRecord {
     _id?: string;

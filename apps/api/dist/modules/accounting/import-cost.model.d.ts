@@ -39,6 +39,13 @@ export declare const ImportCost: import("mongoose").Model<{
     invoicedSaleUnitCop: number;
     invoicedLineTotalCop: number;
     invoicedLineUtilityCop: number;
+    invoiceClientId: string;
+    invoiceClientCode: string;
+    invoiceClientName: string;
+    invoiceClientManagerName: string;
+    invoiceClientEmail: string;
+    invoiceClientPhone: string;
+    invoiceClientAddress: string;
     expenseItems: Types.DocumentArray<{
         amount: number;
         key: "other" | "freight" | "customs" | "inlandLogistics" | "taxes";
@@ -83,6 +90,7 @@ export declare const ImportCost: import("mongoose").Model<{
         }>;
     }>;
     notes?: string | null | undefined;
+    expirationDate?: NativeDate | null | undefined;
     invoiceGeneratedAt?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps, {}, {}, {}, import("mongoose").Document<unknown, {}, {
     active: boolean;
@@ -124,6 +132,13 @@ export declare const ImportCost: import("mongoose").Model<{
     invoicedSaleUnitCop: number;
     invoicedLineTotalCop: number;
     invoicedLineUtilityCop: number;
+    invoiceClientId: string;
+    invoiceClientCode: string;
+    invoiceClientName: string;
+    invoiceClientManagerName: string;
+    invoiceClientEmail: string;
+    invoiceClientPhone: string;
+    invoiceClientAddress: string;
     expenseItems: Types.DocumentArray<{
         amount: number;
         key: "other" | "freight" | "customs" | "inlandLogistics" | "taxes";
@@ -168,6 +183,7 @@ export declare const ImportCost: import("mongoose").Model<{
         }>;
     }>;
     notes?: string | null | undefined;
+    expirationDate?: NativeDate | null | undefined;
     invoiceGeneratedAt?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps, {}, {
     timestamps: true;
@@ -211,6 +227,13 @@ export declare const ImportCost: import("mongoose").Model<{
     invoicedSaleUnitCop: number;
     invoicedLineTotalCop: number;
     invoicedLineUtilityCop: number;
+    invoiceClientId: string;
+    invoiceClientCode: string;
+    invoiceClientName: string;
+    invoiceClientManagerName: string;
+    invoiceClientEmail: string;
+    invoiceClientPhone: string;
+    invoiceClientAddress: string;
     expenseItems: Types.DocumentArray<{
         amount: number;
         key: "other" | "freight" | "customs" | "inlandLogistics" | "taxes";
@@ -255,6 +278,7 @@ export declare const ImportCost: import("mongoose").Model<{
         }>;
     }>;
     notes?: string | null | undefined;
+    expirationDate?: NativeDate | null | undefined;
     invoiceGeneratedAt?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps & {
     _id: Types.ObjectId;
@@ -302,6 +326,13 @@ export declare const ImportCost: import("mongoose").Model<{
     invoicedSaleUnitCop: number;
     invoicedLineTotalCop: number;
     invoicedLineUtilityCop: number;
+    invoiceClientId: string;
+    invoiceClientCode: string;
+    invoiceClientName: string;
+    invoiceClientManagerName: string;
+    invoiceClientEmail: string;
+    invoiceClientPhone: string;
+    invoiceClientAddress: string;
     expenseItems: Types.DocumentArray<{
         amount: number;
         key: "other" | "freight" | "customs" | "inlandLogistics" | "taxes";
@@ -346,6 +377,7 @@ export declare const ImportCost: import("mongoose").Model<{
         }>;
     }>;
     notes?: string | null | undefined;
+    expirationDate?: NativeDate | null | undefined;
     invoiceGeneratedAt?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps, import("mongoose").Document<unknown, {}, import("mongoose").FlatRecord<{
     active: boolean;
@@ -387,6 +419,13 @@ export declare const ImportCost: import("mongoose").Model<{
     invoicedSaleUnitCop: number;
     invoicedLineTotalCop: number;
     invoicedLineUtilityCop: number;
+    invoiceClientId: string;
+    invoiceClientCode: string;
+    invoiceClientName: string;
+    invoiceClientManagerName: string;
+    invoiceClientEmail: string;
+    invoiceClientPhone: string;
+    invoiceClientAddress: string;
     expenseItems: Types.DocumentArray<{
         amount: number;
         key: "other" | "freight" | "customs" | "inlandLogistics" | "taxes";
@@ -431,6 +470,7 @@ export declare const ImportCost: import("mongoose").Model<{
         }>;
     }>;
     notes?: string | null | undefined;
+    expirationDate?: NativeDate | null | undefined;
     invoiceGeneratedAt?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps>, {}, import("mongoose").MergeType<import("mongoose").DefaultSchemaOptions, {
     timestamps: true;
@@ -474,6 +514,13 @@ export declare const ImportCost: import("mongoose").Model<{
     invoicedSaleUnitCop: number;
     invoicedLineTotalCop: number;
     invoicedLineUtilityCop: number;
+    invoiceClientId: string;
+    invoiceClientCode: string;
+    invoiceClientName: string;
+    invoiceClientManagerName: string;
+    invoiceClientEmail: string;
+    invoiceClientPhone: string;
+    invoiceClientAddress: string;
     expenseItems: Types.DocumentArray<{
         amount: number;
         key: "other" | "freight" | "customs" | "inlandLogistics" | "taxes";
@@ -518,6 +565,7 @@ export declare const ImportCost: import("mongoose").Model<{
         }>;
     }>;
     notes?: string | null | undefined;
+    expirationDate?: NativeDate | null | undefined;
     invoiceGeneratedAt?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps> & {
     _id: Types.ObjectId;
