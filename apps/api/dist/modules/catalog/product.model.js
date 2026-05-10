@@ -31,6 +31,13 @@ const productSchema = new Schema({
         default: "unidad",
         trim: true,
     },
+    containerType: {
+        type: String,
+        enum: ["refrigerado", "seco"],
+        default: "seco",
+        trim: true,
+    },
+    shareWithAruba: { type: Boolean, default: true },
     productWeightKg: { type: Number, default: 0, min: 0 },
     expirationDate: { type: Date, default: null },
     unitsPerBox: { type: Number, default: 0, min: 0 },

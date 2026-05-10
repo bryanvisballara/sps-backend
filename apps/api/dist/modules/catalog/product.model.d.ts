@@ -3,6 +3,7 @@ export declare const Product: import("mongoose").Model<{
     name: string;
     category: string;
     active: boolean;
+    containerType: "refrigerado" | "seco";
     cost: number;
     variableSalePrice: boolean;
     sku: string;
@@ -10,6 +11,7 @@ export declare const Product: import("mongoose").Model<{
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
     presentation: "kg" | "lb" | "unidad" | "paquete" | "caja";
+    shareWithAruba: boolean;
     productWeightKg: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
@@ -17,13 +19,14 @@ export declare const Product: import("mongoose").Model<{
     boxLengthCm: number;
     boxWidthCm: number;
     boxHeightCm: number;
-    salePrice?: number | null | undefined;
     expirationDate?: NativeDate | null | undefined;
+    salePrice?: number | null | undefined;
     imageUrl?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps, {}, {}, {}, import("mongoose").Document<unknown, {}, {
     name: string;
     category: string;
     active: boolean;
+    containerType: "refrigerado" | "seco";
     cost: number;
     variableSalePrice: boolean;
     sku: string;
@@ -31,6 +34,7 @@ export declare const Product: import("mongoose").Model<{
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
     presentation: "kg" | "lb" | "unidad" | "paquete" | "caja";
+    shareWithAruba: boolean;
     productWeightKg: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
@@ -38,8 +42,8 @@ export declare const Product: import("mongoose").Model<{
     boxLengthCm: number;
     boxWidthCm: number;
     boxHeightCm: number;
-    salePrice?: number | null | undefined;
     expirationDate?: NativeDate | null | undefined;
+    salePrice?: number | null | undefined;
     imageUrl?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps, {}, {
     timestamps: true;
@@ -47,6 +51,7 @@ export declare const Product: import("mongoose").Model<{
     name: string;
     category: string;
     active: boolean;
+    containerType: "refrigerado" | "seco";
     cost: number;
     variableSalePrice: boolean;
     sku: string;
@@ -54,6 +59,7 @@ export declare const Product: import("mongoose").Model<{
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
     presentation: "kg" | "lb" | "unidad" | "paquete" | "caja";
+    shareWithAruba: boolean;
     productWeightKg: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
@@ -61,8 +67,8 @@ export declare const Product: import("mongoose").Model<{
     boxLengthCm: number;
     boxWidthCm: number;
     boxHeightCm: number;
-    salePrice?: number | null | undefined;
     expirationDate?: NativeDate | null | undefined;
+    salePrice?: number | null | undefined;
     imageUrl?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps & {
     _id: import("mongoose").Types.ObjectId;
@@ -74,6 +80,7 @@ export declare const Product: import("mongoose").Model<{
     name: string;
     category: string;
     active: boolean;
+    containerType: "refrigerado" | "seco";
     cost: number;
     variableSalePrice: boolean;
     sku: string;
@@ -81,6 +88,7 @@ export declare const Product: import("mongoose").Model<{
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
     presentation: "kg" | "lb" | "unidad" | "paquete" | "caja";
+    shareWithAruba: boolean;
     productWeightKg: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
@@ -88,13 +96,14 @@ export declare const Product: import("mongoose").Model<{
     boxLengthCm: number;
     boxWidthCm: number;
     boxHeightCm: number;
-    salePrice?: number | null | undefined;
     expirationDate?: NativeDate | null | undefined;
+    salePrice?: number | null | undefined;
     imageUrl?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps, import("mongoose").Document<unknown, {}, import("mongoose").FlatRecord<{
     name: string;
     category: string;
     active: boolean;
+    containerType: "refrigerado" | "seco";
     cost: number;
     variableSalePrice: boolean;
     sku: string;
@@ -102,6 +111,7 @@ export declare const Product: import("mongoose").Model<{
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
     presentation: "kg" | "lb" | "unidad" | "paquete" | "caja";
+    shareWithAruba: boolean;
     productWeightKg: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
@@ -109,8 +119,8 @@ export declare const Product: import("mongoose").Model<{
     boxLengthCm: number;
     boxWidthCm: number;
     boxHeightCm: number;
-    salePrice?: number | null | undefined;
     expirationDate?: NativeDate | null | undefined;
+    salePrice?: number | null | undefined;
     imageUrl?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps>, {}, import("mongoose").MergeType<import("mongoose").DefaultSchemaOptions, {
     timestamps: true;
@@ -118,6 +128,7 @@ export declare const Product: import("mongoose").Model<{
     name: string;
     category: string;
     active: boolean;
+    containerType: "refrigerado" | "seco";
     cost: number;
     variableSalePrice: boolean;
     sku: string;
@@ -125,6 +136,7 @@ export declare const Product: import("mongoose").Model<{
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
     presentation: "kg" | "lb" | "unidad" | "paquete" | "caja";
+    shareWithAruba: boolean;
     productWeightKg: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
@@ -132,8 +144,8 @@ export declare const Product: import("mongoose").Model<{
     boxLengthCm: number;
     boxWidthCm: number;
     boxHeightCm: number;
-    salePrice?: number | null | undefined;
     expirationDate?: NativeDate | null | undefined;
+    salePrice?: number | null | undefined;
     imageUrl?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps> & {
     _id: import("mongoose").Types.ObjectId;

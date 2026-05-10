@@ -406,6 +406,7 @@ async function resolveCatalogProducts(catalog) {
     }
     const products = await Product.find({
         active: { $ne: false },
+        shareWithAruba: { $ne: false },
         $or: filters,
     })
         .sort({ name: 1 })
@@ -865,7 +866,7 @@ apiRouter.get("/sales/stores/:id/products", async (request, response) => {
             });
             return;
         }
-        const products = await Product.find({ _id: { $in: assignedProductIds }, active: { $ne: false } })
+        const products = await Product.find({ _id: { $in: assignedProductIds }, active: { $ne: false }, shareWithAruba: { $ne: false } })
             .sort({ name: 1 })
             .lean();
         response.json({
@@ -1301,7 +1302,10 @@ apiRouter.get("/management/inventory-summary", async (request, response) => {
         ? "aruba"
         : "colombia";
     const [products, importCosts, warehouseStocks, inventoryAdjustments] = await Promise.all([
-        Product.find({ active: { $ne: false } }).sort({ name: 1 }).lean(),
+        Product.find({
+            active: { $ne: false },
+            ...(businessUnit === "aruba" ? { shareWithAruba: { $ne: false } } : {}),
+        }).sort({ name: 1 }).lean(),
         ImportCost.find({ active: { $ne: false } }).sort({ importDate: -1, createdAt: -1 }).lean(),
         WarehouseStock.find().lean(),
         InventoryAdjustment.find().lean(),
