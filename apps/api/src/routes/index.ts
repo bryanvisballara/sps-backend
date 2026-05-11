@@ -38,6 +38,115 @@ function buildInternalCode(prefix: string) {
   return `${prefix}-${Date.now()}`;
 }
 
+function normalizeImportHeader(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+}
+
+function normalizeImportText(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function normalizeImportNumber(value: unknown, fallback = 0) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  const normalized = normalizeImportText(value).replace(/,/g, ".");
+
+  if (!normalized) {
+    return fallback;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeImportBoolean(value: unknown, fallback = true) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  const normalized = normalizeImportText(value).toLowerCase();
+
+  if (!normalized) {
+    return fallback;
+  }
+
+  if (["si", "sí", "yes", "true", "1", "x", "ok"].includes(normalized)) {
+    return true;
+  }
+
+  if (["no", "false", "0"].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
+}
+
+function getImportRowField(row: Record<string, unknown>, candidates: string[]) {
+  for (const candidate of candidates) {
+    const normalizedCandidate = normalizeImportHeader(candidate);
+
+    for (const [key, value] of Object.entries(row)) {
+      if (normalizeImportHeader(key) === normalizedCandidate && normalizeImportText(value).length > 0) {
+        return value;
+      }
+    }
+  }
+
+  return "";
+}
+
+async function ensureImportCategory(name: string) {
+  const trimmedName = name.trim();
+
+  if (!trimmedName) {
+    throw new Error("La categoria es obligatoria para importar productos.");
+  }
+
+  const existingCategory = await Category.findOne({ name: new RegExp(`^${trimmedName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") }).lean();
+
+  if (existingCategory) {
+    return existingCategory;
+  }
+
+  return Category.create({
+    code: buildInternalCode("CAT"),
+    name: trimmedName,
+    description: "Creada automaticamente desde la importacion de productos.",
+    active: true,
+  });
+}
+
+async function ensureImportSupplier(name: string) {
+  const trimmedName = name.trim();
+
+  if (!trimmedName) {
+    throw new Error("El proveedor es obligatorio para importar productos.");
+  }
+
+  const existingSupplier = await Supplier.findOne({ name: new RegExp(`^${trimmedName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") }).lean();
+
+  if (existingSupplier) {
+    return existingSupplier;
+  }
+
+  return Supplier.create({
+    code: buildInternalCode("SUP"),
+    name: trimmedName,
+    contactName: "",
+    email: "",
+    phoneCountryCode: "+297",
+    phone: "",
+    active: true,
+  });
+}
+
 function buildCloudinarySignature(params: Record<string, string | number>, apiSecret: string) {
   const serializedParams = Object.entries(params)
     .sort(([left], [right]) => left.localeCompare(right))
@@ -2522,6 +2631,107 @@ apiRouter.post("/management/inventory-entries/import-excel", async (request, res
         sku: skus.length,
         productName: names.length,
       },
+    });
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.post("/management/products/import-excel", async (request, response) => {
+  try {
+    const fileBase64 = typeof request.body?.fileBase64 === "string" ? request.body.fileBase64.trim() : "";
+
+    if (!fileBase64) {
+      response.status(400).json({ message: "Adjunta un archivo Excel valido para importar productos." });
+      return;
+    }
+
+    const buffer = Buffer.from(fileBase64, "base64");
+    const workbook = XLSX.read(buffer, { type: "buffer" });
+    const firstSheetName = workbook.SheetNames[0];
+
+    if (!firstSheetName) {
+      response.status(400).json({ message: "El archivo Excel no contiene hojas de calculo." });
+      return;
+    }
+
+    const worksheet = workbook.Sheets[firstSheetName];
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: "" });
+
+    if (rows.length === 0) {
+      response.status(400).json({ message: "El Excel no contiene filas para importar." });
+      return;
+    }
+
+    let createdCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+
+    for (const [index, row] of rows.entries()) {
+      const sku = normalizeImportText(getImportRowField(row, ["sku", "codigo", "codigo_producto", "product_code"])).toUpperCase();
+      const name = normalizeImportText(getImportRowField(row, ["producto", "nombre", "product", "product_name"])).toUpperCase();
+
+      if (!sku || !name) {
+        skippedCount += 1;
+        continue;
+      }
+
+      const categoryName = normalizeImportText(getImportRowField(row, ["categoria", "category"]));
+      const supplierName = normalizeImportText(getImportRowField(row, ["proveedor", "supplier"]));
+      const category = await ensureImportCategory(categoryName);
+      const supplier = await ensureImportSupplier(supplierName);
+      const presentationValue = normalizeImportText(getImportRowField(row, ["presentacion", "presentation"])).toLowerCase();
+      const containerTypeValue = normalizeImportText(getImportRowField(row, ["tipo_contenedor", "contenedor", "container_type"])).toLowerCase();
+      const variableSalePrice = normalizeImportBoolean(getImportRowField(row, ["precio_variable", "variable_sale_price"]), false);
+      const salePrice = normalizeImportNumber(getImportRowField(row, ["precio_venta", "precio_venta_awg", "sale_price", "sale_price_awg"]), 0);
+
+      const payload = {
+        sku,
+        name,
+        category: String(category.name ?? categoryName).trim(),
+        supplier: String(supplier.name ?? supplierName).trim(),
+        imageUrl: normalizeImportText(getImportRowField(row, ["imagen", "image", "image_url"])),
+        cost: normalizeImportNumber(getImportRowField(row, ["costo", "cost", "cost_usd"]), 0),
+        arubaPurchaseCostUsd: normalizeImportNumber(getImportRowField(row, ["costo_compra_aruba_usd", "aruba_purchase_cost_usd"]), 0),
+        arubaUsdToAwgRate: normalizeImportNumber(getImportRowField(row, ["tasa_usd_awg", "aruba_usd_to_awg_rate"]), 1.79),
+        variableSalePrice,
+        salePrice: variableSalePrice ? null : salePrice,
+        presentation: ["kg", "lb", "unidad", "paquete", "caja"].includes(presentationValue) ? presentationValue : "unidad",
+        containerType: containerTypeValue === "refrigerado" ? "refrigerado" : "seco",
+        shareWithAruba: normalizeImportBoolean(getImportRowField(row, ["compartir_aruba", "share_with_aruba", "aruba"]), true),
+        productWeightKg: normalizeImportNumber(getImportRowField(row, ["peso_kg", "peso", "product_weight_kg"]), 0),
+        unitsPerBox: normalizeImportNumber(getImportRowField(row, ["unidades_por_caja", "units_per_box"]), 0),
+        unitsPerBoxUnit: ["kg", "lb", "unidad", "paquete"].includes(normalizeImportText(getImportRowField(row, ["unidad_caja", "units_per_box_unit"])).toLowerCase())
+          ? normalizeImportText(getImportRowField(row, ["unidad_caja", "units_per_box_unit"])).toLowerCase()
+          : "unidad",
+        inventoryAlert: normalizeImportNumber(getImportRowField(row, ["alerta_inventario", "inventory_alert", "stock_alert"]), 0),
+        boxLengthCm: normalizeImportNumber(getImportRowField(row, ["largo_cm", "box_length_cm", "length_cm"]), 0),
+        boxWidthCm: normalizeImportNumber(getImportRowField(row, ["ancho_cm", "box_width_cm", "width_cm"]), 0),
+        boxHeightCm: normalizeImportNumber(getImportRowField(row, ["alto_cm", "box_height_cm", "height_cm"]), 0),
+        active: normalizeImportBoolean(getImportRowField(row, ["activo", "active"]), true),
+      };
+
+      const existingProduct = await Product.findOne({ sku }).lean();
+
+      if (existingProduct) {
+        await Product.findByIdAndUpdate(existingProduct._id, payload, { new: true, runValidators: true });
+        updatedCount += 1;
+      } else {
+        await Product.create(payload);
+        createdCount += 1;
+      }
+
+      if (index === rows.length - 1) {
+        continue;
+      }
+    }
+
+    response.json({
+      message: `Importacion completada. ${createdCount} creado(s), ${updatedCount} actualizado(s) y ${skippedCount} omitido(s).`,
+      processedCount: rows.length,
+      createdCount,
+      updatedCount,
+      skippedCount,
     });
   } catch (error) {
     sendCreationError(response, error);
