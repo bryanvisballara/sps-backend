@@ -81,6 +81,28 @@ function getImportRowField(row, candidates) {
     }
     return "";
 }
+function detectImportHeaderRow(rows, requiredCandidates) {
+    return rows.findIndex((row) => {
+        if (!Array.isArray(row)) {
+            return false;
+        }
+        const normalizedCells = row.map((cell) => normalizeImportHeader(cell)).filter(Boolean);
+        if (normalizedCells.length === 0) {
+            return false;
+        }
+        return requiredCandidates.every((candidateGroup) => candidateGroup.some((candidate) => normalizedCells.includes(normalizeImportHeader(candidate))));
+    });
+}
+function mapImportRowsFromSheet(rows, headerRowIndex) {
+    const headerRow = rows[headerRowIndex] ?? [];
+    const dataRows = rows.slice(headerRowIndex + 1);
+    return dataRows
+        .map((row) => {
+        const entries = headerRow.map((headerCell, index) => [String(headerCell ?? ""), row[index] ?? ""]);
+        return Object.fromEntries(entries);
+    })
+        .filter((row) => Object.values(row).some((value) => normalizeImportText(value).length > 0));
+}
 async function ensureImportCategory(name) {
     const trimmedName = name.trim();
     if (!trimmedName) {
@@ -2047,7 +2069,20 @@ apiRouter.post("/management/products/import-excel", async (request, response) =>
             return;
         }
         const worksheet = workbook.Sheets[firstSheetName];
-        const rows = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+        const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+        const headerRowIndex = detectImportHeaderRow(rawRows, [
+            ["categoria", "category"],
+            ["nombre completo del producto/servicio", "producto", "nombre", "product", "product_name"],
+            ["precio de venta", "precio_venta", "sale_price", "sale_price_awg"],
+            ["tipo contenedor", "tipo_contenedor", "container_type"],
+        ]);
+        if (headerRowIndex === -1) {
+            response.status(400).json({
+                message: "No se encontro la fila de encabezados en el Excel. Revisa que la plantilla incluya categoria, nombre, precio de venta y tipo de contenedor.",
+            });
+            return;
+        }
+        const rows = mapImportRowsFromSheet(rawRows, headerRowIndex);
         if (rows.length === 0) {
             response.status(400).json({ message: "El Excel no contiene filas para importar." });
             return;
@@ -2055,21 +2090,34 @@ apiRouter.post("/management/products/import-excel", async (request, response) =>
         let createdCount = 0;
         let updatedCount = 0;
         let skippedCount = 0;
+        let lastCategoryName = "";
         for (const [index, row] of rows.entries()) {
-            const sku = normalizeImportText(getImportRowField(row, ["sku", "codigo", "codigo_producto", "product_code"])).toUpperCase();
-            const name = normalizeImportText(getImportRowField(row, ["producto", "nombre", "product", "product_name"])).toUpperCase();
+            const name = normalizeImportText(getImportRowField(row, ["nombre completo del producto/servicio", "producto", "nombre", "product", "product_name"])).toUpperCase();
+            const derivedSkuBase = normalizeImportText(getImportRowField(row, ["sku", "codigo", "codigo_producto", "product_code"]));
+            const categoryName = normalizeImportText(getImportRowField(row, ["categoria", "category"])) || lastCategoryName;
+            const supplierName = normalizeImportText(getImportRowField(row, ["proveedor", "supplier"])) || "IMPORTADO SPS ARUBA";
+            const sku = (derivedSkuBase || name)
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .replace(/[^A-Z0-9]+/gi, "-")
+                .replace(/^-+|-+$/g, "")
+                .toUpperCase();
             if (!sku || !name) {
                 skippedCount += 1;
                 continue;
             }
-            const categoryName = normalizeImportText(getImportRowField(row, ["categoria", "category"]));
-            const supplierName = normalizeImportText(getImportRowField(row, ["proveedor", "supplier"]));
+            if (!categoryName) {
+                skippedCount += 1;
+                continue;
+            }
+            lastCategoryName = categoryName;
             const category = await ensureImportCategory(categoryName);
             const supplier = await ensureImportSupplier(supplierName);
+            const description = normalizeImportText(getImportRowField(row, ["descripcion", "descripción", "description"]));
             const presentationValue = normalizeImportText(getImportRowField(row, ["presentacion", "presentation"])).toLowerCase();
-            const containerTypeValue = normalizeImportText(getImportRowField(row, ["tipo_contenedor", "contenedor", "container_type"])).toLowerCase();
+            const containerTypeValue = normalizeImportText(getImportRowField(row, ["tipo contenedor", "tipo_contenedor", "contenedor", "container_type"])).toLowerCase();
             const variableSalePrice = normalizeImportBoolean(getImportRowField(row, ["precio_variable", "variable_sale_price"]), false);
-            const salePrice = normalizeImportNumber(getImportRowField(row, ["precio_venta", "precio_venta_awg", "sale_price", "sale_price_awg"]), 0);
+            const salePrice = normalizeImportNumber(getImportRowField(row, ["precio de venta", "precio_venta", "precio_venta_awg", "sale_price", "sale_price_awg"]), 0);
             const payload = {
                 sku,
                 name,
@@ -2081,18 +2129,22 @@ apiRouter.post("/management/products/import-excel", async (request, response) =>
                 arubaUsdToAwgRate: normalizeImportNumber(getImportRowField(row, ["tasa_usd_awg", "aruba_usd_to_awg_rate"]), 1.79),
                 variableSalePrice,
                 salePrice: variableSalePrice ? null : salePrice,
-                presentation: ["kg", "lb", "unidad", "paquete", "caja"].includes(presentationValue) ? presentationValue : "unidad",
+                presentation: ["kg", "lb", "unidad", "paquete", "caja"].includes(presentationValue)
+                    ? presentationValue
+                    : description.toLowerCase().includes("caja")
+                        ? "caja"
+                        : "unidad",
                 containerType: containerTypeValue === "refrigerado" ? "refrigerado" : "seco",
                 shareWithAruba: normalizeImportBoolean(getImportRowField(row, ["compartir_aruba", "share_with_aruba", "aruba"]), true),
-                productWeightKg: normalizeImportNumber(getImportRowField(row, ["peso_kg", "peso", "product_weight_kg"]), 0),
+                productWeightKg: normalizeImportNumber(getImportRowField(row, ["peso kg", "peso_kg", "peso", "product_weight_kg"]), 0),
                 unitsPerBox: normalizeImportNumber(getImportRowField(row, ["unidades_por_caja", "units_per_box"]), 0),
                 unitsPerBoxUnit: ["kg", "lb", "unidad", "paquete"].includes(normalizeImportText(getImportRowField(row, ["unidad_caja", "units_per_box_unit"])).toLowerCase())
                     ? normalizeImportText(getImportRowField(row, ["unidad_caja", "units_per_box_unit"])).toLowerCase()
                     : "unidad",
-                inventoryAlert: normalizeImportNumber(getImportRowField(row, ["alerta_inventario", "inventory_alert", "stock_alert"]), 0),
-                boxLengthCm: normalizeImportNumber(getImportRowField(row, ["largo_cm", "box_length_cm", "length_cm"]), 0),
-                boxWidthCm: normalizeImportNumber(getImportRowField(row, ["ancho_cm", "box_width_cm", "width_cm"]), 0),
-                boxHeightCm: normalizeImportNumber(getImportRowField(row, ["alto_cm", "box_height_cm", "height_cm"]), 0),
+                inventoryAlert: normalizeImportNumber(getImportRowField(row, ["alerta inventario", "alerta_inventario", "inventory_alert", "stock_alert"]), 0),
+                boxLengthCm: normalizeImportNumber(getImportRowField(row, ["largo", "largo_cm", "box_length_cm", "length_cm"]), 0),
+                boxWidthCm: normalizeImportNumber(getImportRowField(row, ["ancho", "ancho_cm", "box_width_cm", "width_cm"]), 0),
+                boxHeightCm: normalizeImportNumber(getImportRowField(row, ["alto", "alto_cm", "box_height_cm", "height_cm"]), 0),
                 active: normalizeImportBoolean(getImportRowField(row, ["activo", "active"]), true),
             };
             const existingProduct = await Product.findOne({ sku }).lean();
