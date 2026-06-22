@@ -17,6 +17,7 @@ export declare const InventoryAdjustment: import("mongoose").Model<{
     entryWarehouseName: string;
     entryUsdToAwgRate: number;
     entryCostUsd: number;
+    hiddenFromHistory: boolean;
     source: "warehouse-stock" | "import-fallback" | "inventory-entry";
 } & import("mongoose").DefaultTimestampProps, {}, {}, {}, import("mongoose").Document<unknown, {}, {
     notes: string;
@@ -36,6 +37,7 @@ export declare const InventoryAdjustment: import("mongoose").Model<{
     entryWarehouseName: string;
     entryUsdToAwgRate: number;
     entryCostUsd: number;
+    hiddenFromHistory: boolean;
     source: "warehouse-stock" | "import-fallback" | "inventory-entry";
 } & import("mongoose").DefaultTimestampProps, {}, {
     timestamps: true;
@@ -57,6 +59,7 @@ export declare const InventoryAdjustment: import("mongoose").Model<{
     entryWarehouseName: string;
     entryUsdToAwgRate: number;
     entryCostUsd: number;
+    hiddenFromHistory: boolean;
     source: "warehouse-stock" | "import-fallback" | "inventory-entry";
 } & import("mongoose").DefaultTimestampProps & {
     _id: Types.ObjectId;
@@ -82,6 +85,7 @@ export declare const InventoryAdjustment: import("mongoose").Model<{
     entryWarehouseName: string;
     entryUsdToAwgRate: number;
     entryCostUsd: number;
+    hiddenFromHistory: boolean;
     source: "warehouse-stock" | "import-fallback" | "inventory-entry";
 } & import("mongoose").DefaultTimestampProps, import("mongoose").Document<unknown, {}, import("mongoose").FlatRecord<{
     notes: string;
@@ -101,6 +105,7 @@ export declare const InventoryAdjustment: import("mongoose").Model<{
     entryWarehouseName: string;
     entryUsdToAwgRate: number;
     entryCostUsd: number;
+    hiddenFromHistory: boolean;
     source: "warehouse-stock" | "import-fallback" | "inventory-entry";
 } & import("mongoose").DefaultTimestampProps>, {}, import("mongoose").MergeType<import("mongoose").DefaultSchemaOptions, {
     timestamps: true;
@@ -122,6 +127,7 @@ export declare const InventoryAdjustment: import("mongoose").Model<{
     entryWarehouseName: string;
     entryUsdToAwgRate: number;
     entryCostUsd: number;
+    hiddenFromHistory: boolean;
     source: "warehouse-stock" | "import-fallback" | "inventory-entry";
 } & import("mongoose").DefaultTimestampProps> & {
     _id: Types.ObjectId;

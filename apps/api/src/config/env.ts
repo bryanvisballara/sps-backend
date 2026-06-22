@@ -25,7 +25,17 @@ const envSchema = z.object({
   CLOUDINARY_API_SECRET: z.string().optional(),
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
+  TWILIO_API_KEY_SID: z.string().optional(),
+  TWILIO_API_KEY_SECRET: z.string().optional(),
   TWILIO_WHATSAPP_FROM_NUMBER: z.string().optional(),
+  TWILIO_BUSINESS_WHATSAPP_NUMBER: z.string().optional(),
+  FIREBASE_PROJECT_ID: z.string().optional(),
+  FIREBASE_CLIENT_EMAIL: z.string().optional(),
+  FIREBASE_PRIVATE_KEY: z.string().optional(),
+  FIREBASE_MESSAGING_SENDER_ID: z.string().optional(),
+  FIREBASE_WEB_API_KEY: z.string().optional(),
+  FIREBASE_WEB_APP_ID: z.string().optional(),
+  FIREBASE_WEB_VAPID_KEY: z.string().optional(),
 });
 
 const parsedEnv = envSchema.parse(envSource);

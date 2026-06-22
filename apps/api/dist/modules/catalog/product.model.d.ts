@@ -3,6 +3,7 @@ export declare const Product: import("mongoose").Model<{
     name: string;
     category: string;
     active: boolean;
+    description: string;
     containerType: "refrigerado" | "seco";
     cost: number;
     variableSalePrice: boolean;
@@ -26,6 +27,7 @@ export declare const Product: import("mongoose").Model<{
     name: string;
     category: string;
     active: boolean;
+    description: string;
     containerType: "refrigerado" | "seco";
     cost: number;
     variableSalePrice: boolean;
@@ -51,6 +53,7 @@ export declare const Product: import("mongoose").Model<{
     name: string;
     category: string;
     active: boolean;
+    description: string;
     containerType: "refrigerado" | "seco";
     cost: number;
     variableSalePrice: boolean;
@@ -80,6 +83,7 @@ export declare const Product: import("mongoose").Model<{
     name: string;
     category: string;
     active: boolean;
+    description: string;
     containerType: "refrigerado" | "seco";
     cost: number;
     variableSalePrice: boolean;
@@ -103,6 +107,7 @@ export declare const Product: import("mongoose").Model<{
     name: string;
     category: string;
     active: boolean;
+    description: string;
     containerType: "refrigerado" | "seco";
     cost: number;
     variableSalePrice: boolean;
@@ -128,6 +133,7 @@ export declare const Product: import("mongoose").Model<{
     name: string;
     category: string;
     active: boolean;
+    description: string;
     containerType: "refrigerado" | "seco";
     cost: number;
     variableSalePrice: boolean;

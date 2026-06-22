@@ -10,6 +10,7 @@ function isVariableSalePriceEnabled(context) {
 const productSchema = new Schema({
     sku: { type: String, required: true, unique: true, trim: true },
     name: { type: String, required: true, trim: true },
+    description: { type: String, trim: true, default: "" },
     category: { type: String, required: true, trim: true },
     supplier: { type: String, required: true, trim: true },
     imageUrl: { type: String, trim: true },

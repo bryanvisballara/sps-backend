@@ -3,6 +3,8 @@ import type { FormEvent } from "react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
+import { registerWebPushNotifications, unregisterWebPushNotifications, type PushRegistrationResult } from "./pushNotifications";
+import { PushNotificationBanner } from "./PushNotificationBanner";
 
 type SessionUser = {
   id: string;
@@ -15,8 +17,11 @@ type ActiveSection =
   | "dashboard"
   | "users"
   | "clients"
+  | "ops-clients"
   | "categories"
   | "products"
+  | "products-create"
+  | "products-import"
   | "suppliers"
   | "warehouses"
   | "inventory"
@@ -79,13 +84,37 @@ type ProductImageState = {
   error: string;
 };
 
+type ProductImportSummary = {
+  createdCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  processedCount: number;
+};
+
+type ProductImportFileDraft = {
+  file: File | null;
+  name: string;
+};
+
+type InlineProductEquivalenceDraft = {
+  unitsPerExportUnit: string;
+  equivalentUnit: string;
+};
+
+type InlineProductDimensionsDraft = {
+  boxLengthCm: string;
+  boxWidthCm: string;
+  boxHeightCm: string;
+};
+
 type FieldConfig = {
   name: string;
   label: string;
-  type: "text" | "email" | "password" | "number" | "select" | "group-title" | "file" | "date";
+  type: "text" | "email" | "password" | "number" | "select" | "group-title" | "file" | "date" | "checkbox";
   placeholder?: string;
-  options?: Array<{ value: string; label: string }>;
+  options?: ReadonlyArray<{ value: string; label: string }>;
   width?: "full" | "third" | "two-third";
+  optional?: boolean;
 };
 
 type CollectionConfig = {
@@ -123,6 +152,16 @@ type StoreOption = {
   assignedProductIds: string[];
 };
 
+type OperationsClientOption = {
+  value: string;
+  label: string;
+  address: string;
+  code: string;
+  email: string;
+  phone: string;
+  managerName: string;
+};
+
 type ClientProductDraft = {
   productIds: string[];
 };
@@ -139,8 +178,11 @@ type ProductOption = {
   label: string;
   sku: string;
   salePrice: number;
+  inventoryAlert: number;
   productWeightKg: number;
   presentation: string;
+  containerType: string;
+  shareWithAruba: boolean;
   variableSalePrice: boolean;
   unitsPerBox: number;
   unitsPerBoxUnit: string;
@@ -308,6 +350,7 @@ type ContainerImportProductFormState = {
   importedQuantity: string;
   purchaseUnitCostOrigin: string;
   purchaseBoxCostOrigin: string;
+  expirationDate: string;
 };
 
 type ContainerType = "refrigerado" | "seco";
@@ -442,7 +485,7 @@ type SellerAssignedStoreResponse = {
   products: SellerClientProduct[];
 };
 
-type SellerActiveSection = "routes" | "orders";
+type SellerActiveSection = "routes" | "orders" | "clients";
 
 type SellerOrderDraft = Record<string, { stockCurrent: string; quantity: string; notes: string }>;
 
@@ -497,6 +540,7 @@ type ImportCostRecord = {
   importDate: string;
   importedQuantity: number;
   purchaseUnitCostOrigin: number;
+  expirationDate?: string | null;
   freightCost?: number;
   customsCost?: number;
   inlandLogisticsCost?: number;
@@ -509,6 +553,13 @@ type ImportCostRecord = {
   invoicedLineTotalCop?: number;
   invoicedLineUtilityCop?: number;
   invoiceGeneratedAt?: string | null;
+  invoiceClientId?: string;
+  invoiceClientCode?: string;
+  invoiceClientName?: string;
+  invoiceClientManagerName?: string;
+  invoiceClientEmail?: string;
+  invoiceClientPhone?: string;
+  invoiceClientAddress?: string;
   active?: boolean;
 };
 
@@ -530,6 +581,7 @@ type ImportBatchRecord = {
     productId: string;
     importedQuantity: number;
     purchaseUnitCostOrigin: number;
+    expirationDate?: string;
   }>;
 };
 
@@ -648,11 +700,14 @@ const containerImportTemplateStorageKey = "spste-import-container-templates";
 const cubicFeetPerCubicMeter = 35.3147;
 const dashboardKpiSectionMap: Record<string, ActiveSection> = {
   Clientes: "clients",
+  "Clientes Aruba": "clients",
+  "Clientes Colombia": "clients",
   Productos: "products",
   "Rutas asignadas": "routes",
   "Stock en bodega (AWG)": "inventory",
   "Ventas del mes Aruba (AWG)": "logistics-accounting",
   "Utilidad del mes Aruba (AWG)": "logistics-accounting",
+  "Exportaciones realizadas": "imports",
   "Ventas del mes Colombia (COP)": "accounting",
   "Utilidad del mes Colombia (COP)": "accounting",
 };
@@ -715,7 +770,7 @@ async function readPersistedImportContainerTemplates(userId: string): Promise<Im
 const sidebarItems = [
   { key: "dashboard", label: "Dashboard" },
   { key: "clients", label: "Clientes" },
-  { key: "categories", label: "Categorias" },
+  { key: "categories", label: "Categorías" },
   { key: "suppliers", label: "Proveedores" },
   { key: "products", label: "Productos" },
   { key: "warehouses", label: "Bodegas" },
@@ -723,17 +778,17 @@ const sidebarItems = [
   { key: "orders", label: "Pedidos" },
   { key: "users", label: "Usuarios" },
   { key: "routes", label: "Rutas" },
-  { key: "catalog", label: "Catalogo" },
+  { key: "catalog", label: "Catálogo" },
   { key: "imports", label: "Exportaciones" },
-  { key: "import-billing", label: "Facturacion" },
+  { key: "import-billing", label: "Facturación" },
   { key: "accounting", label: "Contabilidad" },
-  { key: "logistics-accounting", label: "Contabilidad Logistica" },
+  { key: "logistics-accounting", label: "Contabilidad Logística" },
 ] as const;
 
 const managementSidebarSections = [
   {
     key: "logistica",
-    label: "Logistica",
+    label: "Logística",
     items: [
       { key: "inventory", label: "Inventario" },
       { key: "routes", label: "Rutas" },
@@ -745,28 +800,51 @@ const managementSidebarSections = [
     label: "Ventas",
     items: [
       { key: "orders", label: "Pedidos" },
-      { key: "catalog", label: "Catalogo" },
+      { key: "catalog", label: "Catálogo" },
     ],
   },
   {
     key: "operaciones-col",
     label: "Operaciones Col",
     items: [
+      { key: "ops-clients", label: "Clientes COL" },
       { key: "imports", label: "Exportaciones" },
-      { key: "import-billing", label: "Facturacion" },
+      { key: "import-billing", label: "Facturación" },
       { key: "accounting", label: "Contabilidad" },
     ],
   },
   {
     key: "parametrizacion",
-    label: "Parametrizacion",
+    label: "Parametrización",
     items: [
-      { key: "categories", label: "Categorias" },
+      { key: "categories", label: "Categorías" },
       { key: "suppliers", label: "Proveedores" },
       { key: "products", label: "Productos" },
-      { key: "clients", label: "Clientes" },
+      { key: "clients", label: "Clientes ARUBA" },
       { key: "warehouses", label: "Bodega" },
       { key: "users", label: "Usuarios" },
+    ],
+  },
+] as const;
+
+const colombiaOpsSidebarSections = [
+  {
+    key: "operaciones-col",
+    label: "Operaciones Col",
+    items: [
+      { key: "clients", label: "Clientes" },
+      { key: "imports", label: "Exportaciones" },
+      { key: "import-billing", label: "Facturación" },
+      { key: "accounting", label: "Contabilidad" },
+    ],
+  },
+  {
+    key: "parametrizacion",
+    label: "Parametrización",
+    items: [
+      { key: "categories", label: "Categorías" },
+      { key: "suppliers", label: "Proveedores" },
+      { key: "products", label: "Productos" },
     ],
   },
 ] as const;
@@ -798,7 +876,7 @@ const operationalExpenseCategoryOptions = [
   { value: "fuel", label: "Combustible" },
   { value: "maintenance", label: "Mantenimiento" },
   { value: "unforeseen", label: "Imprevistos" },
-  { value: "logistics", label: "Logistica" },
+  { value: "logistics", label: "Logística" },
   { value: "tolls", label: "Peajes" },
   { value: "other", label: "Otro" },
 ];
@@ -820,10 +898,10 @@ const containerMeasurementUnitOptions = [
 ] as const;
 
 const importExpenseTypeOptions = [
-  { value: "labor", label: "Mano de obra" },
-  { value: "portTransport", label: "Transporte a puerto" },
-  { value: "customsAgency", label: "Agencia aduanal" },
-  { value: "portFees", label: "Gastos de puerto" },
+  { value: "freight", label: "Mano de obra" },
+  { value: "inlandLogistics", label: "Transporte a puerto" },
+  { value: "customs", label: "Agencia aduanal" },
+  { value: "taxes", label: "Gastos de puerto" },
   { value: "other", label: "Otro" },
 ] as const;
 
@@ -1154,8 +1232,16 @@ function getFormFieldInitialValue(field: FieldConfig, row: Record<string, unknow
     return "";
   }
 
+  if (field.name === "shareWithAruba" && !row) {
+    return "true";
+  }
+
   if (field.name === "presentation" && !row) {
     return "unidad";
+  }
+
+  if (field.name === "containerType" && !row) {
+    return "seco";
   }
 
   if (field.name === "unitsPerBoxUnit" && !row) {
@@ -1185,6 +1271,14 @@ function getFormFieldInitialValue(field: FieldConfig, row: Record<string, unknow
       return "unidad";
     }
 
+    if (field.name === "containerType") {
+      return "seco";
+    }
+
+    if (field.name === "shareWithAruba") {
+      return "true";
+    }
+
     if (field.name === "unitsPerBoxUnit") {
       return "unidad";
     }
@@ -1210,6 +1304,22 @@ function getFormFieldInitialValue(field: FieldConfig, row: Record<string, unknow
 
 function getProductVariableSalePriceValue(row: Record<string, unknown> | null) {
   return Boolean(row?.variableSalePrice);
+}
+
+function isOptionalProductField(field: FieldConfig) {
+  return field.optional === true || field.type === "file" || field.type === "group-title";
+}
+
+function isArubaRole(role: string | undefined) {
+  return role === "management" || role === "sales-rep-aruba" || role === "warehouse-aruba";
+}
+
+function isProductVisibleForSession(product: Record<string, unknown>, sessionUser: SessionUser | null) {
+  if (!isArubaRole(sessionUser?.role)) {
+    return true;
+  }
+
+  return product.shareWithAruba !== false;
 }
 
 function getNormalizedRowValue(row: Record<string, unknown>, key: string) {
@@ -1266,7 +1376,7 @@ function getCreationFilterDefinitions(
     case "warehouses":
       return [
         { key: "name", label: "Bodega", placeholder: "Filtrar por bodega" },
-        { key: "address", label: "Direccion", placeholder: "Filtrar por direccion" },
+        { key: "address", label: "Dirección", placeholder: "Filtrar por dirección" },
       ];
   }
 }
@@ -1289,19 +1399,19 @@ function buildCreationKpis(
         { label: "Clientes registrados", value: rows.length, tone: "cyan" },
         { label: "Con encargado", value: countRowsWithValue(rows, "managerName"), tone: "amber" },
         { label: "Con correo", value: countRowsWithValue(rows, "email"), tone: "slate" },
-        { label: "Con direccion", value: countRowsWithValue(rows, "address"), tone: "cyan" },
+        { label: "Con dirección", value: countRowsWithValue(rows, "address"), tone: "cyan" },
       ] satisfies KpiCard[];
     case "categories":
       return [
-        { label: "Categorias", value: rows.length, tone: "cyan" },
-        { label: "Con descripcion", value: countRowsWithValue(rows, "description"), tone: "amber" },
+        { label: "Categorías", value: rows.length, tone: "cyan" },
+        { label: "Con descripción", value: countRowsWithValue(rows, "description"), tone: "amber" },
         { label: "Activas", value: rows.filter((row) => row.active !== false).length, tone: "slate" },
-        { label: "Codigos unicos", value: countUniqueRowValues(rows, "code"), tone: "cyan" },
+        { label: "Códigos únicos", value: countUniqueRowValues(rows, "code"), tone: "cyan" },
       ] satisfies KpiCard[];
     case "products":
       return [
         { label: "Productos", value: rows.length, tone: "cyan" },
-        { label: "Categorias cubiertas", value: countUniqueRowValues(rows, "category"), tone: "amber" },
+        { label: "Categorías cubiertas", value: countUniqueRowValues(rows, "category"), tone: "amber" },
         { label: "Proveedores activos", value: countUniqueRowValues(rows, "supplier"), tone: "slate" },
         { label: "Con imagen", value: countRowsWithValue(rows, "imageUrl"), tone: "cyan" },
       ] satisfies KpiCard[];
@@ -1310,12 +1420,12 @@ function buildCreationKpis(
         { label: "Proveedores", value: rows.length, tone: "cyan" },
         { label: "Con contacto", value: countRowsWithValue(rows, "contactName"), tone: "amber" },
         { label: "Con correo", value: countRowsWithValue(rows, "email"), tone: "slate" },
-        { label: "Con telefono", value: countRowsWithValue(rows, "phone"), tone: "cyan" },
+        { label: "Con teléfono", value: countRowsWithValue(rows, "phone"), tone: "cyan" },
       ] satisfies KpiCard[];
     case "warehouses":
       return [
         { label: "Bodegas registradas", value: rows.length, tone: "cyan" },
-        { label: "Con direccion", value: countRowsWithValue(rows, "address"), tone: "amber" },
+        { label: "Con dirección", value: countRowsWithValue(rows, "address"), tone: "amber" },
         { label: "Productos ubicados", value: new Set(warehouseLocations.map((location) => location.productId)).size, tone: "slate" },
         {
           label: "Posiciones activas",
@@ -1398,6 +1508,10 @@ function createImportExpenseItem(
   };
 }
 
+function getImportExpenseDefaultLabel(key: ImportExpenseItemFormState["key"]) {
+  return importExpenseTypeOptions.find((option) => option.value === key)?.label ?? "Otro";
+}
+
 function getCollectionConfigs(
   categoryOptions: CategoryOption[],
   supplierOptions: SupplierOption[],
@@ -1411,7 +1525,7 @@ function getCollectionConfigs(
       fields: [
         { name: "name", label: "Nombre completo", type: "text", placeholder: "Juan Perez" },
         { name: "email", label: "Correo", type: "email", placeholder: "usuario@spste.com" },
-        { name: "password", label: "Contrasena", type: "password", placeholder: "Temporal" },
+        { name: "password", label: "Contraseña", type: "password", placeholder: "Temporal" },
         { name: "role", label: "Rol", type: "select", options: roleOptions },
       ],
       tableColumns: [
@@ -1432,19 +1546,19 @@ function getCollectionConfigs(
         { name: "email", label: "Correo", type: "email", placeholder: "compras@cliente.com" },
         {
           name: "phoneCountryCode",
-          label: "Codigo",
+          label: "Código",
           type: "select",
           options: phoneCountryOptions,
           width: "third",
         },
         {
           name: "phone",
-          label: "Telefono",
+          label: "Teléfono",
           type: "text",
           placeholder: "300 000 0000",
           width: "two-third",
         },
-        { name: "address", label: "Direccion", type: "text", placeholder: "Main Street 12" },
+        { name: "address", label: "Dirección", type: "text", placeholder: "Main Street 12" },
       ],
       tableColumns: [
         { key: "name", label: "Cliente" },
@@ -1456,16 +1570,16 @@ function getCollectionConfigs(
     },
     {
       key: "categories",
-      title: "Crear categorias",
+      title: "Crear categorías",
       description: "Define familias de frutas, verduras y otros grupos de venta.",
       endpoint: "/management/categories",
       fields: [
         { name: "name", label: "Nombre", type: "text", placeholder: "Frutas frescas" },
       ],
       tableColumns: [
-        { key: "code", label: "Codigo" },
-        { key: "name", label: "Categoria" },
-        { key: "description", label: "Descripcion" },
+        { key: "code", label: "Código" },
+        { key: "name", label: "Categoría" },
+        { key: "description", label: "Descripción" },
       ],
     },
     {
@@ -1476,23 +1590,29 @@ function getCollectionConfigs(
       fields: [
         { name: "sku", label: "SKU", type: "text", placeholder: "PROD-001" },
         { name: "name", label: "Nombre", type: "text", placeholder: "Mango Tommy" },
-        { name: "category", label: "Categoria", type: "select", options: categoryOptions },
+        { name: "description", label: "Descripción", type: "text", placeholder: "PACK X 12 UN", optional: true },
+        { name: "category", label: "Categoría", type: "select", options: categoryOptions },
         { name: "supplier", label: "Proveedor", type: "select", options: supplierOptions },
-        { name: "imageFile", label: "Imagen del producto", type: "file" },
-        { name: "presentation", label: "Presentacion", type: "select", options: productPresentationOptions, width: "third" },
-        { name: "productWeightKg", label: "Peso por unidad (kg)", type: "number", placeholder: "0.35", width: "third" },
-        { name: "boxDimensionsTitle", label: "Tamano de caja", type: "group-title" },
-        { name: "boxLengthCm", label: "Largo (cm)", type: "number", placeholder: "40", width: "third" },
-        { name: "boxWidthCm", label: "Ancho (cm)", type: "number", placeholder: "30", width: "third" },
-        { name: "boxHeightCm", label: "Alto (cm)", type: "number", placeholder: "25", width: "third" },
-        { name: "inventoryAlert", label: "Alerta de inventario", type: "number", placeholder: "20" },
+        { name: "salePrice", label: "Precio de venta (AWG)", type: "number", placeholder: "0.00", width: "third" },
+        { name: "imageFile", label: "Imagen del producto", type: "file", optional: true },
+        { name: "presentation", label: "Presentación", type: "select", options: productPresentationOptions, width: "third" },
+        { name: "containerType", label: "Tipo de contenedor", type: "select", options: containerTypeOptions, width: "third" },
+        { name: "productWeightKg", label: "Peso por unidad de exportacion (kg)", type: "number", placeholder: "0.35", width: "third", optional: true },
+        { name: "shareWithAruba", label: "Agregar este producto a base de datos de Aruba", type: "checkbox", optional: true },
+        { name: "boxDimensionsTitle", label: "Tamaño de caja", type: "group-title" },
+        { name: "boxLengthCm", label: "Largo (cm)", type: "number", placeholder: "40", width: "third", optional: true },
+        { name: "boxWidthCm", label: "Ancho (cm)", type: "number", placeholder: "30", width: "third", optional: true },
+        { name: "boxHeightCm", label: "Alto (cm)", type: "number", placeholder: "25", width: "third", optional: true },
+        { name: "inventoryAlert", label: "Alerta de inventario", type: "number", placeholder: "20", optional: true },
       ],
       tableColumns: [
         { key: "sku", label: "SKU" },
         { key: "name", label: "Producto" },
-        { key: "category", label: "Categoria" },
+        { key: "containerType", label: "Contenedor" },
+        { key: "shareWithAruba", label: "Aruba" },
+        { key: "category", label: "Categoría" },
         { key: "supplier", label: "Proveedor" },
-        { key: "productWeightKg", label: "Peso (kg/u)" },
+        { key: "productWeightKg", label: "Peso export. (kg)" },
         { key: "salePrice", label: "Venta" },
       ],
     },
@@ -1507,14 +1627,14 @@ function getCollectionConfigs(
         { name: "email", label: "Correo", type: "email", placeholder: "compras@proveedor.com" },
         {
           name: "phoneCountryCode",
-          label: "Codigo",
+          label: "Código",
           type: "select",
           options: phoneCountryOptions,
           width: "third",
         },
         {
           name: "phone",
-          label: "Telefono",
+          label: "Teléfono",
           type: "text",
           placeholder: "300 000 0000",
           width: "two-third",
@@ -1530,15 +1650,15 @@ function getCollectionConfigs(
     {
       key: "warehouses",
       title: "Crear bodegas",
-      description: "Administra centros de distribucion y exportacion.",
+      description: "Administra centros de distribución y exportación.",
       endpoint: "/management/warehouses",
       fields: [
         { name: "name", label: "Nombre", type: "text", placeholder: "Bodega Aruba Central" },
-        { name: "address", label: "Direccion", type: "text", placeholder: "Zona Industrial 4" },
+        { name: "address", label: "Dirección", type: "text", placeholder: "Zona Industrial 4" },
       ],
       tableColumns: [
         { key: "name", label: "Bodega" },
-        { key: "address", label: "Direccion" },
+        { key: "address", label: "Dirección" },
       ],
     },
   ];
@@ -1571,6 +1691,18 @@ function buildPayload(formData: FormData, fields: FieldConfig[]) {
   }, {});
 }
 
+function mapOperationsClientOption(client: Record<string, unknown>): OperationsClientOption {
+  return {
+    value: String(client._id ?? ""),
+    label: String(client.name ?? ""),
+    address: String(client.address ?? ""),
+    code: String(client.code ?? ""),
+    email: String(client.email ?? ""),
+    phone: String(client.phone ?? ""),
+    managerName: String(client.managerName ?? ""),
+  };
+}
+
 function formatCellValue(value: unknown) {
   if (typeof value === "boolean") {
     return value ? "Si" : "No";
@@ -1585,6 +1717,73 @@ function formatCellValue(value: unknown) {
 
 function formatRouteDayLabel(day: RouteDayKey) {
   return routeDayOptions.find((option) => option.key === day)?.label ?? day;
+}
+
+type InventorySummaryTableProps = {
+  rows: InventorySummaryRow[];
+  isLoading: boolean;
+  emptyMessage: string;
+  onAdjustRow: (row: InventorySummaryRow) => void;
+};
+
+function InventorySummaryTable({ rows, isLoading, emptyMessage, onAdjustRow }: InventorySummaryTableProps) {
+  return (
+    <div className="table-wrap">
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>Producto</th>
+            <th>Cantidad</th>
+            <th>Costo unitario (AWG)</th>
+            <th>Costo total (AWG)</th>
+            <th>Venta (AWG)</th>
+            <th>Total venta (AWG)</th>
+            <th>Fecha de caducidad</th>
+            <th>Accion</th>
+          </tr>
+        </thead>
+        <tbody>
+          {isLoading ? (
+            <tr>
+              <td colSpan={8} className="empty-table-cell">Cargando inventario...</td>
+            </tr>
+          ) : rows.length > 0 ? (
+            rows.map((row) => (
+              <tr key={row.stockRowId ?? `${row.productId}-${row.expirationDate ?? "sin-caducidad"}`}>
+                <td>{`${row.name} (${row.sku})`}</td>
+                <td>{row.quantity}</td>
+                <td>{formatCurrencyUpTwoDecimals(row.unitCost)}</td>
+                <td>{formatCurrencyUpTwoDecimals(row.totalCost)}</td>
+                <td>{formatCurrencyUpTwoDecimals(row.salePrice)}</td>
+                <td>{formatCurrencyUpTwoDecimals(row.totalSale)}</td>
+                <td>{row.expirationDate ? String(row.expirationDate).slice(0, 10) : "-"}</td>
+                <td>
+                  <div className="table-action-group">
+                    <button
+                      className="table-action-icon"
+                      type="button"
+                      aria-label="Sacar unidades del inventario"
+                      title="Sacar unidades"
+                      onClick={() => onAdjustRow(row)}
+                      disabled={row.quantity <= 0}
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M4 20h4l10-10-4-4L4 16v4zm12.7-12.3 1.6-1.6a1 1 0 0 1 1.4 0l1.2 1.2a1 1 0 0 1 0 1.4L19.3 10l-2.6-2.3z" fill="currentColor" />
+                      </svg>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))
+          ) : (
+            <tr>
+              <td colSpan={8} className="empty-table-cell">{emptyMessage}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 function formatSellerOrderStatus(status: SellerOrderRecord["status"]) {
@@ -1790,16 +1989,16 @@ function buildContainerImportProducts(
   return products.map((product) => {
     const existing = currentById.get(product.value);
 
-    return (
-      existing ?? {
-        productId: product.value,
-        selected: false,
-        boxCount: "",
-        importedQuantity: "",
-        purchaseUnitCostOrigin: "",
-        purchaseBoxCostOrigin: "",
-      }
-    );
+    return {
+      productId: product.value,
+      selected: false,
+      boxCount: "",
+      importedQuantity: "",
+      purchaseUnitCostOrigin: "",
+      purchaseBoxCostOrigin: "",
+      expirationDate: "",
+      ...existing,
+    };
   });
 }
 
@@ -1899,6 +2098,22 @@ function calculateEstimatedBoxes(importedQuantity: number, unitsPerBox: number) 
   }
 
   return Math.ceil(importedQuantity / unitsPerBox);
+}
+
+function deriveImportedQuantityFromExportUnits(exportUnitCount: number, unitsPerBox: number) {
+  if (exportUnitCount <= 0) {
+    return 0;
+  }
+
+  return exportUnitCount * (unitsPerBox > 0 ? unitsPerBox : 1);
+}
+
+function deriveExportUnitCountFromImportedQuantity(importedQuantity: number, unitsPerBox: number) {
+  if (importedQuantity <= 0) {
+    return 0;
+  }
+
+  return unitsPerBox > 0 ? importedQuantity / unitsPerBox : importedQuantity;
 }
 
 function formatCubicMeters(value: number) {
@@ -2010,10 +2225,13 @@ function normalizeUppercaseInputTarget(target: EventTarget | null) {
 
 export default function App() {
   const tablePaginationStateRef = useRef<Record<string, number>>({});
-  const [email, setEmail] = useState("said@spste.com");
-  const [password, setPassword] = useState("123456");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [loginError, setLoginError] = useState("");
+  const [pushNotificationStatus, setPushNotificationStatus] = useState<PushRegistrationResult | null>(null);
+  const [pushNotificationBusy, setPushNotificationBusy] = useState(false);
+  const [pushNotificationDismissed, setPushNotificationDismissed] = useState(false);
   const [activeSection, setActiveSection] = useState<ActiveSection>("inventory");
   const [sellerActiveSection, setSellerActiveSection] = useState<SellerActiveSection>("routes");
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(() => readPersistedSessionUser());
@@ -2026,8 +2244,14 @@ export default function App() {
   const [clientProductDraft, setClientProductDraft] = useState<ClientProductDraft>({ productIds: [] });
   const [, setIsVariableSalePrice] = useState(false);
   const [productPresentationDraft, setProductPresentationDraft] = useState("unidad");
+  const [productShareWithArubaDraft, setProductShareWithArubaDraft] = useState(true);
   const [isLoadingCreationRows, setIsLoadingCreationRows] = useState(false);
   const [creationRowsError, setCreationRowsError] = useState("");
+  const [isImportingProductsExcel, setIsImportingProductsExcel] = useState(false);
+  const [productImportFileDraft, setProductImportFileDraft] = useState<ProductImportFileDraft>({ file: null, name: "" });
+  const [productImportExcelFileName, setProductImportExcelFileName] = useState("");
+  const [productImportStatus, setProductImportStatus] = useState<CreationStatus | null>(null);
+  const [productImportSummary, setProductImportSummary] = useState<ProductImportSummary | null>(null);
   const [databaseRows, setDatabaseRows] = useState<Record<string, Array<Record<string, unknown>>>>({});
   const [inventoryRows, setInventoryRows] = useState<InventorySummaryRow[]>([]);
   const [inventoryHistoryRows, setInventoryHistoryRows] = useState<InventoryHistoryRow[]>([]);
@@ -2058,7 +2282,6 @@ export default function App() {
   const [deletingInventoryEntryHistoryGroupId, setDeletingInventoryEntryHistoryGroupId] = useState("");
   const [inventoryEntryStatus, setInventoryEntryStatus] = useState<CreationStatus | null>(null);
   const [isSavingInventoryEntry, setIsSavingInventoryEntry] = useState(false);
-  const [inventoryFilter, setInventoryFilter] = useState<"all" | "expiring-soon">("all");
   const [inventoryNameFilter, setInventoryNameFilter] = useState("");
   const [inventoryAdjustmentForm, setInventoryAdjustmentForm] = useState<InventoryAdjustmentFormState>(() =>
     createInitialInventoryAdjustmentForm(),
@@ -2073,6 +2296,7 @@ export default function App() {
   const [supplierOptions, setSupplierOptions] = useState<SupplierOption[]>([]);
   const [salesRepOptions, setSalesRepOptions] = useState<SalesRepOption[]>([]);
   const [storeOptions, setStoreOptions] = useState<StoreOption[]>([]);
+  const [operationsClientOptions, setOperationsClientOptions] = useState<OperationsClientOption[]>([]);
   const [warehouseOptions, setWarehouseOptions] = useState<WarehouseOption[]>([]);
   const [productOptions, setProductOptions] = useState<ProductOption[]>([]);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState("");
@@ -2090,6 +2314,7 @@ export default function App() {
   const [isSavingImportCost, setIsSavingImportCost] = useState(false);
   const [editingImportBatchReference, setEditingImportBatchReference] = useState("");
   const [selectedBillingBatchReference, setSelectedBillingBatchReference] = useState("");
+  const [selectedBillingClientId, setSelectedBillingClientId] = useState("");
   const [billingMarginPercent, setBillingMarginPercent] = useState("25");
   const [billingTrmCopPerUsd, setBillingTrmCopPerUsd] = useState("0");
   const [billingSaleOverrides, setBillingSaleOverrides] = useState<Record<string, string>>({});
@@ -2117,6 +2342,12 @@ export default function App() {
   const [containerImportForm, setContainerImportForm] = useState<ContainerImportFormState>(() =>
     createInitialContainerImportForm([]),
   );
+  const [inlineProductEquivalenceDrafts, setInlineProductEquivalenceDrafts] = useState<Record<string, InlineProductEquivalenceDraft>>({});
+  const [inlineProductEquivalenceStatuses, setInlineProductEquivalenceStatuses] = useState<Record<string, CreationStatus>>({});
+  const [savingInlineProductEquivalenceId, setSavingInlineProductEquivalenceId] = useState("");
+  const [inlineProductDimensionsDrafts, setInlineProductDimensionsDrafts] = useState<Record<string, InlineProductDimensionsDraft>>({});
+  const [inlineProductDimensionsStatuses, setInlineProductDimensionsStatuses] = useState<Record<string, CreationStatus>>({});
+  const [savingInlineProductDimensionsId, setSavingInlineProductDimensionsId] = useState("");
   const [importContainerTemplates, setImportContainerTemplates] = useState<ImportContainerTemplateRecord[]>([]);
   const [isLoadingImportTemplates, setIsLoadingImportTemplates] = useState(false);
   const [selectedImportTemplateId, setSelectedImportTemplateId] = useState("");
@@ -2140,6 +2371,10 @@ export default function App() {
   const [selectedSellerRouteId, setSelectedSellerRouteId] = useState("");
   const [selectedSellerDayKey, setSelectedSellerDayKey] = useState<RouteDayKey | "">("");
   const [selectedSellerStoreId, setSelectedSellerStoreId] = useState("");
+  const [selectedSellerClientId, setSelectedSellerClientId] = useState("");
+  const [sellerClientAssignmentDraft, setSellerClientAssignmentDraft] = useState<string[]>([]);
+  const [sellerClientAssignmentStatus, setSellerClientAssignmentStatus] = useState<CreationStatus | null>(null);
+  const [isSavingSellerClientAssignment, setIsSavingSellerClientAssignment] = useState(false);
   const [sellerAssignedStore, setSellerAssignedStore] = useState<SellerAssignedStoreResponse["store"] | null>(null);
   const [sellerClientProducts, setSellerClientProducts] = useState<SellerClientProduct[]>([]);
   const [sellerClientProductsError, setSellerClientProductsError] = useState("");
@@ -2149,10 +2384,12 @@ export default function App() {
   const [selectedSellerOrderEdit, setSelectedSellerOrderEdit] = useState<SellerOrderRecord | null>(null);
   const [sellerOrderExpiredNotice, setSellerOrderExpiredNotice] = useState<SellerOrderRecord | null>(null);
   const [sellerOrdersError, setSellerOrdersError] = useState("");
+  const [sellerOrderTableStatus, setSellerOrderTableStatus] = useState<CreationStatus | null>(null);
   const [isLoadingSellerOrders, setIsLoadingSellerOrders] = useState(false);
   const [sellerOrderEditDraft, setSellerOrderEditDraft] = useState<SellerOrderEditDraft>({});
   const [sellerOrderEditStatus, setSellerOrderEditStatus] = useState<CreationStatus | null>(null);
   const [isSavingSellerOrderEdit, setIsSavingSellerOrderEdit] = useState(false);
+  const [deletingSellerOrderId, setDeletingSellerOrderId] = useState("");
   const [warehouseActiveSection, setWarehouseActiveSection] = useState<WarehouseActiveSection>("inventory");
   const [warehouseOrders, setWarehouseOrders] = useState<SellerOrderRecord[]>([]);
   const [warehouseOrdersError, setWarehouseOrdersError] = useState("");
@@ -2208,6 +2445,31 @@ export default function App() {
   }, [sessionUser]);
 
   useEffect(() => {
+    if (!sessionUser?.id) {
+      setPushNotificationStatus(null);
+      setPushNotificationDismissed(false);
+      return;
+    }
+
+    if (typeof Notification === "undefined") {
+      setPushNotificationStatus({
+        status: "unsupported",
+        reason: "Este navegador no soporta notificaciones web.",
+      });
+      return;
+    }
+
+    if (Notification.permission === "granted") {
+      void registerWebPushNotifications(String(sessionUser.id), apiBaseUrl).then(setPushNotificationStatus);
+      return;
+    }
+
+    if (Notification.permission === "denied") {
+      setPushNotificationStatus({ status: "denied" });
+    }
+  }, [sessionUser?.id]);
+
+  useEffect(() => {
     if (!sessionUser) {
       setImportContainerTemplates([]);
       return;
@@ -2244,16 +2506,50 @@ export default function App() {
   }, [isImportTemplateMenuOpen]);
 
   const collectionConfigs = getCollectionConfigs(categoryOptions, supplierOptions);
-  const selectedCollection =
-    collectionConfigs.find((config) => config.key === activeSection) ?? collectionConfigs[0];
-  const selectedWarehouse = warehouseOptions.find((warehouse) => warehouse.value === selectedWarehouseId) ?? null;
-  const filteredInventoryBaseRows = inventoryFilter === "expiring-soon"
-    ? inventoryRows.filter((row) => row.isExpiringSoon)
-    : inventoryRows;
+  const normalizedCollectionKey = activeSection === "ops-clients" ? "clients" : activeSection;
+  const defaultSelectedCollection =
+    collectionConfigs.find((config) => config.key === normalizedCollectionKey) ?? collectionConfigs[0];
+  const productCollectionConfig = collectionConfigs.find((config) => config.key === "products") ?? collectionConfigs[0];
+  const isOpsClientsSection = activeSection === "ops-clients" || (sessionUser?.role === "colombia-ops" && defaultSelectedCollection.key === "clients");
+  const selectedCollection = isOpsClientsSection && defaultSelectedCollection.key === "clients"
+    ? {
+        ...defaultSelectedCollection,
+        title: "Crear clientes Colombia",
+        description: "Registra compradores atendidos por Operaciones Colombia para facturacion de exportaciones.",
+        endpoint: "/management/ops-clients",
+        tableColumns: [
+          { key: "name", label: "Cliente" },
+          { key: "managerName", label: "Encargado" },
+          { key: "email", label: "Correo" },
+          { key: "phone", label: "Telefono" },
+          { key: "address", label: "Direccion" },
+        ],
+      }
+    : defaultSelectedCollection;
+  const availableWarehouseOptions = (
+    warehouseOptions.length > 0
+      ? warehouseOptions
+      : (databaseRows.warehouses ?? [])
+        .filter((warehouse) => warehouse.active !== false)
+        .map((warehouse) => ({
+          value: String(warehouse._id ?? ""),
+          label: String(warehouse.name ?? ""),
+          code: String(warehouse.code ?? ""),
+          address: String(warehouse.address ?? ""),
+        }))
+        .filter((warehouse) => warehouse.value.length > 0 && warehouse.label.length > 0)
+  );
+  const selectedWarehouse = availableWarehouseOptions.find((warehouse) => warehouse.value === selectedWarehouseId) ?? null;
   const normalizedInventoryNameFilter = inventoryNameFilter.trim().toLowerCase();
+  const expiringSoonInventoryRows = inventoryRows
+    .filter((row) => row.isExpiringSoon && row.expirationDate && row.quantity > 0)
+    .sort((left, right) => String(left.expirationDate).localeCompare(String(right.expirationDate)));
+  const filteredExpiringSoonInventoryRows = normalizedInventoryNameFilter.length > 0
+    ? expiringSoonInventoryRows.filter((row) => `${row.name} ${row.sku}`.toLowerCase().includes(normalizedInventoryNameFilter))
+    : expiringSoonInventoryRows;
   const filteredInventoryRows = normalizedInventoryNameFilter.length > 0
-    ? filteredInventoryBaseRows.filter((row) => `${row.name} ${row.sku}`.toLowerCase().includes(normalizedInventoryNameFilter))
-    : filteredInventoryBaseRows;
+    ? inventoryRows.filter((row) => `${row.name} ${row.sku}`.toLowerCase().includes(normalizedInventoryNameFilter))
+    : inventoryRows;
   const inventoryEntryHistoryGroups = Array.from(
     inventoryHistoryRows
       .filter((row) => row.movementType === "entry")
@@ -2310,7 +2606,9 @@ export default function App() {
       .values(),
   ).sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
   const selectedInventoryEntryHistoryGroup = inventoryEntryHistoryGroups.find((group) => group.id === selectedInventoryEntryHistoryGroupId) ?? null;
-  const isCreationSection = creationSectionKeys.includes(activeSection as (typeof creationSectionKeys)[number]);
+  const isCreationSection = creationSectionKeys.includes(normalizedCollectionKey as (typeof creationSectionKeys)[number]);
+  const isProductCreateSection = activeSection === "products-create";
+  const isProductImportSection = activeSection === "products-import";
   const isEditingCreation = Boolean(editingRow && editingRow._id);
   const activeCreationSectionKey = (selectedCollection.key ?? defaultCollectionKey) as (typeof creationSectionKeys)[number];
   const creationRows = databaseRows[selectedCollection.key] ?? [];
@@ -2324,10 +2622,53 @@ export default function App() {
     .map((clientId) => storeOptionsById.get(clientId))
     .filter((store): store is StoreOption => Boolean(store));
   const userRoleLabel = sessionUser ? getRoleLabel(sessionUser.role) : "Acceso";
+  const pushNotificationBannerNode = sessionUser && !pushNotificationDismissed ? (
+    <PushNotificationBanner
+      status={pushNotificationStatus}
+      busy={pushNotificationBusy}
+      onEnable={() => void handleEnablePushNotifications()}
+      onDismiss={() => setPushNotificationDismissed(true)}
+    />
+  ) : null;
+  const colombiaOpsAllowedSections = new Set(["dashboard", "clients", "categories", "suppliers", "products", "imports", "import-billing", "accounting"]);
+  const colombiaOpsSidebarItems = sidebarItems.filter((item) => (
+    colombiaOpsAllowedSections.has(item.key)
+  ));
+  const visibleSidebarItems = sessionUser?.role === "colombia-ops" ? colombiaOpsSidebarItems : sidebarItems;
   const selectedSellerRoute = sellerRoutes.find((route) => (route._id ?? route.code) === selectedSellerRouteId) ?? null;
   const selectedSellerDay = selectedSellerRoute?.days.find((day) => day.day === selectedSellerDayKey) ?? null;
   const selectedSellerStores = selectedSellerDay?.stores ?? [];
   const selectedSellerStore = selectedSellerStores.find((store) => store.storeId === selectedSellerStoreId) ?? null;
+  const sellerManagedClientOptions = Array.from(
+    sellerRoutes.reduce((map, route) => {
+      route.days.forEach((day) => {
+        day.stores.forEach((store) => {
+          if (map.has(store.storeId)) {
+            return;
+          }
+
+          map.set(
+            store.storeId,
+            storeOptionsById.get(store.storeId) ?? {
+              value: store.storeId,
+              label: store.storeName,
+              address: store.address,
+              code: "",
+              email: "",
+              phone: "",
+              managerName: "",
+              assignedProductIds: [],
+            },
+          );
+        });
+      });
+
+      return map;
+    }, new Map<string, StoreOption>()),
+  )
+    .map(([, store]) => store)
+    .sort((left, right) => left.label.localeCompare(right.label));
+  const selectedSellerClientForManagement = sellerManagedClientOptions.find((store) => store.value === selectedSellerClientId) ?? null;
   const selectedSellerRouteKey = selectedSellerRoute ? (selectedSellerRoute._id ?? selectedSellerRoute.code) : "";
   const visitedSellerStoreIds = new Set(
     sellerOrders
@@ -2407,6 +2748,9 @@ export default function App() {
   const selectedClientDraftProducts = clientProductDraft.productIds
     .map((productId) => productOptionsById.get(productId))
     .filter((product): product is ProductOption => Boolean(product));
+  const selectedSellerClientDraftProducts = sellerClientAssignmentDraft
+    .map((productId) => productOptionsById.get(productId))
+    .filter((product): product is ProductOption => Boolean(product));
   const importCostFilters = accountingFilters.importCosts ?? createInitialSectionFilters();
   const fixedCostFilters = accountingFilters.fixedCosts ?? createInitialSectionFilters();
   const operationalExpenseFilters = accountingFilters.operationalExpenses ?? createInitialSectionFilters();
@@ -2433,20 +2777,56 @@ export default function App() {
   const importContainerCount = new Set(
     importCostRows.map((row) => row.containerReference ?? `${row.productId}-${String(row.importDate).slice(0, 10)}`),
   ).size;
+  const suggestedExportRows = productOptions
+    .map((product) => {
+      const inventoryAlert = Number(product.inventoryAlert || 0);
+      const currentInventory = Number(inventoryRowsByProductId.get(product.value)?.quantity ?? 0);
+
+      if (inventoryAlert <= 0 || currentInventory >= inventoryAlert) {
+        return null;
+      }
+
+      const shortageQuantity = Math.max(inventoryAlert - currentInventory, 0);
+      const suggestedExportUnits = Number(product.unitsPerBox || 0) > 0
+        ? Math.ceil(shortageQuantity / Number(product.unitsPerBox || 1))
+        : null;
+
+      return {
+        product,
+        currentInventory,
+        inventoryAlert,
+        shortageQuantity,
+        suggestedExportUnits,
+      };
+    })
+    .filter((row): row is {
+      product: ProductOption;
+      currentInventory: number;
+      inventoryAlert: number;
+      shortageQuantity: number;
+      suggestedExportUnits: number | null;
+    } => Boolean(row))
+    .sort((left, right) => right.shortageQuantity - left.shortageQuantity || left.product.label.localeCompare(right.product.label));
+  const suggestedDryExportRows = suggestedExportRows.filter((row) => row.product.containerType === "seco");
+  const suggestedColdExportRows = suggestedExportRows.filter((row) => row.product.containerType === "refrigerado");
+  const filteredContainerProductOptions = productOptions.filter(
+    (product) => product.containerType === containerImportForm.containerType,
+  );
   const containerImportProductsById = new Map(
     containerImportForm.products.map((product) => [product.productId, product]),
   );
-  const containerProductMetrics = productOptions.reduce<
+  const containerProductMetrics = filteredContainerProductOptions.reduce<
     Array<{
       product: ProductOption;
       currentProduct: ContainerImportProductFormState;
       boxCount: number;
       importedQuantity: number;
       unitsPerBox: number;
+      exportUnitCount: number;
       unitWeightKg: number;
       estimatedWeightKg: number;
       boxVolumeCubicMeters: number;
-      estimatedBoxes: number;
+      estimatedExportUnits: number;
       estimatedVolumeCubicMeters: number;
       hasVolumeConfig: boolean;
       hasWeightConfig: boolean;
@@ -2460,28 +2840,39 @@ export default function App() {
 
     const importedQuantity = Number(currentProduct.importedQuantity || 0);
     const unitsPerBox = Number(product.unitsPerBox || 0);
+    const exportUnitCount = Number(currentProduct.boxCount || 0);
+    const estimatedExportUnits = exportUnitCount > 0
+      ? exportUnitCount
+      : deriveExportUnitCountFromImportedQuantity(importedQuantity, unitsPerBox);
     const unitWeightKg = Number(product.productWeightKg || 0);
     const boxVolumeCubicMeters = calculateProductBoxVolumeCubicMeters(product);
-    const estimatedBoxes = calculateEstimatedBoxes(importedQuantity, unitsPerBox);
 
     metrics.push({
       product,
       currentProduct,
-      boxCount: Number(currentProduct.boxCount || 0),
+      boxCount: exportUnitCount,
       importedQuantity,
       unitsPerBox,
+      exportUnitCount,
       unitWeightKg,
-      estimatedWeightKg: importedQuantity * unitWeightKg,
+      estimatedWeightKg: estimatedExportUnits * unitWeightKg,
       boxVolumeCubicMeters,
-      estimatedBoxes,
-      estimatedVolumeCubicMeters: estimatedBoxes * boxVolumeCubicMeters,
-      hasVolumeConfig: unitsPerBox > 0 && boxVolumeCubicMeters > 0,
+      estimatedExportUnits,
+      estimatedVolumeCubicMeters: estimatedExportUnits * boxVolumeCubicMeters,
+      hasVolumeConfig: boxVolumeCubicMeters > 0,
       hasWeightConfig: unitWeightKg > 0,
     });
 
     return metrics;
   }, []);
-  const selectedContainerImportProducts = containerImportForm.products.filter((product) => product.selected);
+  const selectedContainerImportProducts = containerImportForm.products.filter((product) => {
+    if (!product.selected) {
+      return false;
+    }
+
+    const option = productOptionsById.get(product.productId);
+    return option?.containerType === containerImportForm.containerType;
+  });
   const selectedContainerCapacityCubicMeters = getContainerCapacityCubicMeters(containerImportForm.containerSize);
   const selectedContainerCapacityKilograms = getContainerCapacityKilograms(containerImportForm.containerSize);
   const isContainerMeasurementKg = containerImportForm.measurementUnit === "kg";
@@ -2541,12 +2932,6 @@ export default function App() {
   });
   const currentMonthKey = new Date().toISOString().slice(0, 7);
   const accountingKpis: KpiCard[] = [
-    { label: "Costos fijos registrados", value: fixedCostRows.length, tone: "cyan" },
-    {
-      label: "Costos fijos mensuales",
-      value: Number(fixedCostRows.reduce((sum, row) => sum + normalizeMonthlyAmount(row.amount, row.frequency), 0).toFixed(0)),
-      tone: "amber",
-    },
     {
       label: "Gastos operativos registrados",
       value: operationalExpenseRows.length,
@@ -2630,12 +3015,38 @@ export default function App() {
     ...row,
     referenceKey: row.containerReference ?? `${row.shipmentReference ?? "sin-envio"}-${String(row.importDate).slice(0, 10)}`,
   }));
+  const operationsClientOptionsById = new Map(operationsClientOptions.map((client) => [client.value, client]));
   const selectedBillingReference = selectedBillingBatchReference || billingBatchRows[0]?.referenceKey || "";
   const selectedBillingRows = importCostRows.filter((row) => {
     const rowReference = row.containerReference ?? `${row.shipmentReference ?? "sin-envio"}-${String(row.importDate).slice(0, 10)}`;
     return rowReference === selectedBillingReference;
   });
   const selectedBillingBatch = billingBatchRows.find((row) => row.referenceKey === selectedBillingReference) ?? null;
+  const persistedBillingClient = (() => {
+    const rowWithClient = selectedBillingRows.find((row) => (
+      Boolean(row.invoiceClientId)
+      || Boolean(row.invoiceClientName)
+      || Boolean(row.invoiceClientEmail)
+      || Boolean(row.invoiceClientPhone)
+      || Boolean(row.invoiceClientAddress)
+      || Boolean(row.invoiceClientManagerName)
+    ));
+
+    if (!rowWithClient) {
+      return null;
+    }
+
+    return {
+      value: String(rowWithClient.invoiceClientId ?? ""),
+      label: String(rowWithClient.invoiceClientName ?? ""),
+      address: String(rowWithClient.invoiceClientAddress ?? ""),
+      code: String(rowWithClient.invoiceClientCode ?? ""),
+      email: String(rowWithClient.invoiceClientEmail ?? ""),
+      phone: String(rowWithClient.invoiceClientPhone ?? ""),
+      managerName: String(rowWithClient.invoiceClientManagerName ?? ""),
+    } satisfies OperationsClientOption;
+  })();
+  const resolvedBillingClient = operationsClientOptionsById.get(selectedBillingClientId) ?? persistedBillingClient;
   const billingMarginValue = Number(billingMarginPercent || 0);
   const billingTrmValue = parseDecimalInput(billingTrmCopPerUsd);
   const selectedBillingPricingLocked = selectedBillingRows.length > 0
@@ -2709,6 +3120,51 @@ export default function App() {
   ).map(([, value]) => value)
     .sort((left, right) => String(right.importDate).localeCompare(String(left.importDate)));
   const monthlyImportBatchCount = monthlyImportBatchRows.length;
+  const latestColombiaExportRows = Array.from(
+    importCostRows.reduce((map, row) => {
+      const key = row.containerReference
+        || `${row.shipmentReference ?? "sin-envio"}-${String(row.importDate).slice(0, 10)}`;
+      const current = map.get(key) ?? {
+        key,
+        importDate: row.importDate,
+        clientName: String(row.invoiceClientName ?? ""),
+        totalImportCost: 0,
+        totalRevenue: 0,
+        totalUtility: 0,
+      };
+
+      const rowTotalCost = Number(row.totalImportCost ?? 0);
+      const rowRevenue = Number(row.invoicedLineTotalCop ?? 0) > 0
+        ? Number(row.invoicedLineTotalCop ?? 0)
+        : rowTotalCost;
+      const rowUtility = Number(row.invoicedLineUtilityCop ?? 0);
+
+      current.totalImportCost += rowTotalCost;
+      current.totalRevenue += rowRevenue;
+      current.totalUtility += rowUtility;
+
+      if (String(row.importDate).localeCompare(String(current.importDate)) > 0) {
+        current.importDate = row.importDate;
+      }
+
+      if (!current.clientName && row.invoiceClientName) {
+        current.clientName = String(row.invoiceClientName);
+      }
+
+      map.set(key, current);
+      return map;
+    }, new Map<string, {
+      key: string;
+      importDate: string;
+      clientName: string;
+      totalImportCost: number;
+      totalRevenue: number;
+      totalUtility: number;
+    }>()),
+  )
+    .map(([, value]) => value)
+    .sort((left, right) => String(right.importDate).localeCompare(String(left.importDate)))
+    .slice(0, 10);
   const selectedAccountingMonthlyBatch = monthlyImportBatchRows.find((row) => row.key === selectedAccountingMonthlyBatchKey) ?? null;
   const monthlyImportCostTotal = monthlyImportRows.reduce((sum, row) => sum + Number(row.totalImportCost ?? 0), 0);
   const monthlyImportUnits = monthlyImportRows.reduce((sum, row) => sum + Number(row.importedQuantity ?? 0), 0);
@@ -2725,7 +3181,9 @@ export default function App() {
     .filter((row) => String(row.expenseDate).slice(0, 7) === normalizedAccountingMonthFilter)
     .reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
   const monthlyAdditionalCostsTotal = monthlyFixedAdditionalCosts + monthlyOperationalAdditionalCosts;
-  const monthlyProjectedNetUtilityCop = monthlyProjectedUtilityCop - monthlyAdditionalCostsTotal;
+  const monthlyProjectedNetUtilityCop = monthlyImportRows.length > 0
+    ? monthlyProjectedUtilityCop - monthlyAdditionalCostsTotal
+    : 0;
 
   // Logistics accounting computed values (AWG)
   const normalizedLogisticsMonthFilter = logisticsAccountingMonthFilter.trim();
@@ -2755,6 +3213,11 @@ export default function App() {
   const dashboardCurrentMonthArubaRows = logisticsBilledOrders.filter((row) => String(row.invoiceDate).slice(0, 7) === currentMonthKey);
   const dashboardArubaMonthlySalesAwg = dashboardCurrentMonthArubaRows.reduce((sum, row) => sum + Number(row.totalRevenueAwg ?? 0), 0);
   const dashboardArubaMonthlyUtilityAwg = dashboardCurrentMonthArubaRows.reduce((sum, row) => sum + Number(row.totalUtilityAwg ?? 0), 0);
+  const dashboardColombiaMonthlyExportBatchCount = new Set(
+    dashboardCurrentMonthImportRows.map((row) => (
+      row.containerReference ?? `${row.shipmentReference ?? "sin-envio"}-${String(row.importDate).slice(0, 10)}`
+    )),
+  ).size;
   const dashboardColombiaMonthlySalesCop = dashboardCurrentMonthImportRows.reduce((sum, row) => {
     const lineTotal = Number(row.invoicedLineTotalCop ?? 0);
     return sum + (lineTotal > 0 ? lineTotal : Number(row.totalImportCost ?? 0));
@@ -2816,7 +3279,11 @@ export default function App() {
         return [];
       }
 
-      const label = card.label === "Rutas semanales" ? "Rutas asignadas" : card.label;
+      const label = card.label === "Rutas semanales"
+        ? "Rutas asignadas"
+        : card.label === "Clientes"
+          ? "Clientes Aruba"
+          : card.label;
 
       return [{
         label,
@@ -2825,6 +3292,12 @@ export default function App() {
         targetSection: dashboardKpiSectionMap[label],
       }];
     }),
+    {
+      label: "Clientes Colombia",
+      valueLabel: String(operationsClientOptions.length),
+      tone: "amber",
+      targetSection: dashboardKpiSectionMap["Clientes Colombia"],
+    },
     {
       label: "Stock en bodega (AWG)",
       valueLabel: formatAwgCurrency(inventoryKpis.totalInventoryCost),
@@ -2844,6 +3317,12 @@ export default function App() {
       targetSection: dashboardKpiSectionMap["Utilidad del mes Aruba (AWG)"],
     },
     {
+      label: "Exportaciones realizadas",
+      valueLabel: String(dashboardColombiaMonthlyExportBatchCount),
+      tone: "cyan",
+      targetSection: dashboardKpiSectionMap["Exportaciones realizadas"],
+    },
+    {
       label: "Ventas del mes Colombia (COP)",
       valueLabel: formatCurrency(dashboardColombiaMonthlySalesCop),
       tone: "amber",
@@ -2856,6 +3335,28 @@ export default function App() {
       targetSection: dashboardKpiSectionMap["Utilidad del mes Colombia (COP)"],
     },
   ];
+  const isColombiaOpsUser = sessionUser?.role === "colombia-ops";
+  const colombiaOpsDashboardCards: DashboardExecutiveCard[] = [
+    {
+      label: "Ventas del mes Colombia (COP)",
+      valueLabel: formatCurrency(dashboardColombiaMonthlySalesCop),
+      tone: "amber",
+      targetSection: dashboardKpiSectionMap["Ventas del mes Colombia (COP)"],
+    },
+    {
+      label: "Utilidad del mes Colombia (COP)",
+      valueLabel: formatCurrency(dashboardColombiaMonthlyUtilityCop),
+      tone: "slate",
+      targetSection: dashboardKpiSectionMap["Utilidad del mes Colombia (COP)"],
+    },
+    {
+      label: "Exportaciones realizadas",
+      valueLabel: String(dashboardColombiaMonthlyExportBatchCount),
+      tone: "cyan",
+      targetSection: dashboardKpiSectionMap["Exportaciones realizadas"],
+    },
+  ];
+  const visibleDashboardCards = isColombiaOpsUser ? colombiaOpsDashboardCards : dashboardExecutiveCards;
 
   function getBillingRowKey(row: ImportCostRecord, index: number) {
     return `${selectedBillingReference}-${row._id ?? `${row.productId}-${row.importDate}-${index}`}`;
@@ -2956,7 +3457,7 @@ export default function App() {
   }, [sessionUser]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "management" && sessionUser?.role !== "warehouse-aruba") {
+    if (sessionUser?.role !== "management" && sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "colombia-ops" && sessionUser?.role !== "sales-rep-aruba") {
       return;
     }
 
@@ -2972,7 +3473,15 @@ export default function App() {
   }, [sessionUser, warehouseActiveSection]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "management" || !isCreationSection) {
+    const canManageCreationSection = sessionUser?.role === "management"
+      || (sessionUser?.role === "colombia-ops" && (
+        selectedCollection.endpoint === "/management/ops-clients"
+        || selectedCollection.endpoint === "/management/categories"
+        || selectedCollection.endpoint === "/management/suppliers"
+        || selectedCollection.endpoint === "/management/products"
+      ));
+
+    if (!canManageCreationSection || !isCreationSection) {
       return;
     }
 
@@ -2986,7 +3495,7 @@ export default function App() {
 
     if (!selectedWarehouseId) {
       setWarehouseLocations([]);
-      setWarehouseLocationError(warehouseOptions.length === 0 ? "Primero crea una bodega en esta seccion." : "Selecciona una bodega para organizarla.");
+      setWarehouseLocationError(availableWarehouseOptions.length === 0 ? "Primero crea una bodega en esta seccion." : "Selecciona una bodega para organizarla.");
       return;
     }
 
@@ -3017,7 +3526,7 @@ export default function App() {
     }
 
     void fetchWarehouseLocations();
-  }, [activeSection, selectedWarehouseId, sessionUser, warehouseOptions.length]);
+  }, [activeSection, selectedWarehouseId, sessionUser, availableWarehouseOptions.length]);
 
   useEffect(() => {
     if (sessionUser?.role !== "management" || activeSection !== "routes") {
@@ -3133,6 +3642,31 @@ export default function App() {
   }, [activeSection, sessionUser]);
 
   useEffect(() => {
+    if (sessionUser?.role !== "colombia-ops") {
+      return;
+    }
+
+    if (!colombiaOpsAllowedSections.has(activeSection)) {
+      setActiveSection("dashboard");
+    }
+  }, [activeSection, sessionUser]);
+
+  useEffect(() => {
+    const persistedClientId = String(selectedBillingRows.find((row) => row.invoiceClientId)?.invoiceClientId ?? "").trim();
+
+    if (persistedClientId && operationsClientOptions.some((client) => client.value === persistedClientId)) {
+      setSelectedBillingClientId(persistedClientId);
+      return;
+    }
+
+    if (selectedBillingClientId && operationsClientOptions.some((client) => client.value === selectedBillingClientId)) {
+      return;
+    }
+
+    setSelectedBillingClientId("");
+  }, [operationsClientOptions, selectedBillingClientId, selectedBillingReference, selectedBillingRows]);
+
+  useEffect(() => {
     if (!selectedBillingReference) {
       setEditingBillingReference("");
       setHasPendingBillingPricingChanges(false);
@@ -3207,7 +3741,7 @@ export default function App() {
   }, [salesRepOptions]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "management" || (activeSection !== "inventory" && activeSection !== "catalog" && activeSection !== "dashboard")) {
+    if (sessionUser?.role !== "management" || (activeSection !== "inventory" && activeSection !== "catalog" && activeSection !== "dashboard" && activeSection !== "imports")) {
       return;
     }
 
@@ -3353,11 +3887,46 @@ export default function App() {
       setSellerOrders([]);
       setSellerOrdersError("");
       setSelectedSellerRouteId("");
+      setSelectedSellerClientId("");
+      setSellerClientAssignmentDraft([]);
+      setSellerClientAssignmentStatus(null);
       return;
     }
 
     void Promise.all([refreshSellerRoutes(sessionUser.id), refreshSellerOrders(sessionUser.id)]);
   }, [sessionUser]);
+
+  useEffect(() => {
+    if (sessionUser?.role !== "sales-rep-aruba") {
+      return;
+    }
+
+    if (sellerManagedClientOptions.length === 0) {
+      setSelectedSellerClientId("");
+      setSellerClientAssignmentDraft([]);
+      return;
+    }
+
+    setSelectedSellerClientId((current) => (
+      sellerManagedClientOptions.some((store) => store.value === current)
+        ? current
+        : sellerManagedClientOptions[0]?.value ?? ""
+    ));
+  }, [sessionUser, sellerManagedClientOptions]);
+
+  useEffect(() => {
+    if (sessionUser?.role !== "sales-rep-aruba") {
+      return;
+    }
+
+    if (!selectedSellerClientForManagement) {
+      setSellerClientAssignmentDraft([]);
+      return;
+    }
+
+    setSellerClientAssignmentDraft(selectedSellerClientForManagement.assignedProductIds);
+    setSellerClientAssignmentStatus(null);
+  }, [selectedSellerClientForManagement, sessionUser]);
 
   useEffect(() => {
     if (sellerRoutes.length === 0) {
@@ -3514,39 +4083,39 @@ export default function App() {
 
   async function refreshReferenceOptions() {
     try {
-      const [categoryResponse, supplierResponse, usersResponse, clientsResponse, warehousesResponse, productsResponse] = await Promise.all([
-        fetch(`${apiBaseUrl}/management/categories`),
-        fetch(`${apiBaseUrl}/management/suppliers`),
-        fetch(`${apiBaseUrl}/management/users`),
-        fetch(`${apiBaseUrl}/management/clients`),
-        fetch(`${apiBaseUrl}/management/warehouses`),
-        fetch(`${apiBaseUrl}/management/products`),
-      ]);
-      const categoryData = (await categoryResponse.json()) as Array<Record<string, unknown>>;
-      const supplierData = (await supplierResponse.json()) as Array<Record<string, unknown>>;
-      const usersData = (await usersResponse.json()) as Array<Record<string, unknown>>;
-      const clientsData = (await clientsResponse.json()) as Array<Record<string, unknown>>;
-      const warehousesData = (await warehousesResponse.json()) as Array<Record<string, unknown>>;
-      const productsData = (await productsResponse.json()) as Array<Record<string, unknown>>;
+      const readReferenceCollection = (path: string) => fetch(`${apiBaseUrl}${path}`).then(async (response) => ({
+        response,
+        data: (await response.json()) as Array<Record<string, unknown>> | { message?: string },
+      }));
 
-      if (categoryResponse.ok && Array.isArray(categoryData)) {
+      const [categoryResult, supplierResult, usersResult, clientsResult, operationsClientsResult, warehousesResult, productsResult] = await Promise.allSettled([
+        readReferenceCollection("/management/categories"),
+        readReferenceCollection("/management/suppliers"),
+        readReferenceCollection("/management/users"),
+        readReferenceCollection("/management/clients"),
+        readReferenceCollection("/management/ops-clients"),
+        readReferenceCollection("/management/warehouses"),
+        readReferenceCollection("/management/products"),
+      ]);
+
+      if (categoryResult.status === "fulfilled" && categoryResult.value.response.ok && Array.isArray(categoryResult.value.data)) {
         setCategoryOptions(
-          categoryData
+          categoryResult.value.data
             .map((category) => ({ value: String(category.name ?? ""), label: String(category.name ?? "") }))
             .filter((category) => category.value.length > 0),
         );
       }
 
-      if (supplierResponse.ok && Array.isArray(supplierData)) {
+      if (supplierResult.status === "fulfilled" && supplierResult.value.response.ok && Array.isArray(supplierResult.value.data)) {
         setSupplierOptions(
-          supplierData
+          supplierResult.value.data
             .map((supplier) => ({ value: String(supplier.name ?? ""), label: String(supplier.name ?? "") }))
             .filter((supplier) => supplier.value.length > 0),
         );
       }
 
-      if (usersResponse.ok && Array.isArray(usersData)) {
-        const nextSalesReps = usersData
+      if (usersResult.status === "fulfilled" && usersResult.value.response.ok && Array.isArray(usersResult.value.data)) {
+        const nextSalesReps = usersResult.value.data
           .filter((user) => user.role === "sales-rep-aruba" && user.active !== false)
           .map((user) => ({
             value: String(user._id ?? ""),
@@ -3561,9 +4130,9 @@ export default function App() {
         }));
       }
 
-      if (clientsResponse.ok && Array.isArray(clientsData)) {
+      if (clientsResult.status === "fulfilled" && clientsResult.value.response.ok && Array.isArray(clientsResult.value.data)) {
         setStoreOptions(
-          clientsData
+          clientsResult.value.data
             .map((client) => ({
               value: String(client._id ?? ""),
               label: String(client.name ?? ""),
@@ -3580,8 +4149,16 @@ export default function App() {
         );
       }
 
-      if (warehousesResponse.ok && Array.isArray(warehousesData)) {
-        const nextWarehouseOptions = warehousesData
+      if (operationsClientsResult.status === "fulfilled" && operationsClientsResult.value.response.ok && Array.isArray(operationsClientsResult.value.data)) {
+        setOperationsClientOptions(
+          operationsClientsResult.value.data
+            .map((client) => mapOperationsClientOption(client))
+            .filter((client) => client.value.length > 0 && client.label.length > 0),
+        );
+      }
+
+      if (warehousesResult.status === "fulfilled" && warehousesResult.value.response.ok && Array.isArray(warehousesResult.value.data)) {
+        const nextWarehouseOptions = warehousesResult.value.data
           .filter((warehouse) => warehouse.active !== false)
           .map((warehouse) => ({
             value: String(warehouse._id ?? ""),
@@ -3595,16 +4172,20 @@ export default function App() {
         setSelectedWarehouseId((current) => current || nextWarehouseOptions[0]?.value || "");
       }
 
-      if (productsResponse.ok && Array.isArray(productsData)) {
-        const nextProductOptions = productsData
+      if (productsResult.status === "fulfilled" && productsResult.value.response.ok && Array.isArray(productsResult.value.data)) {
+        const nextProductOptions = productsResult.value.data
+          .filter((product) => isProductVisibleForSession(product, sessionUser))
           .filter((product) => product.active !== false)
           .map((product) => ({
             value: String(product._id ?? ""),
             label: String(product.name ?? ""),
             sku: String(product.sku ?? ""),
             salePrice: roundCurrencyValue(Number(product.salePrice ?? 0)),
+            inventoryAlert: Number(product.inventoryAlert ?? 0),
             productWeightKg: Number(product.productWeightKg ?? 0),
             presentation: String(product.presentation ?? "unidad"),
+            containerType: String(product.containerType ?? "seco"),
+            shareWithAruba: product.shareWithAruba !== false,
             variableSalePrice: Boolean(product.variableSalePrice),
             unitsPerBox: Number(product.unitsPerBox ?? 0),
             unitsPerBoxUnit: String(product.unitsPerBoxUnit ?? "unidad"),
@@ -3621,12 +4202,7 @@ export default function App() {
         }));
       }
     } catch {
-      setCategoryOptions([]);
-      setSupplierOptions([]);
-      setSalesRepOptions([]);
-      setStoreOptions([]);
-      setWarehouseOptions([]);
-      setProductOptions([]);
+      return;
     }
   }
 
@@ -3789,10 +4365,6 @@ export default function App() {
     }
   }
 
-  function toggleExpiringSoonInventoryFilter() {
-    setInventoryFilter((current) => (current === "expiring-soon" ? "all" : "expiring-soon"));
-  }
-
   function openInventoryAdjustmentModal(row: InventorySummaryRow) {
     setSelectedInventoryAdjustmentRow(row);
     setInventoryAdjustmentStatus(null);
@@ -3800,13 +4372,13 @@ export default function App() {
   }
 
   function openInventoryEntryModal() {
-    if (warehouseOptions.length === 0) {
+    if (availableWarehouseOptions.length === 0) {
       setInventoryError("Primero crea una bodega para registrar entradas de inventario.");
       return;
     }
 
     setInventoryEntryStatus(null);
-    setInventoryEntryWarehouseId(selectedWarehouseId || warehouseOptions[0]?.value || "");
+    setInventoryEntryWarehouseId(selectedWarehouseId || availableWarehouseOptions[0]?.value || "");
     setInventoryUsdToAwgRate("1.79");
     setInventoryEntryItems([createInventoryEntryDraftItem()]);
     setInventoryEntryExpenseItems([]);
@@ -3814,13 +4386,13 @@ export default function App() {
   }
 
   function openInventoryEntryPage() {
-    if (warehouseOptions.length === 0) {
+    if (availableWarehouseOptions.length === 0) {
       setInventoryError("Primero crea una bodega para registrar entradas de inventario.");
       return;
     }
 
     setInventoryEntryStatus(null);
-    setInventoryEntryWarehouseId(selectedWarehouseId || warehouseOptions[0]?.value || "");
+    setInventoryEntryWarehouseId(selectedWarehouseId || availableWarehouseOptions[0]?.value || "");
     setInventoryUsdToAwgRate("1.79");
     setInventoryEntryItems([createInventoryEntryDraftItem()]);
     setInventoryEntryExpenseItems([]);
@@ -4001,15 +4573,14 @@ export default function App() {
 
   function openInventoryEntryItemModal() {
     const initialProductId = productOptions[0]?.value ?? "";
-    const initialProduct = productOptions.find((product) => product.value === initialProductId);
 
     setInventoryEntryItemDraft({
       productId: initialProductId,
       quantity: "",
       costUsd: "",
-      salePriceAwg: String(initialProduct?.salePrice ?? ""),
+      salePriceAwg: "",
       expirationDate: "",
-      productWeightKg: String(initialProduct?.productWeightKg ?? ""),
+      productWeightKg: "",
     });
     setIsInventoryEntryItemModalOpen(true);
   }
@@ -4024,9 +4595,10 @@ export default function App() {
     const productId = inventoryEntryItemDraft.productId.trim();
     const quantity = Number(inventoryEntryItemDraft.quantity || 0);
     const costUsd = Number(inventoryEntryItemDraft.costUsd || 0);
-    const salePriceAwg = Number(inventoryEntryItemDraft.salePriceAwg || 0);
-    const productWeightKg = Number(inventoryEntryItemDraft.productWeightKg || 0);
     const expirationDate = inventoryEntryItemDraft.expirationDate.trim();
+    const selectedProduct = productOptions.find((product) => product.value === productId);
+    const salePriceAwg = Number(selectedProduct?.salePrice ?? 0);
+    const productWeightKg = Number(selectedProduct?.productWeightKg ?? 0);
 
     if (!productId) {
       setInventoryEntryStatus({ tone: "error", message: "Selecciona un producto para agregarlo a la tabla." });
@@ -4040,16 +4612,6 @@ export default function App() {
 
     if (!Number.isFinite(costUsd) || costUsd < 0) {
       setInventoryEntryStatus({ tone: "error", message: "El costo USD debe ser cero o mayor." });
-      return;
-    }
-
-    if (!Number.isFinite(salePriceAwg) || salePriceAwg < 0) {
-      setInventoryEntryStatus({ tone: "error", message: "La venta AWG debe ser cero o mayor." });
-      return;
-    }
-
-    if (!Number.isFinite(productWeightKg) || productWeightKg < 0) {
-      setInventoryEntryStatus({ tone: "error", message: "El peso por unidad debe ser cero o mayor." });
       return;
     }
 
@@ -4100,6 +4662,11 @@ export default function App() {
       return false;
     }
 
+    if (!resolvedBillingClient?.value) {
+      setAccountingError("Selecciona el cliente de la factura antes de guardar los precios.");
+      return false;
+    }
+
     if (!Number.isFinite(billingTrmValue) || billingTrmValue <= 0) {
       setAccountingError("Antes de generar la factura define una TRM valida (COP por 1 USD).");
       return false;
@@ -4129,7 +4696,7 @@ export default function App() {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ trmCopPerUsd: billingTrmValue, rows }),
+          body: JSON.stringify({ trmCopPerUsd: billingTrmValue, clientId: resolvedBillingClient.value, rows }),
         },
       );
       const data = (await response.json()) as { message?: string };
@@ -4154,6 +4721,13 @@ export default function App() {
       return;
     }
 
+    const invoiceClient = resolvedBillingClient;
+
+    if (!invoiceClient) {
+      setAccountingError("Selecciona el cliente que recibira la factura.");
+      return;
+    }
+
     const persisted = await persistBillingInvoicePricing();
 
     if (!persisted) {
@@ -4168,6 +4742,22 @@ export default function App() {
     doc.text(`Factura exportacion ${reference}`, 40, 36);
     doc.setFontSize(10);
     doc.text(`Envio: ${shipment}`, 40, 52);
+    doc.text(`Cliente: ${invoiceClient.label || "-"}`, 40, 68);
+
+    const clientLines = [
+      invoiceClient.managerName ? `Encargado: ${invoiceClient.managerName}` : "",
+      invoiceClient.email ? `Correo: ${invoiceClient.email}` : "",
+      invoiceClient.phone ? `Telefono: ${invoiceClient.phone}` : "",
+      invoiceClient.address ? `Direccion: ${invoiceClient.address}` : "",
+    ].filter(Boolean);
+
+    let startY = 92;
+
+    if (clientLines.length > 0) {
+      const wrappedClientLines = clientLines.flatMap((line) => doc.splitTextToSize(line, 515));
+      doc.text(wrappedClientLines, 40, startY);
+      startY += wrappedClientLines.length * 12 + 8;
+    }
 
     const lineRows = selectedBillingRows.map((row, index) => {
       const quantity = Number(row.importedQuantity || 0);
@@ -4193,7 +4783,7 @@ export default function App() {
     rows.push(["TOTAL", "", "", "", formatUsdCurrency(grandTotalUsd)]);
 
     autoTable(doc, {
-      startY: 68,
+      startY,
       head: [["Producto", "SKU", "Cantidad", "Venta USD/u", "Total USD"]],
       body: rows,
       styles: { fontSize: 9 },
@@ -4205,6 +4795,13 @@ export default function App() {
 
   async function downloadBillingInvoiceExcel() {
     if (selectedBillingRows.length === 0) {
+      return;
+    }
+
+    const invoiceClient = resolvedBillingClient;
+
+    if (!invoiceClient) {
+      setAccountingError("Selecciona el cliente que recibira la factura.");
       return;
     }
 
@@ -4220,15 +4817,26 @@ export default function App() {
       const totalUsd = quantity * saleUsd;
 
       return {
-      PRODUCT_ID: row.productId,
-      SKU: row.productSku,
-      PRODUCTO: row.productName,
-      CANTIDAD: quantity,
-      PRECIO_VENTA_USD: saleUsd,
-      TOTAL_USD: totalUsd,
+        PRODUCT_ID: row.productId,
+        SKU: row.productSku,
+        PRODUCTO: row.productName,
+        CANTIDAD: quantity,
+        CADUCIDAD: String(row.expirationDate ?? "").slice(0, 10),
+        PRECIO_VENTA_USD: saleUsd,
+        TOTAL_USD: totalUsd,
       };
     });
-    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      ["Factura exportacion", selectedBillingBatch?.containerReference || "EXPORTACION"],
+      ["Envio", selectedBillingBatch?.shipmentReference || "SIN ENVIO"],
+      ["Cliente", invoiceClient.label || "-"],
+      ["Encargado", invoiceClient.managerName || "-"],
+      ["Correo", invoiceClient.email || "-"],
+      ["Telefono", invoiceClient.phone || "-"],
+      ["Direccion", invoiceClient.address || "-"],
+      [],
+    ]);
+    XLSX.utils.sheet_add_json(worksheet, rows, { origin: "A10" });
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Factura");
     const reference = selectedBillingBatch?.containerReference || "exportacion";
@@ -4268,7 +4876,7 @@ export default function App() {
       });
       const data = (await response.json()) as {
         message?: string;
-        items?: Array<{ productId: string; quantity: number; costUsd: number }>;
+        items?: Array<{ productId: string; quantity: number; costUsd: number; expirationDate?: string }>;
       };
 
       if (!response.ok || !Array.isArray(data.items)) {
@@ -4283,7 +4891,7 @@ export default function App() {
           quantity: String(item.quantity),
           costUsd: String(item.costUsd),
           salePriceAwg: "",
-          expirationDate: "",
+          expirationDate: item.expirationDate ?? "",
           productWeightKg: "",
         })),
       );
@@ -4403,7 +5011,7 @@ export default function App() {
         }
 
         if (!Number.isFinite(productWeightKg) || productWeightKg < 0) {
-          throw new Error(`El peso por unidad de la fila ${index + 1} debe ser cero o mayor.`);
+          throw new Error(`El peso por unidad de exportacion de la fila ${index + 1} debe ser cero o mayor.`);
         }
 
         if (expirationDate) {
@@ -4792,7 +5400,7 @@ export default function App() {
     pdf.save(`${fileName}.pdf`);
   }
 
-  async function handleDeleteCompletedWarehouseOrder(order: SellerOrderRecord) {
+  async function handleDeleteWarehouseOrder(order: SellerOrderRecord) {
     if (!order._id) {
       setWarehouseOrderCompletionStatus({ tone: "error", message: "No fue posible identificar el pedido." });
       return;
@@ -4808,7 +5416,16 @@ export default function App() {
       const response = await fetch(`${apiBaseUrl}/warehouse/orders/${order._id}`, {
         method: "DELETE",
       });
-      const data = (await response.json()) as { message?: string };
+      const rawBody = await response.text();
+      let data: { message?: string } = {};
+
+      if (rawBody) {
+        try {
+          data = JSON.parse(rawBody) as { message?: string };
+        } catch {
+          data = { message: rawBody };
+        }
+      }
 
       if (!response.ok) {
         setWarehouseOrderCompletionStatus({
@@ -4824,8 +5441,11 @@ export default function App() {
         tone: "success",
         message: data.message ?? "Pedido borrado correctamente.",
       });
-    } catch {
-      setWarehouseOrderCompletionStatus({ tone: "error", message: "No fue posible conectar con el backend." });
+    } catch (error) {
+      setWarehouseOrderCompletionStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible conectar con el backend.",
+      });
     } finally {
       setDeletingWarehouseOrderId("");
     }
@@ -4960,7 +5580,10 @@ export default function App() {
       return "";
     }
 
-    return `Hola {{cliente}}, te compartimos el catalogo general ${selectedCatalogRecord.name} de SPS Trading Enterprises. Encontraras el archivo adjunto para tu revision.`;
+    return `Hola {{cliente}}, te compartimos el catalogo {{catalogo}} de SPS Trading Enterprises.
+
+Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
+{{whatsapp_link}}`;
   }
 
   function getCatalogWhatsappValidationError(options?: { requireAttachment?: boolean; requireMessage?: boolean }) {
@@ -5338,10 +5961,19 @@ export default function App() {
           message: catalogWhatsappMessage.trim(),
         }),
       });
-      const data = (await response.json()) as { message?: string };
+      const data = (await response.json()) as {
+        message?: string;
+        failedDetails?: Array<{ name: string; reason: string }>;
+      };
 
       if (!response.ok) {
-        setCatalogWhatsappStatus({ tone: "error", message: data.message ?? "No fue posible enviar el catalogo por WhatsApp." });
+        const failureDetails = Array.isArray(data.failedDetails) && data.failedDetails.length > 0
+          ? ` ${data.failedDetails.map((entry) => `${entry.name}: ${entry.reason}`).join(" | ")}`
+          : "";
+        setCatalogWhatsappStatus({
+          tone: "error",
+          message: `${data.message ?? "No fue posible enviar el catalogo por WhatsApp."}${failureDetails}`,
+        });
         return;
       }
 
@@ -5365,6 +5997,7 @@ export default function App() {
     setClientProductDraft(createInitialClientProductDraft());
     setIsVariableSalePrice(false);
     setProductPresentationDraft("unidad");
+    setProductShareWithArubaDraft(true);
 
     if (selectedCollection.key === "products") {
       clearProductImage();
@@ -5390,6 +6023,19 @@ export default function App() {
     setSaveImportAsTemplate(false);
     setImportTemplateName("");
     setContainerImportForm(createInitialContainerImportForm(productOptions));
+    setAccountingView("container-import");
+  }
+
+  function openSuggestedImportCostPage(containerType: ContainerType) {
+    clearAccountingStatus("importCosts");
+    setEditingImportBatchReference("");
+    setSelectedImportTemplateId("");
+    setSaveImportAsTemplate(false);
+    setImportTemplateName("");
+    setContainerImportForm({
+      ...createInitialContainerImportForm(productOptions),
+      containerType,
+    });
     setAccountingView("container-import");
   }
 
@@ -5446,13 +6092,19 @@ export default function App() {
             selected: true,
             importedQuantity: String(currentProduct.importedQuantity ?? 0),
             purchaseUnitCostOrigin: String(currentProduct.purchaseUnitCostOrigin ?? 0),
+            expirationDate: currentProduct.expirationDate ?? "",
             purchaseBoxCostOrigin:
               Number(currentProduct.purchaseUnitCostOrigin ?? 0) > 0 && Number(productOptions.find((option) => option.value === product.productId)?.unitsPerBox ?? 0) > 0
                 ? String(
                     Number(currentProduct.purchaseUnitCostOrigin ?? 0) * Number(productOptions.find((option) => option.value === product.productId)?.unitsPerBox ?? 0),
                   )
                 : "",
-            boxCount: "",
+            boxCount: String(
+              deriveExportUnitCountFromImportedQuantity(
+                Number(currentProduct.importedQuantity ?? 0),
+                Number(productOptions.find((option) => option.value === product.productId)?.unitsPerBox ?? 0),
+              ),
+            ),
           };
         }),
       });
@@ -5536,7 +6188,13 @@ export default function App() {
     setContainerImportForm((current) => ({
       ...current,
       expenseItems: current.expenseItems.map((expense) =>
-        expense.id === itemId ? { ...expense, saved: true } : expense,
+        expense.id === itemId
+          ? {
+              ...expense,
+              label: expense.key === "other" ? expense.label : getImportExpenseDefaultLabel(expense.key),
+              saved: true,
+            }
+          : expense,
       ),
     }));
   }
@@ -5545,7 +6203,13 @@ export default function App() {
     setContainerImportForm((current) => ({
       ...current,
       expenseItems: current.expenseItems.map((expense) =>
-        expense.id === itemId ? { ...expense, saved: false } : expense,
+        expense.id === itemId
+          ? {
+              ...expense,
+              label: expense.key === "other" ? expense.label : getImportExpenseDefaultLabel(expense.key),
+              saved: false,
+            }
+          : expense,
       ),
     }));
   }
@@ -5564,7 +6228,7 @@ export default function App() {
 
         if (field === "key") {
           const nextKey = value as ImportExpenseItemFormState["key"];
-          const defaultLabel = importExpenseTypeOptions.find((option) => option.value === nextKey)?.label ?? "Otro";
+          const defaultLabel = getImportExpenseDefaultLabel(nextKey);
 
           return {
             ...expense,
@@ -5817,10 +6481,18 @@ export default function App() {
         return {
           ...product,
           selected: templateProduct.selected,
-          boxCount: templateProduct.boxCount,
+          boxCount:
+            String(templateProduct.boxCount ?? "").trim()
+            || String(
+              deriveExportUnitCountFromImportedQuantity(
+                Number(templateProduct.importedQuantity ?? 0),
+                Number(productOptions.find((option) => option.value === product.productId)?.unitsPerBox ?? 0),
+              ),
+            ),
           importedQuantity: templateProduct.importedQuantity,
           purchaseUnitCostOrigin: templateProduct.purchaseUnitCostOrigin,
           purchaseBoxCostOrigin: templateProduct.purchaseBoxCostOrigin,
+          expirationDate: templateProduct.expirationDate ?? "",
         };
       }),
     }));
@@ -5839,8 +6511,27 @@ export default function App() {
     if (selectedCollection.key === "products") {
       setIsVariableSalePrice(false);
       setProductPresentationDraft("unidad");
+      setProductShareWithArubaDraft(true);
       clearProductImage();
     }
+  }
+
+  function openProductCreatePage() {
+    setEditingRow(null);
+    setClientProductDraft(createInitialClientProductDraft());
+    setIsVariableSalePrice(false);
+    setProductPresentationDraft("unidad");
+    setProductShareWithArubaDraft(true);
+    clearProductImage();
+    setActiveSection("products-create");
+  }
+
+  function openProductImportPage() {
+    setProductImportStatus(null);
+    setProductImportSummary(null);
+    setProductImportExcelFileName("");
+    setProductImportFileDraft({ file: null, name: "" });
+    setActiveSection("products-import");
   }
 
   function loadExistingProductImage(imageUrl: string) {
@@ -5861,7 +6552,7 @@ export default function App() {
     setEditingRow(row);
     setIsCreationModalOpen(true);
 
-    if (selectedCollection.key === "clients") {
+    if (selectedCollection.key === "clients" && selectedCollection.endpoint === "/management/clients") {
       const assignedProductIds = Array.isArray(row.assignedProductIds)
         ? row.assignedProductIds.map((entry) => String(entry)).filter(Boolean)
         : [];
@@ -5874,6 +6565,7 @@ export default function App() {
     if (selectedCollection.key === "products") {
       setIsVariableSalePrice(getProductVariableSalePriceValue(row));
       setProductPresentationDraft(typeof row.presentation === "string" && row.presentation.trim() ? row.presentation.trim() : "unidad");
+      setProductShareWithArubaDraft(row.shareWithAruba !== false);
       const existingImageUrl = typeof row.imageUrl === "string" ? row.imageUrl.trim() : "";
 
       if (existingImageUrl) {
@@ -5924,6 +6616,107 @@ export default function App() {
         ...current,
         [config.key]: { tone: "error", message: "No fue posible conectar con el backend." },
       }));
+    }
+  }
+
+  async function readFileAsBase64(file: File) {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === "string" ? reader.result : "";
+        const base64 = result.includes(",") ? result.split(",")[1] : "";
+
+        if (!base64) {
+          reject(new Error("No fue posible leer el archivo Excel."));
+          return;
+        }
+
+        resolve(base64);
+      };
+      reader.onerror = () => reject(new Error("No fue posible leer el archivo Excel."));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleProductExcelUpload(file: File | null) {
+    if (!file) {
+      return;
+    }
+
+    try {
+      setIsImportingProductsExcel(true);
+      setProductImportStatus(null);
+      setProductImportSummary(null);
+
+      const fileBase64 = await readFileAsBase64(file);
+      const response = await fetch(`${apiBaseUrl}/management/products/import-excel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileBase64 }),
+      });
+      const data = (await response.json()) as {
+        message?: string;
+        createdCount?: number;
+        updatedCount?: number;
+        skippedCount?: number;
+        processedCount?: number;
+      };
+
+      if (!response.ok) {
+        setProductImportStatus({ tone: "error", message: data.message ?? "No se pudo importar el Excel de productos." });
+        return;
+      }
+
+      setProductImportExcelFileName(file.name);
+      setProductImportSummary({
+        createdCount: Number(data.createdCount ?? 0),
+        updatedCount: Number(data.updatedCount ?? 0),
+        skippedCount: Number(data.skippedCount ?? 0),
+        processedCount: Number(data.processedCount ?? 0),
+      });
+      setProductImportFileDraft({ file: null, name: "" });
+      setProductImportStatus({
+        tone: "success",
+        message:
+          data.message
+          ?? `Migracion completada. ${Number(data.createdCount ?? 0)} creado(s), ${Number(data.updatedCount ?? 0)} actualizado(s) y ${Number(data.skippedCount ?? 0)} omitido(s).`,
+      });
+
+      await refreshKpis();
+      const listData = await refreshCreationRows(productCollectionConfig, { silent: true });
+
+      if (listData) {
+        const nextProductOptions = listData
+          .filter((product) => isProductVisibleForSession(product, sessionUser))
+          .filter((product) => product.active !== false)
+          .map((product) => ({
+            value: String(product._id ?? ""),
+            label: String(product.name ?? ""),
+            sku: String(product.sku ?? ""),
+            salePrice: roundCurrencyValue(Number(product.salePrice ?? 0)),
+            inventoryAlert: Number(product.inventoryAlert ?? 0),
+            productWeightKg: Number(product.productWeightKg ?? 0),
+            presentation: String(product.presentation ?? "unidad"),
+            containerType: String(product.containerType ?? "seco"),
+            shareWithAruba: product.shareWithAruba !== false,
+            variableSalePrice: Boolean(product.variableSalePrice),
+            unitsPerBox: Number(product.unitsPerBox ?? 0),
+            unitsPerBoxUnit: String(product.unitsPerBoxUnit ?? "unidad"),
+            boxLengthCm: Number(product.boxLengthCm ?? 0),
+            boxWidthCm: Number(product.boxWidthCm ?? 0),
+            boxHeightCm: Number(product.boxHeightCm ?? 0),
+          }))
+          .filter((product) => product.value.length > 0 && product.label.length > 0);
+
+        setProductOptions(nextProductOptions);
+      }
+    } catch (error) {
+      setProductImportStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No se pudo importar el Excel de productos.",
+      });
+    } finally {
+      setIsImportingProductsExcel(false);
     }
   }
 
@@ -6014,6 +6807,117 @@ export default function App() {
       setSellerOrderEditStatus({ tone: "error", message: "No fue posible conectar con el backend." });
     } finally {
       setIsSavingSellerOrderEdit(false);
+    }
+  }
+
+  async function handleDeleteSellerOrder(order: SellerOrderRecord) {
+    if (!sessionUser || sessionUser.role !== "sales-rep-aruba") {
+      return;
+    }
+
+    if (!order._id) {
+      setSellerOrderTableStatus({ tone: "error", message: "No fue posible identificar el pedido." });
+      return;
+    }
+
+    if (!canEditSellerOrder(order.createdAt)) {
+      setSellerOrderExpiredNotice(order);
+      return;
+    }
+
+    if (!globalThis.confirm(`Se borrara el pedido de ${order.storeName}.`)) {
+      return;
+    }
+
+    try {
+      setDeletingSellerOrderId(order._id);
+      setSellerOrderTableStatus(null);
+      const response = await fetch(`${apiBaseUrl}/sales/orders/${order._id}?salesRepId=${encodeURIComponent(sessionUser.id)}`, {
+        method: "DELETE",
+      });
+      const rawBody = await response.text();
+      let data: { message?: string } = {};
+
+      if (rawBody) {
+        try {
+          data = JSON.parse(rawBody) as { message?: string };
+        } catch {
+          data = { message: rawBody };
+        }
+      }
+
+      if (!response.ok) {
+        setSellerOrderTableStatus({ tone: "error", message: data.message ?? "No fue posible borrar el pedido." });
+        return;
+      }
+
+      setSellerOrders((current) => current.filter((currentOrder) => currentOrder._id !== order._id));
+      setSelectedSellerOrderDetail((current) => (current?._id === order._id ? null : current));
+      setSelectedSellerOrderEdit((current) => (current?._id === order._id ? null : current));
+      setSellerOrderTableStatus({ tone: "success", message: data.message ?? "Pedido borrado correctamente." });
+    } catch (error) {
+      setSellerOrderTableStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible conectar con el backend.",
+      });
+    } finally {
+      setDeletingSellerOrderId("");
+    }
+  }
+
+  async function handleSellerClientAssignmentSave() {
+    if (!sessionUser || sessionUser.role !== "sales-rep-aruba") {
+      return;
+    }
+
+    if (!selectedSellerClientForManagement) {
+      setSellerClientAssignmentStatus({ tone: "error", message: "Selecciona un cliente antes de guardar productos." });
+      return;
+    }
+
+    try {
+      setIsSavingSellerClientAssignment(true);
+      setSellerClientAssignmentStatus(null);
+      const response = await fetch(`${apiBaseUrl}/sales/stores/${selectedSellerClientForManagement.value}/assigned-products`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          salesRepId: sessionUser.id,
+          assignedProductIds: sellerClientAssignmentDraft,
+        }),
+      });
+      const data = (await response.json()) as { message?: string };
+
+      if (!response.ok) {
+        setSellerClientAssignmentStatus({ tone: "error", message: data.message ?? "No fue posible guardar los productos del cliente." });
+        return;
+      }
+
+      setStoreOptions((current) => {
+        const nextStore = {
+          ...selectedSellerClientForManagement,
+          assignedProductIds: [...sellerClientAssignmentDraft],
+        };
+
+        if (current.some((store) => store.value === selectedSellerClientForManagement.value)) {
+          return current.map((store) => (
+            store.value === selectedSellerClientForManagement.value
+              ? nextStore
+              : store
+          ));
+        }
+
+        return [...current, nextStore];
+      });
+      setSellerClientAssignmentStatus({ tone: "success", message: data.message ?? "Productos actualizados correctamente." });
+
+      if (selectedSellerStoreId === selectedSellerClientForManagement.value) {
+        void refreshSellerClientProducts(selectedSellerClientForManagement.value);
+      }
+    } catch {
+      setSellerClientAssignmentStatus({ tone: "error", message: "No fue posible conectar con el backend." });
+    } finally {
+      setIsSavingSellerClientAssignment(false);
     }
   }
 
@@ -6227,10 +7131,43 @@ export default function App() {
     }));
   }
 
+  function toggleSellerClientAssignmentProduct(productId: string) {
+    setSellerClientAssignmentDraft((current) => (
+      current.includes(productId)
+        ? current.filter((currentProductId) => currentProductId !== productId)
+        : [...current, productId]
+    ));
+  }
+
   function handleContainerImportFieldChange(
     field: "containerType" | "containerSize" | "measurementUnit" | "importDate" | "shipmentReference" | "notes",
     value: string,
   ) {
+    if (field === "containerType") {
+      setContainerImportForm((current) => ({
+        ...current,
+        containerType: value as ContainerType,
+        products: current.products.map((product) => {
+          const option = productOptionsById.get(product.productId);
+
+          if (option?.containerType === value) {
+            return product;
+          }
+
+          return {
+            ...product,
+            selected: false,
+            boxCount: "",
+            importedQuantity: "",
+            purchaseUnitCostOrigin: "",
+            purchaseBoxCostOrigin: "",
+            expirationDate: "",
+          };
+        }),
+      }));
+      return;
+    }
+
     setContainerImportForm((current) => ({
       ...current,
       [field]: value,
@@ -6246,9 +7183,262 @@ export default function App() {
     }));
   }
 
+  function openInlineProductEquivalenceEditor(product: ProductOption) {
+    setInlineProductEquivalenceStatuses((current) => {
+      const next = { ...current };
+      delete next[product.value];
+      return next;
+    });
+    setInlineProductEquivalenceDrafts((current) => ({
+      ...current,
+      [product.value]: current[product.value] ?? {
+        unitsPerExportUnit: product.unitsPerBox > 0 ? String(product.unitsPerBox) : "",
+        equivalentUnit: unitsPerBoxUnitOptions.some((option) => option.value === product.presentation)
+          ? product.presentation
+          : product.unitsPerBoxUnit || "unidad",
+      },
+    }));
+  }
+
+  function updateInlineProductEquivalenceDraft(
+    productId: string,
+    field: keyof InlineProductEquivalenceDraft,
+    value: string,
+  ) {
+    setInlineProductEquivalenceDrafts((current) => ({
+      ...current,
+      [productId]: {
+        unitsPerExportUnit: current[productId]?.unitsPerExportUnit ?? "",
+        equivalentUnit: current[productId]?.equivalentUnit ?? "unidad",
+        [field]: value,
+      },
+    }));
+  }
+
+  async function saveInlineProductEquivalence(product: ProductOption) {
+    const draft = inlineProductEquivalenceDrafts[product.value];
+    const unitsPerExportUnit = Number(draft?.unitsPerExportUnit ?? 0);
+    const equivalentUnit = String(draft?.equivalentUnit ?? "").trim().toLowerCase();
+
+    if (!Number.isFinite(unitsPerExportUnit) || unitsPerExportUnit <= 0) {
+      setInlineProductEquivalenceStatuses((current) => ({
+        ...current,
+        [product.value]: { tone: "error", message: "Ingresa una equivalencia mayor a cero." },
+      }));
+      return;
+    }
+
+    if (!unitsPerBoxUnitOptions.some((option) => option.value === equivalentUnit)) {
+      setInlineProductEquivalenceStatuses((current) => ({
+        ...current,
+        [product.value]: { tone: "error", message: "Selecciona la unidad equivalente." },
+      }));
+      return;
+    }
+
+    try {
+      setSavingInlineProductEquivalenceId(product.value);
+      setInlineProductEquivalenceStatuses((current) => {
+        const next = { ...current };
+        delete next[product.value];
+        return next;
+      });
+
+      const response = await fetch(`${apiBaseUrl}/management/products/${product.value}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          unitsPerBox: unitsPerExportUnit,
+          unitsPerBoxUnit: equivalentUnit,
+        }),
+      });
+      const data = (await response.json()) as { message?: string; unitsPerBox?: number; unitsPerBoxUnit?: string };
+
+      if (!response.ok) {
+        setInlineProductEquivalenceStatuses((current) => ({
+          ...current,
+          [product.value]: { tone: "error", message: data.message ?? "No fue posible guardar la equivalencia." },
+        }));
+        return;
+      }
+
+      setProductOptions((current) => current.map((item) => (
+        item.value === product.value
+          ? {
+              ...item,
+              unitsPerBox: Number(data.unitsPerBox ?? unitsPerExportUnit),
+              unitsPerBoxUnit: String(data.unitsPerBoxUnit ?? equivalentUnit),
+            }
+          : item
+      )));
+      setDatabaseRows((current) => ({
+        ...current,
+        products: Array.isArray(current.products)
+          ? current.products.map((row) => (
+              String(row._id ?? "") === product.value
+                ? {
+                    ...row,
+                    unitsPerBox: Number(data.unitsPerBox ?? unitsPerExportUnit),
+                    unitsPerBoxUnit: String(data.unitsPerBoxUnit ?? equivalentUnit),
+                  }
+                : row
+            ))
+          : current.products,
+      }));
+      setContainerImportForm((current) => ({
+        ...current,
+        products: current.products.map((entry) => {
+          if (entry.productId !== product.value) {
+            return entry;
+          }
+
+          const exportUnitCount = Number(entry.boxCount || 0);
+
+          return {
+            ...entry,
+            importedQuantity:
+              exportUnitCount > 0
+                ? String(deriveImportedQuantityFromExportUnits(exportUnitCount, unitsPerExportUnit))
+                : entry.importedQuantity,
+          };
+        }),
+      }));
+      setInlineProductEquivalenceDrafts((current) => {
+        const next = { ...current };
+        delete next[product.value];
+        return next;
+      });
+    } catch {
+      setInlineProductEquivalenceStatuses((current) => ({
+        ...current,
+        [product.value]: { tone: "error", message: "No fue posible conectar con el backend." },
+      }));
+    } finally {
+      setSavingInlineProductEquivalenceId("");
+    }
+  }
+
+  function openInlineProductDimensionsEditor(product: ProductOption) {
+    setInlineProductDimensionsStatuses((current) => {
+      const next = { ...current };
+      delete next[product.value];
+      return next;
+    });
+    setInlineProductDimensionsDrafts((current) => ({
+      ...current,
+      [product.value]: current[product.value] ?? {
+        boxLengthCm: product.boxLengthCm > 0 ? String(product.boxLengthCm) : "",
+        boxWidthCm: product.boxWidthCm > 0 ? String(product.boxWidthCm) : "",
+        boxHeightCm: product.boxHeightCm > 0 ? String(product.boxHeightCm) : "",
+      },
+    }));
+  }
+
+  function updateInlineProductDimensionsDraft(
+    productId: string,
+    field: keyof InlineProductDimensionsDraft,
+    value: string,
+  ) {
+    setInlineProductDimensionsDrafts((current) => ({
+      ...current,
+      [productId]: {
+        boxLengthCm: current[productId]?.boxLengthCm ?? "",
+        boxWidthCm: current[productId]?.boxWidthCm ?? "",
+        boxHeightCm: current[productId]?.boxHeightCm ?? "",
+        [field]: value,
+      },
+    }));
+  }
+
+  async function saveInlineProductDimensions(product: ProductOption) {
+    const draft = inlineProductDimensionsDrafts[product.value];
+    const boxLengthCm = Number(draft?.boxLengthCm ?? 0);
+    const boxWidthCm = Number(draft?.boxWidthCm ?? 0);
+    const boxHeightCm = Number(draft?.boxHeightCm ?? 0);
+
+    if (!Number.isFinite(boxLengthCm) || boxLengthCm <= 0 || !Number.isFinite(boxWidthCm) || boxWidthCm <= 0 || !Number.isFinite(boxHeightCm) || boxHeightCm <= 0) {
+      setInlineProductDimensionsStatuses((current) => ({
+        ...current,
+        [product.value]: { tone: "error", message: "Ingresa largo, ancho y alto mayores a cero." },
+      }));
+      return;
+    }
+
+    try {
+      setSavingInlineProductDimensionsId(product.value);
+      setInlineProductDimensionsStatuses((current) => {
+        const next = { ...current };
+        delete next[product.value];
+        return next;
+      });
+
+      const response = await fetch(`${apiBaseUrl}/management/products/${product.value}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ boxLengthCm, boxWidthCm, boxHeightCm }),
+      });
+      const data = (await response.json()) as {
+        message?: string;
+        boxLengthCm?: number;
+        boxWidthCm?: number;
+        boxHeightCm?: number;
+      };
+
+      if (!response.ok) {
+        setInlineProductDimensionsStatuses((current) => ({
+          ...current,
+          [product.value]: { tone: "error", message: data.message ?? "No fue posible guardar las dimensiones." },
+        }));
+        return;
+      }
+
+      const nextLength = Number(data.boxLengthCm ?? boxLengthCm);
+      const nextWidth = Number(data.boxWidthCm ?? boxWidthCm);
+      const nextHeight = Number(data.boxHeightCm ?? boxHeightCm);
+
+      setProductOptions((current) => current.map((item) => (
+        item.value === product.value
+          ? {
+              ...item,
+              boxLengthCm: nextLength,
+              boxWidthCm: nextWidth,
+              boxHeightCm: nextHeight,
+            }
+          : item
+      )));
+      setDatabaseRows((current) => ({
+        ...current,
+        products: Array.isArray(current.products)
+          ? current.products.map((row) => (
+              String(row._id ?? "") === product.value
+                ? {
+                    ...row,
+                    boxLengthCm: nextLength,
+                    boxWidthCm: nextWidth,
+                    boxHeightCm: nextHeight,
+                  }
+                : row
+            ))
+          : current.products,
+      }));
+      setInlineProductDimensionsDrafts((current) => {
+        const next = { ...current };
+        delete next[product.value];
+        return next;
+      });
+    } catch {
+      setInlineProductDimensionsStatuses((current) => ({
+        ...current,
+        [product.value]: { tone: "error", message: "No fue posible conectar con el backend." },
+      }));
+    } finally {
+      setSavingInlineProductDimensionsId("");
+    }
+  }
+
   function handleContainerImportProductFieldChange(
     productId: string,
-    field: "boxCount" | "importedQuantity" | "purchaseUnitCostOrigin" | "purchaseBoxCostOrigin",
+    field: "boxCount" | "importedQuantity" | "purchaseUnitCostOrigin" | "purchaseBoxCostOrigin" | "expirationDate",
     value: string,
   ) {
     const relatedProduct = productOptions.find((product) => product.value === productId);
@@ -6268,8 +7458,10 @@ export default function App() {
                   selected: normalizedBoxes.length > 0 ? true : product.selected,
                   boxCount: normalizedBoxes,
                   importedQuantity:
-                    normalizedBoxes.length > 0 && unitsPerBox > 0 && parsedBoxes >= 0
-                      ? String(parsedBoxes * unitsPerBox)
+                    normalizedBoxes.length > 0 && parsedBoxes >= 0
+                      ? unitsPerBox > 0
+                        ? String(deriveImportedQuantityFromExportUnits(parsedBoxes, unitsPerBox))
+                        : ""
                       : normalizedBoxes.length === 0
                         ? ""
                         : product.importedQuantity,
@@ -6321,6 +7513,22 @@ export default function App() {
     }));
   }
 
+  async function handleEnablePushNotifications() {
+    if (!sessionUser?.id) {
+      return;
+    }
+
+    setPushNotificationBusy(true);
+    setPushNotificationDismissed(false);
+
+    try {
+      const result = await registerWebPushNotifications(String(sessionUser.id), apiBaseUrl);
+      setPushNotificationStatus(result);
+    } finally {
+      setPushNotificationBusy(false);
+    }
+  }
+
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsAuthenticating(true);
@@ -6335,7 +7543,7 @@ export default function App() {
       const data = (await response.json()) as SessionUser | { message?: string };
 
       if (!response.ok) {
-        setLoginError("message" in data ? data.message ?? "No fue posible iniciar sesion." : "No fue posible iniciar sesion.");
+        setLoginError("message" in data ? data.message ?? "No fue posible iniciar sesión." : "No fue posible iniciar sesión.");
         return;
       }
 
@@ -6345,6 +7553,9 @@ export default function App() {
       }
 
       setSessionUser(data);
+      setPushNotificationDismissed(false);
+      const pushResult = await registerWebPushNotifications(String(data.id), apiBaseUrl);
+      setPushNotificationStatus(pushResult);
     } catch {
       setLoginError("No fue posible conectar con el backend.");
     } finally {
@@ -6353,6 +7564,11 @@ export default function App() {
   }
 
   function handleLogout() {
+    if (sessionUser?.id) {
+      void unregisterWebPushNotifications(String(sessionUser.id), apiBaseUrl);
+    }
+    setPushNotificationStatus(null);
+    setPushNotificationDismissed(false);
     setSessionUser(null);
   }
 
@@ -6369,36 +7585,44 @@ export default function App() {
 
     if (config.key === "products") {
       payload.variableSalePrice = Boolean(editingRow?.variableSalePrice ?? false);
-      payload.salePrice = Number(editingRow?.salePrice ?? 0);
+      payload.salePrice = isEditing
+        ? Number(editingRow?.salePrice ?? 0)
+        : Number(formData.get("salePrice") ?? 0);
+      payload.description = String(formData.get("description") ?? "").trim();
       payload.cost = 0;
       payload.arubaPurchaseCostUsd = Number(editingRow?.arubaPurchaseCostUsd ?? 0);
       payload.arubaUsdToAwgRate = Number(editingRow?.arubaUsdToAwgRate ?? 1.79);
       payload.expirationDate = typeof editingRow?.expirationDate === "string" ? editingRow.expirationDate : null;
       payload.presentation = productPresentationDraft;
+      payload.containerType = typeof payload.containerType === "string" && payload.containerType === "refrigerado"
+        ? "refrigerado"
+        : "seco";
+      payload.shareWithAruba = isProductCreateSection ? productShareWithArubaDraft : formData.get("shareWithAruba") === "on";
+      payload.productWeightKg = Number(formData.get("productWeightKg") ?? 0);
+      payload.inventoryAlert = Number(formData.get("inventoryAlert") ?? 0);
+      payload.boxLengthCm = Number(formData.get("boxLengthCm") ?? 0);
+      payload.boxWidthCm = Number(formData.get("boxWidthCm") ?? 0);
+      payload.boxHeightCm = Number(formData.get("boxHeightCm") ?? 0);
 
-      if (productPresentationDraft === "caja") {
-        payload.unitsPerBox = Number(formData.get("unitsPerBox") ?? 0);
-        payload.unitsPerBoxUnit = String(formData.get("unitsPerBoxUnit") ?? "").trim();
-        const unitsPerBox = Number(payload.unitsPerBox ?? 0);
-
-        if (!Number.isFinite(unitsPerBox) || unitsPerBox <= 0) {
-          setCreationStatuses((current) => ({
-            ...current,
-            [config.key]: { tone: "error", message: "Define cuanto contenido trae cada caja antes de guardar." },
-          }));
-          return;
-        }
-
-        if (!String(payload.unitsPerBoxUnit ?? "").trim()) {
-          setCreationStatuses((current) => ({
-            ...current,
-            [config.key]: { tone: "error", message: "Selecciona la unidad de medicion dentro de la caja." },
-          }));
-          return;
-        }
-      } else {
-        payload.unitsPerBox = 0;
+      if (productPresentationDraft === "paquete") {
+        payload.unitsPerBox = Number(formData.get("unitsPerPackage") ?? 0);
         payload.unitsPerBoxUnit = "unidad";
+      } else {
+        payload.unitsPerBox = Number(formData.get("unitsPerBox") ?? 0);
+        payload.unitsPerBoxUnit = String(formData.get("unitsPerBoxUnit") ?? "unidad").trim() || "unidad";
+      }
+
+      if (!Number.isFinite(Number(payload.unitsPerBox ?? 0)) || Number(payload.unitsPerBox ?? 0) < 0) {
+        setCreationStatuses((current) => ({
+          ...current,
+          [config.key]: {
+            tone: "error",
+            message: productPresentationDraft === "paquete"
+              ? "Las unidades por paquete no pueden ser negativas."
+              : "La cantidad equivalente por unidad de exportacion no puede ser negativa.",
+          },
+        }));
+        return;
       }
 
       if (productImage.isUploading) {
@@ -6424,7 +7648,7 @@ export default function App() {
       }
     }
 
-    if (config.key === "clients") {
+    if (config.key === "clients" && config.endpoint === "/management/clients") {
       payload.assignedProductIds = clientProductDraft.productIds;
     }
 
@@ -6457,7 +7681,17 @@ export default function App() {
         },
       }));
 
-      closeCreationModal();
+      if (isProductCreateSection && config.key === "products") {
+        setEditingRow(null);
+        setClientProductDraft(createInitialClientProductDraft());
+        setIsVariableSalePrice(false);
+        setProductPresentationDraft("unidad");
+        setProductShareWithArubaDraft(true);
+        clearProductImage();
+        setActiveSection("products");
+      } else {
+        closeCreationModal();
+      }
 
       await refreshKpis();
 
@@ -6483,7 +7717,7 @@ export default function App() {
         );
       }
 
-      if (config.key === "clients") {
+      if (config.key === "clients" && config.endpoint === "/management/clients") {
         setStoreOptions(
           listData
             .map((client) => ({
@@ -6502,16 +7736,28 @@ export default function App() {
         );
       }
 
+      if (config.key === "clients" && config.endpoint === "/management/ops-clients") {
+        setOperationsClientOptions(
+          listData
+            .map((client) => mapOperationsClientOption(client))
+            .filter((client) => client.value.length > 0 && client.label.length > 0),
+        );
+      }
+
       if (config.key === "products") {
         const nextProductOptions = listData
+          .filter((product) => isProductVisibleForSession(product, sessionUser))
           .filter((product) => product.active !== false)
           .map((product) => ({
             value: String(product._id ?? ""),
             label: String(product.name ?? ""),
             sku: String(product.sku ?? ""),
             salePrice: roundCurrencyValue(Number(product.salePrice ?? 0)),
+            inventoryAlert: Number(product.inventoryAlert ?? 0),
             productWeightKg: Number(product.productWeightKg ?? 0),
             presentation: String(product.presentation ?? "unidad"),
+            containerType: String(product.containerType ?? "seco"),
+            shareWithAruba: product.shareWithAruba !== false,
             variableSalePrice: Boolean(product.variableSalePrice),
             unitsPerBox: Number(product.unitsPerBox ?? 0),
             unitsPerBoxUnit: String(product.unitsPerBoxUnit ?? "unidad"),
@@ -6749,6 +7995,23 @@ export default function App() {
       return;
     }
 
+    const productWithoutEquivalence = selectedProducts.find((product) => {
+      const selectedProduct = productOptions.find((option) => option.value === product.productId);
+      return Number(product.boxCount || 0) > 0 && Number(selectedProduct?.unitsPerBox ?? 0) <= 0;
+    });
+
+    if (productWithoutEquivalence) {
+      const invalidProduct = productOptions.find((option) => option.value === productWithoutEquivalence.productId);
+      setAccountingStatuses((current) => ({
+        ...current,
+        importCosts: {
+          tone: "error",
+          message: `Configura la equivalencia por unidad de exportacion para ${invalidProduct?.label ?? "el producto seleccionado"} antes de guardar.`,
+        },
+      }));
+      return;
+    }
+
     const invalidExpense = containerImportForm.expenseItems.find((expense) => {
       const amount = Number(expense.amount || 0);
 
@@ -6782,7 +8045,7 @@ export default function App() {
         importCosts: {
           tone: "error",
           message: containerImportForm.measurementUnit === "kg"
-            ? `Configura el peso por unidad para ${selectedContainerMetricsWithoutVolume[0].product.label} antes de planear este contenedor por peso.`
+            ? `Configura el peso por unidad de exportacion para ${selectedContainerMetricsWithoutVolume[0].product.label} antes de planear este contenedor por peso.`
             : `Configura unidades por caja y dimensiones para ${selectedContainerMetricsWithoutVolume[0].product.label} antes de planear este contenedor.`,
         },
       }));
@@ -6826,6 +8089,7 @@ export default function App() {
             importedQuantity: Number(product.importedQuantity || 0),
             purchaseUnitCostOrigin: Number(product.purchaseUnitCostOrigin || 0),
             purchaseBoxCostOrigin: Number(product.purchaseBoxCostOrigin || 0),
+            expirationDate: product.expirationDate || "",
           })),
         }),
       });
@@ -7301,9 +8565,8 @@ export default function App() {
         <section className="login-panel">
           <img className="login-logo" src="/sps-logo.jpeg" alt="SPS Trading Enterprises" />
           <div>
-            <p className="section-label">Comercio App</p>
-            <h1>Iniciar sesion</h1>
-            <p className="route-helper-text">Accede segun tu rol para administrar catalogos, rutas, inventario y pedidos.</p>
+            <h1>Iniciar sesión</h1>
+            <p className="route-helper-text">Accede según tu rol para administrar catálogos, rutas, inventario y pedidos.</p>
           </div>
 
           <form className="login-form" onSubmit={(event) => void handleLogin(event)}>
@@ -7320,12 +8583,12 @@ export default function App() {
             </label>
 
             <label className="field">
-              <span>Contrasena</span>
+              <span>Contraseña</span>
               <input
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="Ingresa tu contrasena"
+                placeholder="Ingresa tu contraseña"
                 autoComplete="current-password"
                 required
               />
@@ -7363,6 +8626,13 @@ export default function App() {
               Rutas asignadas
             </button>
             <button
+              className={`sidebar-link ${sellerActiveSection === "clients" ? "active" : ""}`}
+              type="button"
+              onClick={() => setSellerActiveSection("clients")}
+            >
+              Clientes
+            </button>
+            <button
               className={`sidebar-link ${sellerActiveSection === "orders" ? "active" : ""}`}
               type="button"
               onClick={() => setSellerActiveSection("orders")}
@@ -7372,27 +8642,37 @@ export default function App() {
           </nav>
 
           <button className="ghost-button" type="button" onClick={handleLogout}>
-            Cerrar sesion
+            Cerrar sesión
           </button>
         </aside>
 
         <section className="portal-content">
           <header className="portal-header">
             <p className="section-label">Portal Vendedor</p>
-            <h1>{sellerActiveSection === "orders" ? "Pedidos realizados" : "Rutas asignadas"}</h1>
+            <h1>
+              {sellerActiveSection === "orders"
+                ? "Pedidos realizados"
+                : sellerActiveSection === "clients"
+                  ? "Clientes Aruba"
+                  : "Rutas asignadas"}
+            </h1>
             <p>
               {sellerActiveSection === "orders"
                 ? "Consulta el historial de pedidos enviados desde tu portal y revisa su estado actual."
-                : "Revisa las rutas creadas por gerencia, abre el dia de trabajo, selecciona el cliente y arma el pedido que recibira bodega para despacho."}
+                : sellerActiveSection === "clients"
+                  ? "Consulta todos los clientes de Aruba y agrega o quita los productos que deben quedar disponibles para ese cliente."
+                  : "Revisa las rutas creadas por gerencia, abre el día de trabajo, selecciona el cliente y arma el pedido que recibirá bodega para despacho."}
             </p>
           </header>
+
+          {pushNotificationBannerNode}
 
           {sellerActiveSection === "orders" ? (
             <section className="routes-layout">
               <article className="creation-selector-block">
                 <p className="section-label">Historial</p>
                 <h2>Pedidos realizados</h2>
-                <p className="route-helper-text">Aqui veras los pedidos que ya enviaste a bodega desde tus rutas asignadas.</p>
+                <p className="route-helper-text">Aquí verás los pedidos que ya enviaste a bodega desde tus rutas asignadas.</p>
               </article>
 
               <article className="database-card">
@@ -7405,6 +8685,7 @@ export default function App() {
                 </div>
 
                 {sellerOrdersError ? <p className="form-feedback error">{sellerOrdersError}</p> : null}
+                {sellerOrderTableStatus ? <p className={`form-feedback ${sellerOrderTableStatus.tone}`}>{sellerOrderTableStatus.message}</p> : null}
 
                 <div className="table-wrap">
                   <table className="data-table">
@@ -7427,6 +8708,7 @@ export default function App() {
                       ) : sellerOrders.length > 0 ? (
                         sellerOrders.map((order) => {
                           const totalUnits = order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+                          const isDeletingOrder = deletingSellerOrderId === order._id;
 
                           return (
                             <tr key={order._id}>
@@ -7453,11 +8735,22 @@ export default function App() {
                                     type="button"
                                     aria-label="Modificar pedido"
                                     title="Modificar"
+                                    disabled={isDeletingOrder}
                                     onClick={() => openSellerOrderEdit(order)}
                                   >
                                     <svg viewBox="0 0 24 24" aria-hidden="true">
                                       <path d="M4 20h4l10-10-4-4L4 16v4zm12.7-12.3 1.6-1.6a1 1 0 0 1 1.4 0l1.2 1.2a1 1 0 0 1 0 1.4L19.3 10l-2.6-2.3z" fill="currentColor" />
                                     </svg>
+                                  </button>
+                                  <button
+                                    className="table-action-icon is-danger"
+                                    type="button"
+                                    aria-label="Borrar pedido"
+                                    title="Borrar pedido"
+                                    disabled={isDeletingOrder}
+                                    onClick={() => void handleDeleteSellerOrder(order)}
+                                  >
+                                    x
                                   </button>
                                 </div>
                               </td>
@@ -7466,7 +8759,7 @@ export default function App() {
                         })
                       ) : (
                         <tr>
-                          <td colSpan={7} className="empty-table-cell">Todavia no has realizado pedidos desde tu portal.</td>
+                          <td colSpan={7} className="empty-table-cell">Todavía no has realizado pedidos desde tu portal.</td>
                         </tr>
                       )}
                     </tbody>
@@ -7521,7 +8814,7 @@ export default function App() {
                       <div>
                         <p className="section-label">Modificar pedido</p>
                         <h2>{selectedSellerOrderEdit.storeName}</h2>
-                        <p>Solo puedes editar la cantidad durante las primeras 6 horas despues de crear el pedido.</p>
+                        <p>Solo puedes editar la cantidad durante las primeras 6 horas después de crear el pedido.</p>
                       </div>
                       <button className="modal-close-button" type="button" onClick={() => setSelectedSellerOrderEdit(null)}>Cerrar</button>
                     </div>
@@ -7566,7 +8859,7 @@ export default function App() {
                     </div>
 
                     <div className="seller-order-footer">
-                      <p>Las cantidades modificadas reemplazaran el pedido original.</p>
+                      <p>Las cantidades modificadas reemplazarán el pedido original.</p>
                       <button className="submit-button seller-order-submit" type="button" onClick={() => void handleSellerOrderEditSubmit()} disabled={isSavingSellerOrderEdit}>
                         {isSavingSellerOrderEdit ? "Guardando cambios..." : "Guardar cambios"}
                       </button>
@@ -7580,31 +8873,133 @@ export default function App() {
                   <div className="modal-card seller-order-expired-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                     <div className="modal-header">
                       <div>
-                        <p className="section-label">Edicion no disponible</p>
+                        <p className="section-label">Edición no disponible</p>
                         <h2>El tiempo para modificar el pedido ha caducado</h2>
                         <p>{sellerOrderExpiredNotice.storeName} · {formatSellerOrderDate(sellerOrderExpiredNotice.createdAt)}</p>
                       </div>
                       <button className="modal-close-button" type="button" onClick={() => setSellerOrderExpiredNotice(null)}>Cerrar</button>
                     </div>
 
-                    <p className="route-helper-text">Solo se permiten cambios durante las primeras 6 horas despues de crear el pedido. Si necesitas ajustarlo despues de ese tiempo, debe intervenir gerencia o bodega.</p>
+                    <p className="route-helper-text">Solo se permiten cambios durante las primeras 6 horas después de crear el pedido. Si necesitas ajustarlo después de ese tiempo, debe intervenir gerencia o bodega.</p>
                   </div>
                 </div>
               ) : null}
+            </section>
+          ) : sellerActiveSection === "clients" ? (
+            <section className="routes-layout">
+              <article className="creation-selector-block">
+                <p className="section-label">Clientes Aruba</p>
+                <h2>Productos por cliente</h2>
+                <p className="route-helper-text">Selecciona un cliente y marca los productos que deben quedar disponibles para ese cliente en Aruba.</p>
+              </article>
+
+              <article className="route-builder-card seller-route-workspace">
+                <div className="management-table-header">
+                  <div>
+                    <h2>Clientes</h2>
+                    <p>Todos los clientes de Aruba comparten la misma colección que usa gerencia.</p>
+                  </div>
+                  <p className="management-table-meta">{sellerManagedClientOptions.length} clientes</p>
+                </div>
+
+                <div className="seller-route-client-panel">
+                  <div className="field field-full">
+                    <span>Cliente</span>
+                    <div className="seller-route-store-chips">
+                      {sellerManagedClientOptions.length > 0 ? (
+                        sellerManagedClientOptions.map((store) => (
+                          <button
+                            key={store.value}
+                            className={`seller-route-store-chip ${selectedSellerClientId === store.value ? "is-active" : ""}`}
+                            type="button"
+                            onClick={() => setSelectedSellerClientId(store.value)}
+                          >
+                            {store.label}
+                          </button>
+                        ))
+                      ) : (
+                        <p className="route-empty-state">Aún no hay clientes Aruba creados.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {selectedSellerClientForManagement ? (
+                    <p className="warehouse-selected-meta">{selectedSellerClientForManagement.label} · {selectedSellerClientForManagement.address || "Sin dirección"}</p>
+                  ) : null}
+                </div>
+
+                {sellerClientAssignmentStatus ? <p className={`form-feedback ${sellerClientAssignmentStatus.tone}`}>{sellerClientAssignmentStatus.message}</p> : null}
+
+                <div className="client-product-assignment">
+                  <div className="client-product-assignment-header">
+                    <div>
+                      <p className="section-label">Productos del cliente</p>
+                      <h3>Agrega o quita productos</h3>
+                      <p>Estos productos quedarán disponibles para pedidos y chequeos del cliente seleccionado.</p>
+                    </div>
+                    <span>{sellerClientAssignmentDraft.length} asignados</span>
+                  </div>
+
+                  <div className="route-store-list client-product-assignment-list">
+                    {productOptions.length === 0 ? (
+                      <p className="route-empty-state">Aún no hay productos creados para asignar.</p>
+                    ) : (
+                      productOptions.map((product) => (
+                        <label className="route-store-option" key={`seller-client-product-${product.value}`}>
+                          <input
+                            type="checkbox"
+                            checked={sellerClientAssignmentDraft.includes(product.value)}
+                            onChange={() => toggleSellerClientAssignmentProduct(product.value)}
+                          />
+                          <span>
+                            <strong>{product.label}</strong>
+                            <small>SKU {product.sku}</small>
+                          </span>
+                        </label>
+                      ))
+                    )}
+                  </div>
+
+                  <div className="client-product-assignment-summary">
+                    {selectedSellerClientDraftProducts.length > 0 ? (
+                      selectedSellerClientDraftProducts.map((product) => (
+                        <span className="catalog-recipient-pill" key={`seller-client-product-pill-${product.value}`}>
+                          <span>{product.label}</span>
+                          <strong>{product.sku}</strong>
+                        </span>
+                      ))
+                    ) : (
+                      <p className="catalog-recipient-empty">Aún no has asignado productos para este cliente.</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="seller-order-footer">
+                  <p>{selectedSellerClientForManagement ? `Guardarás ${sellerClientAssignmentDraft.length} producto${sellerClientAssignmentDraft.length === 1 ? "" : "s"} para ${selectedSellerClientForManagement.label}.` : "Selecciona un cliente para comenzar."}</p>
+                  <button
+                    className="submit-button seller-order-submit"
+                    type="button"
+                    onClick={() => void handleSellerClientAssignmentSave()}
+                    disabled={isSavingSellerClientAssignment || !selectedSellerClientForManagement}
+                  >
+                    {isSavingSellerClientAssignment ? "Guardando productos..." : "Guardar productos del cliente"}
+                  </button>
+                </div>
+              </article>
             </section>
           ) : (
             <section className="routes-layout">
               <article className="creation-selector-block">
                 <p className="section-label">Tu agenda</p>
                 <h2>Rutas asignadas por gerencia</h2>
-                <p className="route-helper-text">Aqui solo veras las rutas asociadas a tu usuario y podras preparar el pedido de cada cliente visitado.</p>
+                <p className="route-helper-text">Aquí solo verás las rutas asociadas a tu usuario y podrás preparar el pedido de cada cliente visitado.</p>
               </article>
 
               <article className="database-card">
                 <div className="management-table-header">
                   <div>
                     <h2>Mis rutas</h2>
-                    <p>Selecciona una ruta para abrir sus dias y clientes asignados.</p>
+                    <p>Selecciona una ruta para abrir sus días y clientes asignados.</p>
                   </div>
                   <p className="management-table-meta">{sellerRoutes.length} rutas</p>
                 </div>
@@ -7629,14 +9024,14 @@ export default function App() {
                           <div>
                             <p className="section-label">{route.weekLabel}</p>
                             <strong>{route.name}</strong>
-                            <span>{route.days.length} dias planeados</span>
+                            <span>{route.days.length} días planeados</span>
                           </div>
                           <span>{route.plannedStops} tiendas</span>
                         </button>
                       );
                     })
                   ) : (
-                    <p className="route-empty-state">Aun no tienes rutas asignadas.</p>
+                    <p className="route-empty-state">Aún no tienes rutas asignadas.</p>
                   )}
                 </div>
               </article>
@@ -7691,7 +9086,7 @@ export default function App() {
                         </div>
 
                         {selectedSellerStore ? (
-                          <p className="warehouse-selected-meta">{selectedSellerStore.storeName} · {selectedSellerStore.address || "Sin direccion"}</p>
+                          <p className="warehouse-selected-meta">{selectedSellerStore.storeName} · {selectedSellerStore.address || "Sin dirección"}</p>
                         ) : null}
                       </div>
 
@@ -7759,7 +9154,7 @@ export default function App() {
                                         className="seller-order-note-input"
                                         type="text"
                                         value={draft.notes}
-                                        placeholder="Observacion para bodega"
+                                        placeholder="Observación para bodega"
                                         onChange={(event) => handleSellerOrderDraftChange(product.productId, "notes", event.target.value)}
                                       />
                                     </td>
@@ -7768,7 +9163,7 @@ export default function App() {
                               })
                             ) : (
                               <tr>
-                                <td colSpan={7} className="empty-table-cell">Este cliente aun no tiene productos asignados por gerencia.</td>
+                                <td colSpan={7} className="empty-table-cell">Este cliente aún no tiene productos asignados por gerencia.</td>
                               </tr>
                             )}
                           </tbody>
@@ -7776,7 +9171,7 @@ export default function App() {
                       </div>
 
                       <div className="seller-order-footer">
-                        <p>{sellerDraftedItems.length > 0 ? `${sellerDraftedItems.length} producto${sellerDraftedItems.length === 1 ? "" : "s"} listos para registrar.` : "Todavia no has agregado stock actual o cantidades al pedido."}</p>
+                        <p>{sellerDraftedItems.length > 0 ? `${sellerDraftedItems.length} producto${sellerDraftedItems.length === 1 ? "" : "s"} listos para registrar.` : "Todavía no has agregado stock actual o cantidades al pedido."}</p>
                         <button
                           className="submit-button seller-order-submit"
                           type="button"
@@ -7788,7 +9183,7 @@ export default function App() {
                       </div>
                     </>
                   ) : (
-                    <p className="route-empty-state">Selecciona un dia de la ruta para trabajar su pedido.</p>
+                    <p className="route-empty-state">Selecciona un día de la ruta para trabajar su pedido.</p>
                   )}
                 </article>
               ) : null}
@@ -7833,7 +9228,7 @@ export default function App() {
           </nav>
 
           <button className="ghost-button" type="button" onClick={handleLogout}>
-            Cerrar sesion
+            Cerrar sesión
           </button>
         </aside>
 
@@ -7847,6 +9242,8 @@ export default function App() {
                 : "Consulta el inventario actual y registra salidas cuando sea necesario desde bodega."}
             </p>
           </header>
+
+          {pushNotificationBannerNode}
 
           {warehouseActiveSection === "orders" ? (
             <section className="routes-layout">
@@ -7880,22 +9277,22 @@ export default function App() {
                     <div className="warehouse-order-detail-grid">
                       <div className="warehouse-order-summary-card">
                         <p className="section-label">Checklist</p>
-                        <strong>{warehouseAllItemsChecked ? "Listo para facturar" : "Pendiente de revision"}</strong>
+                        <strong>{warehouseAllItemsChecked ? "Listo para facturar" : "Pendiente de revisión"}</strong>
                         <p>
                           Marca cada producto preparado antes de completar el pedido.
                         </p>
                       </div>
 
                       <div className="warehouse-order-summary-card">
-                        <p className="section-label">Catalogo</p>
+                        <p className="section-label">Catálogo</p>
                         <label className="field warehouse-order-catalog-field">
-                          <span>Selecciona un catalogo</span>
+                          <span>Selecciona un catálogo</span>
                           <select
                             value={selectedCatalogId}
                             onChange={(event) => setSelectedCatalogId(event.target.value)}
                             disabled={isLoadingCatalogs || orderReadyCatalogs.length === 0}
                           >
-                            <option value="">Selecciona un catalogo guardado</option>
+                            <option value="">Selecciona un catálogo guardado</option>
                             {orderReadyCatalogs.map((catalog) => (
                               <option key={catalog._id ?? catalog.code} value={catalog._id}>{catalog.name}</option>
                             ))}
@@ -7903,7 +9300,7 @@ export default function App() {
                         </label>
                         <p>
                           {orderReadyCatalogs.length === 0
-                            ? "Todavia no hay catalogos guardados para pedidos desde gerencia."
+                            ? "Todavía no hay catálogos guardados para pedidos desde gerencia."
                             : warehouseOrderClient
                             ? `Cliente del pedido: ${warehouseOrderClient.label}`
                             : `Cliente del pedido: ${selectedWarehouseOrderDetail.storeName}`}
@@ -7915,8 +9312,8 @@ export default function App() {
                         <strong>{formatCurrency(warehouseInvoiceTotal)}</strong>
                         <p>
                           {warehouseFallbackPriceCount > 0
-                            ? `${warehouseFallbackPriceCount} producto${warehouseFallbackPriceCount === 1 ? " usa" : "s usan"} precio base del producto fuera del catalogo.`
-                            : "Todos los productos tienen precio resuelto desde el catalogo seleccionado."}
+                            ? `${warehouseFallbackPriceCount} producto${warehouseFallbackPriceCount === 1 ? " usa" : "s usan"} precio base del producto fuera del catálogo.`
+                            : "Todos los productos tienen precio resuelto desde el catálogo seleccionado."}
                         </p>
                       </div>
                     </div>
@@ -8000,7 +9397,7 @@ export default function App() {
                   <article className="creation-selector-block">
                     <p className="section-label">Recepcion</p>
                     <h2>Pedidos del equipo comercial</h2>
-                    <p className="route-helper-text">Aqui llegan los pedidos creados por los vendedores para preparacion y despacho desde bodega.</p>
+                    <p className="route-helper-text">Aquí llegan los pedidos creados por los vendedores para preparación y despacho desde bodega.</p>
                   </article>
 
                   <article className="database-card">
@@ -8072,7 +9469,7 @@ export default function App() {
                     <div className="management-table-header">
                       <div>
                         <h2>Pedidos completados</h2>
-                        <p>Aqui se muestran los pedidos ya entregados y cerrados en bodega.</p>
+                        <p>Aquí se muestran los pedidos ya entregados y cerrados en bodega.</p>
                       </div>
                       <p className="management-table-meta">{warehouseCompletedOrders.length} pedidos</p>
                     </div>
@@ -8123,7 +9520,7 @@ export default function App() {
                             })
                           ) : (
                             <tr>
-                              <td colSpan={7} className="empty-table-cell">Todavia no hay pedidos completados.</td>
+                              <td colSpan={7} className="empty-table-cell">Todavía no hay pedidos completados.</td>
                             </tr>
                           )}
                         </tbody>
@@ -8152,19 +9549,32 @@ export default function App() {
                         <p>Costo total inventario (AWG)</p>
                         <strong>{formatAwgCurrency(inventoryKpis.totalInventoryCost)}</strong>
                       </article>
-                      <button
-                        className={`kpi-card kpi-card-button tone-cyan ${inventoryFilter === "expiring-soon" ? "is-active" : ""}`}
-                        type="button"
-                        onClick={toggleExpiringSoonInventoryFilter}
-                      >
-                        <p>Prontos a vencerse (2 meses)</p>
+                      <article className="kpi-card tone-cyan">
+                        <p>Próximos a vencer (2 meses)</p>
                         <strong>{inventoryKpis.expiringSoon}</strong>
-                      </button>
+                      </article>
                     </>
                   )}
               </div>
 
               {inventoryError ? <p className="form-feedback error">{inventoryError}</p> : null}
+
+              <article className="database-card inventory-expiring-card">
+                <div className="creation-header database-header">
+                  <div>
+                    <h2>Inventario próximo a vencer</h2>
+                    <p>Productos con fecha de caducidad dentro de los próximos 2 meses.</p>
+                  </div>
+                  <p className="management-table-meta">{filteredExpiringSoonInventoryRows.length} resultados</p>
+                </div>
+
+                <InventorySummaryTable
+                  rows={filteredExpiringSoonInventoryRows}
+                  isLoading={isLoadingInventory}
+                  emptyMessage="No hay productos próximos a vencer dentro de los próximos 2 meses."
+                  onAdjustRow={openInventoryAdjustmentModal}
+                />
+              </article>
 
               <article className="database-card">
                 <div className="creation-header database-header">
@@ -8173,82 +9583,19 @@ export default function App() {
                     <p>Resumen por producto con cantidades, costo, venta potencial y fecha de caducidad.</p>
                   </div>
                   <div className="inventory-header-actions">
-                    <p className="management-table-meta">
-                      {inventoryFilter === "expiring-soon"
-                        ? `${filteredInventoryRows.length} proximos a vencer`
-                        : `${filteredInventoryRows.length} resultados`}
-                    </p>
+                    <p className="management-table-meta">{filteredInventoryRows.length} resultados</p>
                     <button className="primary-action-button" type="button" onClick={openInventoryEntryModal}>
                       Registrar inventario
                     </button>
                   </div>
                 </div>
 
-                {inventoryFilter === "expiring-soon" ? (
-                  <p className="form-feedback success">
-                    Mostrando solo productos proximos a vencer. Presiona el card nuevamente para ver todo el inventario.
-                  </p>
-                ) : null}
-
-                <div className="table-wrap">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Producto</th>
-                        <th>Cantidad</th>
-                        <th>Costo unitario (AWG)</th>
-                        <th>Costo total (AWG)</th>
-                        <th>Venta (AWG)</th>
-                        <th>Total venta (AWG)</th>
-                        <th>Fecha de caducidad</th>
-                        <th>Accion</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {isLoadingInventory ? (
-                        <tr>
-                          <td colSpan={8} className="empty-table-cell">Cargando inventario...</td>
-                        </tr>
-                      ) : filteredInventoryRows.length > 0 ? (
-                        filteredInventoryRows.map((row) => (
-                          <tr key={row.stockRowId ?? `${row.productId}-${row.expirationDate ?? "sin-caducidad"}`}>
-                            <td>{`${row.name} (${row.sku})`}</td>
-                            <td>{row.quantity}</td>
-                            <td>{formatCurrencyUpTwoDecimals(row.unitCost)}</td>
-                            <td>{formatCurrencyUpTwoDecimals(row.totalCost)}</td>
-                            <td>{formatCurrencyUpTwoDecimals(row.salePrice)}</td>
-                            <td>{formatCurrencyUpTwoDecimals(row.totalSale)}</td>
-                            <td>{row.expirationDate ? String(row.expirationDate).slice(0, 10) : "-"}</td>
-                            <td>
-                              <div className="table-action-group">
-                                <button
-                                  className="table-action-icon"
-                                  type="button"
-                                  aria-label="Sacar unidades del inventario"
-                                  title="Sacar unidades"
-                                  onClick={() => openInventoryAdjustmentModal(row)}
-                                  disabled={row.quantity <= 0}
-                                >
-                                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                                    <path d="M4 20h4l10-10-4-4L4 16v4zm12.7-12.3 1.6-1.6a1 1 0 0 1 1.4 0l1.2 1.2a1 1 0 0 1 0 1.4L19.3 10l-2.6-2.3z" fill="currentColor" />
-                                  </svg>
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={8} className="empty-table-cell">
-                            {inventoryFilter === "expiring-soon"
-                              ? "No hay productos proximos a vencer dentro de los proximos 2 meses."
-                              : "Aun no hay inventario registrado."}
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                <InventorySummaryTable
+                  rows={filteredInventoryRows}
+                  isLoading={isLoadingInventory}
+                  emptyMessage="Aún no hay inventario registrado."
+                  onAdjustRow={openInventoryAdjustmentModal}
+                />
               </article>
 
               {selectedInventoryAdjustmentRow ? (
@@ -8422,7 +9769,7 @@ export default function App() {
                             </label>
 
                             <label className="field field-full">
-                              <span>Peso por unidad (kg)</span>
+                              <span>Peso por unidad de exportacion (kg)</span>
                               <input
                                 type="number"
                                 min="0"
@@ -8521,7 +9868,35 @@ export default function App() {
                   ))}
                 </>
               )
-            : sidebarItems.map((item) => (
+            : sessionUser.role === "colombia-ops"
+              ? (
+                  <>
+                    <button
+                      className={`sidebar-link ${activeSection === "dashboard" ? "active" : ""}`}
+                      type="button"
+                      onClick={() => setActiveSection("dashboard")}
+                    >
+                      Dashboard
+                    </button>
+
+                    {colombiaOpsSidebarSections.map((section) => (
+                      <div key={section.key}>
+                        <p className="section-label">{section.label}</p>
+                        {section.items.map((item) => (
+                          <button
+                            key={item.key}
+                            className={`sidebar-link ${activeSection === item.key ? "active" : ""}`}
+                            type="button"
+                            onClick={() => setActiveSection(item.key)}
+                          >
+                            {item.label}
+                          </button>
+                        ))}
+                      </div>
+                    ))}
+                  </>
+                )
+            : visibleSidebarItems.map((item) => (
                 <button
                   key={item.key}
                   className={`sidebar-link ${activeSection === item.key ? "active" : ""}`}
@@ -8548,18 +9923,22 @@ export default function App() {
                 ? "Inventario"
                 : activeSection === "inventory-entry"
                   ? "Registrar inventario"
+              : activeSection === "products-create"
+                ? "Crear producto"
+              : activeSection === "products-import"
+                ? "Migrar productos"
               : activeSection === "orders"
                 ? "Pedidos"
               : activeSection === "catalog"
-                ? "Catalogo"
+                ? "Catálogo"
               : activeSection === "imports"
                 ? "Exportaciones"
                 : activeSection === "import-billing"
-                  ? "Facturacion"
+                  ? "Facturación"
               : activeSection === "accounting"
                 ? "Contabilidad"
               : activeSection === "logistics-accounting"
-                ? "Contabilidad Logistica"
+                ? "Contabilidad Logística"
               : activeSection === "warehouses"
                 ? "Bodegas"
               : isCreationSection
@@ -8570,32 +9949,34 @@ export default function App() {
           </h1>
           <p>
             {activeSection === "dashboard"
-              ? "Vista ejecutiva del estado actual de la operacion y la configuracion base."
+              ? "Vista ejecutiva del estado actual de la operación y la configuración base."
               : activeSection === "inventory"
-                ? "Consulta existencias, costos, ventas potenciales y productos que vencen dentro de los proximos dos meses."
+                ? "Consulta existencias, costos, ventas potenciales y productos que vencen dentro de los próximos dos meses."
                 : activeSection === "inventory-entry"
-                  ? "Registra entradas de inventario manualmente o cargando el Excel generado desde Facturacion."
+                  ? "Registra entradas de inventario manualmente o cargando el Excel generado desde Facturación."
               : activeSection === "orders"
                 ? "Consulta los pedidos enviados por vendedores y revisa su detalle antes de preparar el despacho."
               : activeSection === "catalog"
-                ? "Arma catalogos por categorias o productos, luego define el precio de venta por cliente con un porcentaje global o ajustes manuales."
+                ? "Arma catálogos por categorías o productos, luego define el precio de venta por cliente con un porcentaje global o ajustes manuales."
               : activeSection === "imports"
-                ? "Registra contenedores, define gastos generales de exportacion y distribuye el costo real entre los productos recibidos."
+                ? "Registra contenedores, define gastos generales de exportación y distribuye el costo real entre los productos recibidos."
                 : activeSection === "import-billing"
-                  ? "Selecciona una exportacion guardada, aplica un margen global y calcula precios de venta en USD usando TRM del dia."
+                  ? "Selecciona una exportación guardada, aplica un margen global y calcula precios de venta en USD usando TRM del día."
               : activeSection === "accounting"
                 ? "Registra costos fijos y monitorea gastos operacionales para entender la carga mensual del negocio."
               : activeSection === "logistics-accounting"
-                ? "Visualiza las utilidades de pedidos despachados a clientes, en florines (AWG), con costos adicionales de la operacion logistica."
+                ? "Visualiza las utilidades de pedidos despachados a clientes, en florines (AWG), con costos adicionales de la operación logística."
               : activeSection === "warehouses"
                 ? "Crea bodegas y organiza cada una por estantes, pisos y racks para ubicar productos fisicamente."
               : isCreationSection
                 ? selectedCollection.description
                 : activeSection === "routes"
-                  ? "Disena la cobertura semanal por vendedor y asigna el listado de tiendas a visitar cada dia."
+                  ? "Diseña la cobertura semanal por vendedor y asigna el listado de tiendas a visitar cada día."
                   : "Consulta existencias, costos y vencimientos del inventario."}
           </p>
         </header>
+
+        {pushNotificationBannerNode}
 
         {activeSection === "dashboard" ? (
           <section className="dashboard-layout">
@@ -8604,7 +9985,7 @@ export default function App() {
                 ? kpiPlaceholders.map((placeholder) => (
                     <article key={placeholder} className="kpi-card is-loading" />
                   ))
-                : dashboardExecutiveCards.map((card) => {
+                : visibleDashboardCards.map((card) => {
                     const targetSection = card.targetSection;
 
                     return (
@@ -8622,7 +10003,51 @@ export default function App() {
                   })}
             </div>
 
-            <div className="dashboard-table-grid">
+            {isColombiaOpsUser ? (
+              <div className="dashboard-table-grid">
+                <article className="database-card">
+                  <div className="management-table-header">
+                    <div>
+                      <h2>Ultimas exportaciones realizadas</h2>
+                      <p>Ultimos 10 lotes exportados con su cliente y resultado facturado.</p>
+                    </div>
+                  </div>
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Fecha</th>
+                          <th>Cliente</th>
+                          <th>Costo (COP)</th>
+                          <th>Venta (COP)</th>
+                          <th>Utilidades (COP)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {latestColombiaExportRows.length > 0 ? (
+                          latestColombiaExportRows.map((row) => (
+                            <tr key={row.key}>
+                              <td>{String(row.importDate).slice(0, 10)}</td>
+                              <td>{row.clientName || "-"}</td>
+                              <td>{formatCurrency(row.totalImportCost)}</td>
+                              <td>{formatCurrency(row.totalRevenue)}</td>
+                              <td>{formatCurrency(row.totalUtility)}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={5} className="empty-table-cell">Aun no hay exportaciones registradas.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+              </div>
+            ) : null}
+
+            {!isColombiaOpsUser ? (
+              <div className="dashboard-table-grid">
               <article className="database-card">
                 <div className="management-table-header">
                   <div>
@@ -8799,7 +10224,8 @@ export default function App() {
                   </table>
                 </div>
               </article>
-            </div>
+              </div>
+            ) : null}
           </section>
         ) : isCreationSection ? (
           <section className="creation-layout">
@@ -8818,10 +10244,26 @@ export default function App() {
               <div className="management-action-panel">
                 <p className="section-label">Crear</p>
                 <h2>Nuevo registro</h2>
-                <p>Abre un modal para registrar nueva informacion en esta seccion.</p>
-                <button className="primary-action-button" type="button" onClick={openCreationModal}>
-                  Crear registro
-                </button>
+                {selectedCollection.key === "products" ? (
+                  <>
+                    <p>Usa una página dedicada para crear productos nuevos o migrarlos desde Excel.</p>
+                    <div className="stacked-action-buttons">
+                      <button className="primary-action-button" type="button" onClick={openProductCreatePage}>
+                        Crear producto
+                      </button>
+                      <button className="ghost-button action-secondary-button" type="button" onClick={openProductImportPage}>
+                        Importar desde Excel
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p>Abre un modal para registrar nueva informacion en esta seccion.</p>
+                    <button className="primary-action-button" type="button" onClick={openCreationModal}>
+                      Crear registro
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
@@ -8953,10 +10395,10 @@ export default function App() {
                       name="warehouseSelector"
                       value={selectedWarehouseId}
                       onChange={(event) => setSelectedWarehouseId(event.target.value)}
-                      disabled={warehouseOptions.length === 0}
+                      disabled={availableWarehouseOptions.length === 0}
                     >
-                      {warehouseOptions.length === 0 ? <option value="">Primero crea una bodega</option> : null}
-                      {warehouseOptions.map((warehouse) => (
+                      {availableWarehouseOptions.length === 0 ? <option value="">Primero crea una bodega</option> : null}
+                      {availableWarehouseOptions.map((warehouse) => (
                         <option key={warehouse.value} value={warehouse.value}>
                           {warehouse.label}
                         </option>
@@ -9108,7 +10550,7 @@ export default function App() {
                         </article>
                       ))
                     ) : (
-                      <p className="warehouse-empty-state">Aun no hay productos organizados en esta bodega.</p>
+                      <p className="warehouse-empty-state">Aún no hay productos organizados en esta bodega.</p>
                     )}
                   </div>
                 </article>
@@ -9118,17 +10560,17 @@ export default function App() {
         ) : activeSection === "catalog" ? (
           <section className="catalog-layout">
             <article className="creation-selector-block">
-              <p className="section-label">Catalogos comerciales</p>
-              <h2>{editingCatalogId ? "Modificar catalogo" : "Crear catalogo"}</h2>
-              <p>Selecciona productos o categorias para armar la base del catalogo que luego enviaras a cada cliente.</p>
+              <p className="section-label">Catálogos comerciales</p>
+              <h2>{editingCatalogId ? "Modificar catálogo" : "Crear catálogo"}</h2>
+              <p>Selecciona productos o categorías para armar la base del catálogo que luego enviarás a cada cliente.</p>
             </article>
 
             <article className="route-builder-card">
               <div className="catalog-created-panel">
                 <div className="management-table-header">
                   <div>
-                    <h2>Catalogos creados</h2>
-                    <p>Administra las estructuras base que despues personalizaras por cliente.</p>
+                    <h2>Catálogos creados</h2>
+                    <p>Administra las estructuras base que después personalizarás por cliente.</p>
                   </div>
                   <p className="management-table-meta">{catalogs.length} resultados</p>
                 </div>
@@ -9145,10 +10587,10 @@ export default function App() {
                         <div>
                           <p className="section-label">{catalog.code}</p>
                           <h3>{catalog.name}</h3>
-                          <p>{catalog.description || "Sin descripcion"}</p>
+                          <p>{catalog.description || "Sin descripción"}</p>
                         </div>
                         <div className="catalog-record-meta">
-                          <span>{catalog.categoryNames.length} categorias</span>
+                          <span>{catalog.categoryNames.length} categorías</span>
                           <span>{catalog.productIds.length} productos directos</span>
                           <span>{catalog.availableForOrders ? "Disponible en pedidos" : "Pendiente por guardar para pedidos"}</span>
                         </div>
@@ -9156,7 +10598,7 @@ export default function App() {
                           <button
                             className="table-action-icon"
                             type="button"
-                            aria-label="Modificar catalogo"
+                            aria-label="Modificar catálogo"
                             title="Modificar"
                             onClick={() => startCatalogEdit(catalog)}
                           >
@@ -9167,7 +10609,7 @@ export default function App() {
                           <button
                             className="table-action-icon is-danger"
                             type="button"
-                            aria-label="Borrar catalogo"
+                            aria-label="Borrar catálogo"
                             title="Borrar"
                             onClick={() => void handleDeleteCatalog(catalog)}
                           >
@@ -9177,7 +10619,7 @@ export default function App() {
                       </article>
                     ))
                   ) : (
-                    <p className="route-empty-state">Aun no hay catalogos creados.</p>
+                    <p className="route-empty-state">Aún no hay catálogos creados.</p>
                   )}
                 </div>
               </div>
@@ -9185,31 +10627,31 @@ export default function App() {
               <form className="route-builder-form" onInputCapture={handlePortalInputCapture} onSubmit={(event) => void handleCatalogSubmit(event)}>
                 <div className="route-form-grid">
                   <label className="field field-two-third">
-                    <span>Nombre del catalogo</span>
+                    <span>Nombre del catálogo</span>
                     <input
                       type="text"
                       value={catalogForm.name}
-                      placeholder="CATALOGO FRUTAS PREMIUM"
+                      placeholder="CATÁLOGO FRUTAS PREMIUM"
                       onChange={(event) => handleCatalogFieldChange("name", event.target.value)}
                       required
                     />
                   </label>
 
                   <label className="field field-third">
-                    <span>Seleccion actual</span>
+                    <span>Selección actual</span>
                     <input
                       type="text"
-                      value={`${catalogForm.categoryNames.length} categorias · ${catalogForm.productIds.length} productos`}
+                      value={`${catalogForm.categoryNames.length} categorías · ${catalogForm.productIds.length} productos`}
                       readOnly
                     />
                   </label>
 
                   <label className="field field-full">
-                    <span>Descripcion</span>
+                    <span>Descripción</span>
                     <textarea
                       rows={3}
                       value={catalogForm.description}
-                      placeholder="Uso sugerido, temporada o enfoque comercial del catalogo."
+                      placeholder="Uso sugerido, temporada o enfoque comercial del catálogo."
                       onChange={(event) => handleCatalogFieldChange("description", event.target.value)}
                     />
                   </label>
@@ -9218,13 +10660,13 @@ export default function App() {
                 <div className="catalog-selection-grid">
                   <article className="route-day-card">
                     <div className="route-day-header">
-                      <h3>Categorias</h3>
+                      <h3>Categorías</h3>
                       <span>{catalogForm.categoryNames.length} seleccionadas</span>
                     </div>
 
                     <div className="route-store-list">
                       {categoryOptions.length === 0 ? (
-                        <p className="route-empty-state">Primero crea categorias.</p>
+                        <p className="route-empty-state">Primero crea categorías.</p>
                       ) : (
                         categoryOptions.map((category) => (
                           <label className="route-store-option" key={category.value}>
@@ -9235,7 +10677,7 @@ export default function App() {
                             />
                             <span>
                               <strong>{category.label}</strong>
-                              <small>Incluye todos los productos de esta categoria.</small>
+                              <small>Incluye todos los productos de esta categoría.</small>
                             </span>
                           </label>
                         ))
@@ -9273,11 +10715,11 @@ export default function App() {
 
                 <div className="catalog-form-actions">
                   <button className="submit-button" type="submit" disabled={isSavingCatalog}>
-                    {isSavingCatalog ? "Guardando catalogo..." : editingCatalogId ? "Guardar cambios" : "Guardar catalogo"}
+                    {isSavingCatalog ? "Guardando catálogo..." : editingCatalogId ? "Guardar cambios" : "Guardar catálogo"}
                   </button>
                   {editingCatalogId ? (
                     <button className="ghost-button" type="button" onClick={() => resetCatalogForm()}>
-                      Cancelar edicion
+                      Cancelar edición
                     </button>
                   ) : null}
                 </div>
@@ -9287,9 +10729,9 @@ export default function App() {
             <article className="database-card">
               <div className="accounting-block-header">
                 <div>
-                  <p className="section-label">Catalogo por cliente</p>
+                  <p className="section-label">Catálogo por cliente</p>
                   <h2>Define los precios de venta</h2>
-                  <p>Agrega los clientes destino y define un catalogo general para reutilizar el mismo PDF y la misma estructura de precios.</p>
+                  <p>Agrega los clientes destino y define un catálogo general para reutilizar el mismo PDF y la misma estructura de precios.</p>
                 </div>
               </div>
 
@@ -9309,13 +10751,13 @@ export default function App() {
                 </label>
 
                 <label className="field">
-                  <span>Catalogo creado</span>
+                  <span>Catálogo creado</span>
                   <select
                     value={selectedCatalogId}
                     onChange={(event) => setSelectedCatalogId(event.target.value)}
                     disabled={catalogs.length === 0}
                   >
-                    <option value="">Selecciona un catalogo</option>
+                    <option value="">Selecciona un catálogo</option>
                     {catalogs.map((catalog) => (
                       <option key={catalog._id ?? catalog.code} value={catalog._id}>{catalog.name}</option>
                     ))}
@@ -9344,7 +10786,7 @@ export default function App() {
                   <p>
                     {selectedCatalogClients.length > 0
                       ? `${selectedCatalogClients.length} cliente${selectedCatalogClients.length === 1 ? "" : "s"} agregado${selectedCatalogClients.length === 1 ? "" : "s"} para este catalogo.`
-                      : "Todavia no has agregado clientes destino."}
+                      : "Todavía no has agregado clientes destino."}
                   </p>
 
                   {selectedCatalogClients.length > 0 ? (
@@ -9369,13 +10811,13 @@ export default function App() {
                     ))}
                   </div>
                 ) : (
-                  <p className="catalog-recipient-empty">Selecciona clientes desde el desplegable para construir la lista de envio.</p>
+                  <p className="catalog-recipient-empty">Selecciona clientes desde el desplegable para construir la lista de envío.</p>
                 )}
               </div>
 
               {selectedCatalogRecord ? (
                 <p className="warehouse-selected-meta">
-                  Catalogo activo: <strong>{selectedCatalogRecord.name}</strong>
+                  Catálogo activo: <strong>{selectedCatalogRecord.name}</strong>
                 </p>
               ) : null}
 
@@ -9401,7 +10843,7 @@ export default function App() {
                   <tbody>
                     {isLoadingCatalogPreview ? (
                       <tr>
-                        <td colSpan={5} className="empty-table-cell">Cargando productos del catalogo...</td>
+                        <td colSpan={5} className="empty-table-cell">Cargando productos del catálogo...</td>
                       </tr>
                     ) : catalogPreviewItems.length > 0 ? (
                       catalogPreviewItems.map((item) => {
@@ -9431,7 +10873,7 @@ export default function App() {
                       })
                     ) : (
                       <tr>
-                        <td colSpan={5} className="empty-table-cell">Selecciona un catalogo para ver sus productos.</td>
+                        <td colSpan={5} className="empty-table-cell">Selecciona un catálogo para ver sus productos.</td>
                       </tr>
                     )}
                   </tbody>
@@ -9454,7 +10896,7 @@ export default function App() {
                   onClick={() => void handleCatalogPdfDownload()}
                   disabled={isSendingCatalogWhatsapp || isSavingCatalogPricing || !selectedCatalogId || catalogPreviewItems.length === 0}
                 >
-                  Descargar PDF del catalogo
+                  Descargar PDF del catálogo
                 </button>
 
                 <button
@@ -9464,8 +10906,8 @@ export default function App() {
                   disabled={isSendingCatalogWhatsapp || isSavingCatalogPricing || !selectedCatalogId || selectedCatalogClientIds.length === 0 || catalogPreviewItems.length === 0}
                 >
                   {isCatalogWhatsappComposerOpen
-                    ? "Ocultar envio por WhatsApp"
-                    : "Preparar envio por WhatsApp a clientes seleccionados"}
+                    ? "Ocultar envío por WhatsApp"
+                    : "Preparar envío por WhatsApp a clientes seleccionados"}
                 </button>
               </div>
 
@@ -9473,9 +10915,9 @@ export default function App() {
                 <div className="catalog-whatsapp-composer">
                   <div className="catalog-whatsapp-composer-header">
                     <div>
-                      <p className="section-label">Envio por WhatsApp</p>
-                      <h3>Redacta y adjunta el catalogo</h3>
-                      <p>Escribe el mensaje, adjunta el PDF generado y luego envialo a los clientes seleccionados.</p>
+                      <p className="section-label">Envío por WhatsApp</p>
+                      <h3>Redacta y adjunta el catálogo</h3>
+                      <p>Escribe el mensaje, adjunta el PDF generado y luego envíalo a los clientes seleccionados.</p>
                     </div>
 
                     <button className="ghost-button catalog-whatsapp-close-button" type="button" onClick={toggleCatalogWhatsappComposer}>
@@ -9488,12 +10930,12 @@ export default function App() {
                     <textarea
                       rows={4}
                       value={catalogWhatsappMessage}
-                      placeholder="Escribe el mensaje que deseas enviar junto al catalogo."
+                      placeholder="Escribe el mensaje que deseas enviar junto al catálogo."
                       onChange={(event) => setCatalogWhatsappMessage(event.target.value)}
                     />
                   </label>
 
-                  <p className="catalog-whatsapp-help">Puedes usar {"{{cliente}}"}, {"{{catalogo}}"} y {"{{archivo}}"} dentro del mensaje.</p>
+                  <p className="catalog-whatsapp-help">Puedes usar {"{{cliente}}"}, {"{{catalogo}}"}, {"{{archivo}}"}, {"{{whatsapp}}"} y {"{{whatsapp_link}}"} dentro del mensaje.</p>
 
                   <div className="catalog-whatsapp-composer-actions">
                     <button
@@ -9516,7 +10958,7 @@ export default function App() {
                           <span>Generado el {catalogWhatsappAttachment.generatedAtLabel}</span>
                         </>
                       ) : (
-                        <span>Aun no hay archivo adjunto. Usa el boton para generar y adjuntar el PDF del catalogo.</span>
+                        <span>Aún no hay archivo adjunto. Usa el botón para generar y adjuntar el PDF del catálogo.</span>
                       )}
                     </div>
 
@@ -9526,7 +10968,7 @@ export default function App() {
                       onClick={() => void handleCatalogWhatsappSend()}
                       disabled={isSendingCatalogWhatsapp || isPreparingCatalogWhatsappAttachment}
                     >
-                      {isSendingCatalogWhatsapp ? "Enviando catalogo por WhatsApp..." : "Enviar por WhatsApp"}
+                      {isSendingCatalogWhatsapp ? "Enviando catálogo por WhatsApp..." : "Enviar por WhatsApp"}
                     </button>
                   </div>
                 </div>
@@ -9903,7 +11345,7 @@ export default function App() {
                             <div>
                               <strong>{metric.product.label}</strong>
                               <span>
-                                {metric.estimatedBoxes} caja{metric.estimatedBoxes === 1 ? "" : "s"} estimada{metric.estimatedBoxes === 1 ? "" : "s"}
+                                {metric.estimatedExportUnits} und. exportada{metric.estimatedExportUnits === 1 ? "" : "s"}
                               </span>
                             </div>
                             <strong>
@@ -9930,7 +11372,7 @@ export default function App() {
                     {selectedContainerMetricsWithoutVolume.length > 0 ? (
                       <p className="form-feedback error">
                         {containerImportForm.measurementUnit === "kg"
-                          ? "Hay productos seleccionados sin peso por unidad configurado. Ajustalos en Productos antes de cerrar este plan."
+                          ? "Hay productos seleccionados sin peso por unidad de exportacion configurado. Ajustalos en Productos antes de cerrar este plan."
                           : "Hay productos seleccionados sin unidades por caja o sin dimensiones configuradas. Ajustalos en Productos antes de cerrar este plan."}
                       </p>
                     ) : null}
@@ -9952,7 +11394,7 @@ export default function App() {
                     <div>
                       <p className="section-label">Productos del contenedor</p>
                       <h3>Arma el contenedor</h3>
-                      <p>Selecciona los productos que vas a embarcar y define la cantidad para calcular automaticamente el espacio ocupado.</p>
+                      <p>Ingresa cuantas unidades de exportacion vas a embarcar. La cantidad equivalente se calcula automaticamente segun la configuracion del producto.</p>
                     </div>
                     <p className="management-table-meta">Costo base productos: {formatCurrency(selectedContainerImportOriginTotal)}</p>
                   </div>
@@ -9976,16 +11418,21 @@ export default function App() {
                   <div className="import-products-table-wrapper">
                     {productOptions.length === 0 ? (
                       <p className="warehouse-empty-state">Primero crea productos para poder registrarlos dentro del contenedor.</p>
+                    ) : filteredContainerProductOptions.length === 0 ? (
+                      <p className="warehouse-empty-state">
+                        No hay productos configurados para contenedor {formatContainerType(containerImportForm.containerType).toLowerCase()}.
+                      </p>
                     ) : (
                       <table className="import-products-table">
                         <thead>
                           <tr>
                             <th></th>
                             <th>Producto</th>
-                            <th>Cajas</th>
-                            <th>Cantidad</th>
+                            <th>Unds exportadas</th>
+                            <th>Cantidad equivalente</th>
+                            <th>Fecha de caducidad</th>
                             <th>Costo unitario (COP)</th>
-                            <th>Costo x caja (COP)</th>
+                            <th>Costo x und exportable (COP)</th>
                             {savedImportExpenses.map((expense) => (
                               <th key={expense.id}>{expense.label}</th>
                             ))}
@@ -9996,6 +11443,12 @@ export default function App() {
                           {containerProductMetrics.map((metric) => {
                             const { product, currentProduct } = metric;
                             if (!currentProduct) return null;
+                            const inlineEquivalenceDraft = inlineProductEquivalenceDrafts[product.value];
+                            const inlineEquivalenceStatus = inlineProductEquivalenceStatuses[product.value];
+                            const isSavingInlineEquivalence = savingInlineProductEquivalenceId === product.value;
+                            const inlineDimensionsDraft = inlineProductDimensionsDrafts[product.value];
+                            const inlineDimensionsStatus = inlineProductDimensionsStatuses[product.value];
+                            const isSavingInlineDimensions = savingInlineProductDimensionsId === product.value;
 
                             const unitCost = Number(currentProduct.purchaseUnitCostOrigin || 0);
                             const boxCost = Number(currentProduct.purchaseBoxCostOrigin || 0);
@@ -10026,16 +11479,128 @@ export default function App() {
                                   <div className="import-product-meta-details">
                                     <span>
                                       {metric.unitsPerBox > 0
-                                        ? `${metric.unitsPerBox} ${formatUnitsPerBoxUnitLabel(metric.product.unitsPerBoxUnit)} / CAJA`
-                                        : "SIN UND / CAJA"}
+                                        ? `1 UND EXPORT. = ${metric.unitsPerBox} ${formatUnitsPerBoxUnitLabel(metric.product.unitsPerBoxUnit)}`
+                                        : "SIN EQUIV. CONFIG."}
+                                    </span>
+                                    <span>
+                                      {metric.unitWeightKg > 0
+                                        ? `${metric.unitWeightKg} KG / UND EXPORT.`
+                                        : "SIN PESO EXPORT."}
                                     </span>
                                   </div>
-                                  {currentProduct.selected && metric.importedQuantity > 0 ? (
-                                    <div className={`import-product-volume-badge ${metric.hasVolumeConfig ? "" : "is-missing"}`}>
-                                      {metric.hasVolumeConfig
-                                        ? `${metric.estimatedBoxes} CAJAS EST. · ${formatCubicMeters(metric.estimatedVolumeCubicMeters)}`
-                                        : "CONFIGURA CAJA Y DIMENSIONES"}
+                                  {metric.unitsPerBox <= 0 ? (
+                                    <div className="inline-equivalence-editor">
+                                      {inlineEquivalenceDraft ? (
+                                        <>
+                                          <div className="inline-equivalence-editor-row">
+                                            <input
+                                              className="import-table-input inline-equivalence-input"
+                                              type="number"
+                                              min="0"
+                                              step="any"
+                                              value={inlineEquivalenceDraft.unitsPerExportUnit}
+                                              placeholder="Equivalencia"
+                                              onChange={(event) => updateInlineProductEquivalenceDraft(product.value, "unitsPerExportUnit", event.target.value)}
+                                              disabled={isSavingInlineEquivalence}
+                                            />
+                                            <select
+                                              className="import-table-input inline-equivalence-select"
+                                              value={inlineEquivalenceDraft.equivalentUnit}
+                                              onChange={(event) => updateInlineProductEquivalenceDraft(product.value, "equivalentUnit", event.target.value)}
+                                              disabled={isSavingInlineEquivalence}
+                                            >
+                                              {unitsPerBoxUnitOptions.map((option) => (
+                                                <option key={option.value} value={option.value}>{option.label}</option>
+                                              ))}
+                                            </select>
+                                            <button
+                                              className="small-add-button inline-equivalence-save"
+                                              type="button"
+                                              onClick={() => void saveInlineProductEquivalence(product)}
+                                              disabled={isSavingInlineEquivalence}
+                                            >
+                                              {isSavingInlineEquivalence ? "Guardando..." : "Guardar equivalencia"}
+                                            </button>
+                                          </div>
+                                          {inlineEquivalenceStatus ? (
+                                            <p className={`form-feedback ${inlineEquivalenceStatus.tone}`}>{inlineEquivalenceStatus.message}</p>
+                                          ) : null}
+                                        </>
+                                      ) : (
+                                        <button
+                                          className="ghost-button inline-equivalence-trigger"
+                                          type="button"
+                                          onClick={() => openInlineProductEquivalenceEditor(product)}
+                                        >
+                                          Configurar equivalencia
+                                        </button>
+                                      )}
                                     </div>
+                                  ) : null}
+                                  {currentProduct.selected && metric.importedQuantity > 0 ? (
+                                    metric.hasVolumeConfig ? (
+                                      <div className="import-product-volume-badge">
+                                        {`${metric.estimatedExportUnits} UND EXPORT. · ${formatCubicMeters(metric.estimatedVolumeCubicMeters)}`}
+                                      </div>
+                                    ) : (
+                                      <div className="inline-dimensions-editor">
+                                        {inlineDimensionsDraft ? (
+                                          <>
+                                            <div className="inline-dimensions-editor-row">
+                                              <input
+                                                className="import-table-input inline-dimensions-input"
+                                                type="number"
+                                                min="0"
+                                                step="any"
+                                                value={inlineDimensionsDraft.boxLengthCm}
+                                                placeholder="Largo cm"
+                                                onChange={(event) => updateInlineProductDimensionsDraft(product.value, "boxLengthCm", event.target.value)}
+                                                disabled={isSavingInlineDimensions}
+                                              />
+                                              <input
+                                                className="import-table-input inline-dimensions-input"
+                                                type="number"
+                                                min="0"
+                                                step="any"
+                                                value={inlineDimensionsDraft.boxWidthCm}
+                                                placeholder="Ancho cm"
+                                                onChange={(event) => updateInlineProductDimensionsDraft(product.value, "boxWidthCm", event.target.value)}
+                                                disabled={isSavingInlineDimensions}
+                                              />
+                                              <input
+                                                className="import-table-input inline-dimensions-input"
+                                                type="number"
+                                                min="0"
+                                                step="any"
+                                                value={inlineDimensionsDraft.boxHeightCm}
+                                                placeholder="Alto cm"
+                                                onChange={(event) => updateInlineProductDimensionsDraft(product.value, "boxHeightCm", event.target.value)}
+                                                disabled={isSavingInlineDimensions}
+                                              />
+                                              <button
+                                                className="small-add-button inline-dimensions-save"
+                                                type="button"
+                                                onClick={() => void saveInlineProductDimensions(product)}
+                                                disabled={isSavingInlineDimensions}
+                                              >
+                                                {isSavingInlineDimensions ? "Guardando..." : "Guardar dimensiones"}
+                                              </button>
+                                            </div>
+                                            {inlineDimensionsStatus ? (
+                                              <p className={`form-feedback ${inlineDimensionsStatus.tone}`}>{inlineDimensionsStatus.message}</p>
+                                            ) : null}
+                                          </>
+                                        ) : (
+                                          <button
+                                            className="import-product-volume-badge is-missing inline-dimensions-trigger"
+                                            type="button"
+                                            onClick={() => openInlineProductDimensionsEditor(product)}
+                                          >
+                                            Configura dimensiones export.
+                                          </button>
+                                        )}
+                                      </div>
+                                    )
                                   ) : null}
                                 </td>
                                 <td>
@@ -10060,7 +11625,16 @@ export default function App() {
                                     placeholder=""
                                     onChange={(event) => handleContainerImportProductFieldChange(product.value, "importedQuantity", event.target.value)}
                                     disabled={!currentProduct.selected}
-                                    readOnly={metric.unitsPerBox > 0}
+                                    readOnly
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    className="import-table-input"
+                                    type="date"
+                                    value={currentProduct.expirationDate}
+                                    onChange={(event) => handleContainerImportProductFieldChange(product.value, "expirationDate", event.target.value)}
+                                    disabled={!currentProduct.selected}
                                   />
                                 </td>
                                 <td>
@@ -10170,6 +11744,76 @@ export default function App() {
             </div>
 
             {accountingError ? <p className="form-feedback error">{accountingError}</p> : null}
+
+            <article className="database-card suggested-exports-card">
+              <div className="accounting-block-header">
+                <div>
+                  <p className="section-label">Sugerencias</p>
+                  <h2>Exportaciones sugeridas</h2>
+                  <p>
+                    Aquí salen los productos que están por debajo de su alerta de inventario, agrupados por tipo de contenedor.
+                  </p>
+                </div>
+              </div>
+
+              <div className="suggested-exports-grid">
+                {[
+                  {
+                    key: "seco",
+                    title: "Contenedor seco",
+                    rows: suggestedDryExportRows,
+                  },
+                  {
+                    key: "refrigerado",
+                    title: "Contenedor refrigerado",
+                    rows: suggestedColdExportRows,
+                  },
+                ].map((group) => (
+                  <details className="suggested-export-group" key={group.key}>
+                    <summary className="suggested-export-group-summary">
+                      <div>
+                        <h3>{group.title}</h3>
+                        <p>{group.rows.length} producto{group.rows.length === 1 ? "" : "s"} sugerido{group.rows.length === 1 ? "" : "s"}</p>
+                      </div>
+                      <span className="suggested-export-summary-caret" aria-hidden="true">▾</span>
+                    </summary>
+
+                    <div className="suggested-export-group-content">
+                      <div className="suggested-export-group-actions">
+                        <button className="ghost-button" type="button" onClick={() => openSuggestedImportCostPage(group.key as ContainerType)}>
+                          Crear exportación
+                        </button>
+                      </div>
+
+                      {group.rows.length > 0 ? (
+                        <div className="suggested-export-list">
+                          {group.rows.map((row) => (
+                            <article className="suggested-export-item" key={`suggested-${group.key}-${row.product.value}`}>
+                              <div>
+                                <strong>{row.product.label}</strong>
+                                <small>SKU {row.product.sku}</small>
+                              </div>
+                              <div className="suggested-export-item-metrics">
+                                <span>Inventario actual: {row.currentInventory}</span>
+                                <span>Alerta: {row.inventoryAlert}</span>
+                                <span>Faltante: {row.shortageQuantity}</span>
+                                <span>
+                                  {row.suggestedExportUnits !== null
+                                    ? `Sugerido: ${row.suggestedExportUnits} unds exportadas`
+                                    : "Configura equivalencia para sugerir unds exportadas"}
+                                </span>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="warehouse-empty-state">No hay productos por debajo de alerta para este tipo de contenedor.</p>
+                      )}
+                    </div>
+                  </details>
+                ))}
+              </div>
+            </article>
 
             <article className="database-card">
               <div className="accounting-block-header">
@@ -10335,6 +11979,31 @@ export default function App() {
               </div>
 
               <div className="import-billing-controls">
+                <label className="field import-billing-control">
+                  <span>Cliente a facturar</span>
+                  <select
+                    value={resolvedBillingClient?.value || selectedBillingClientId}
+                    disabled={operationsClientOptions.length === 0 || !isBillingPricingEditable}
+                    onChange={(event) => {
+                      setSelectedBillingClientId(event.target.value);
+                      if (isBillingPricingEditable) {
+                        setHasPendingBillingPricingChanges(true);
+                      }
+                    }}
+                  >
+                    <option value="">Selecciona un cliente</option>
+                    {operationsClientOptions.map((client) => (
+                      <option key={client.value} value={client.value}>{client.label}</option>
+                    ))}
+                  </select>
+                  <small>
+                    {operationsClientOptions.length === 0
+                      ? "Crea primero un cliente en la seccion Clientes para poder facturar."
+                      : resolvedBillingClient?.email || resolvedBillingClient?.phone || resolvedBillingClient?.address
+                        ? [resolvedBillingClient.email, resolvedBillingClient.phone, resolvedBillingClient.address].filter(Boolean).join(" · ")
+                        : "Los datos del cliente seleccionado saldran en la factura."}
+                  </small>
+                </label>
                 <label className="field import-billing-control">
                   <span>Margen general (%)</span>
                   <input
@@ -10584,10 +12253,6 @@ export default function App() {
                   <p>Utilidad bruta facturada (COP)</p>
                   <strong>{formatCurrency(monthlyProjectedUtilityCop)}</strong>
                 </article>
-                <article className="kpi-card tone-cyan">
-                  <p>Costos adicionales del mes (COP)</p>
-                  <strong>{formatCurrency(monthlyAdditionalCostsTotal)}</strong>
-                </article>
               </div>
 
               <div className="table-wrap">
@@ -10622,17 +12287,35 @@ export default function App() {
                             <td>{formatCurrency(row.totalProjectedRevenue)}</td>
                             <td>{formatCurrency(row.totalProjectedUtility)}</td>
                             <td>
-                              <button
-                                className="table-action-icon"
-                                type="button"
-                                aria-label="Ver detalle de productos importados"
-                                title="Ver listado"
-                                onClick={() => setSelectedAccountingMonthlyBatchKey(row.key)}
-                              >
-                                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                  <path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z" fill="currentColor" />
-                                </svg>
-                              </button>
+                              <div className="table-action-group">
+                                <button
+                                  className="table-action-icon"
+                                  type="button"
+                                  aria-label="Ver detalle de productos importados"
+                                  title="Ver listado"
+                                  onClick={() => setSelectedAccountingMonthlyBatchKey(row.key)}
+                                >
+                                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                    <path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z" fill="currentColor" />
+                                  </svg>
+                                </button>
+                                <button
+                                  className="table-action-icon is-danger"
+                                  type="button"
+                                  aria-label="Borrar exportacion mensual"
+                                  title="Borrar exportacion"
+                                  disabled={!row.containerReference}
+                                  onClick={() => void handleDeleteImportBatch({
+                                    containerReference: row.containerReference,
+                                    containerSize: row.containerSize,
+                                    shipmentReference: row.shipmentReference,
+                                    importDate: row.importDate,
+                                    totalImportCost: row.totalImportCost,
+                                  })}
+                                >
+                                  x
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -10708,165 +12391,6 @@ export default function App() {
               </div>
             ) : null}
 
-            <article className="database-card">
-              <div className="accounting-block-header">
-                <div>
-                  <p className="section-label">Costos fijos</p>
-                  <h2>Estructura fija del negocio</h2>
-                  <p>Registra nomina, arriendo y otros costos base para entender la carga fija mensual.</p>
-                </div>
-                <button className="primary-action-button" type="button" onClick={() => setAccountingModalKind("fixed-cost")}>Crear costo fijo</button>
-              </div>
-
-              <div className="filter-grid">
-                <label className="field">
-                  <span>Busqueda general</span>
-                  <input
-                    type="text"
-                    value={fixedCostFilters.search}
-                    placeholder="Buscar por concepto"
-                    onInput={(event) => handleAccountingFilterChange("fixedCosts", "search", event.currentTarget.value)}
-                    onChange={(event) => handleAccountingFilterChange("fixedCosts", "search", event.target.value)}
-                  />
-                </label>
-                <label className="field">
-                  <span>Categoria</span>
-                  <input
-                    type="text"
-                    value={fixedCostFilters.primary}
-                    placeholder="Filtrar por categoria"
-                    onInput={(event) => handleAccountingFilterChange("fixedCosts", "primary", event.currentTarget.value)}
-                    onChange={(event) => handleAccountingFilterChange("fixedCosts", "primary", event.target.value)}
-                  />
-                </label>
-                <label className="field">
-                  <span>Frecuencia</span>
-                  <input
-                    type="text"
-                    value={fixedCostFilters.secondary}
-                    placeholder="Filtrar por frecuencia"
-                    onInput={(event) => handleAccountingFilterChange("fixedCosts", "secondary", event.currentTarget.value)}
-                    onChange={(event) => handleAccountingFilterChange("fixedCosts", "secondary", event.target.value)}
-                  />
-                </label>
-              </div>
-
-              {accountingStatuses.fixedCosts ? <p className={`form-feedback ${accountingStatuses.fixedCosts.tone}`}>{accountingStatuses.fixedCosts.message}</p> : null}
-
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Concepto</th>
-                      <th>Categoria</th>
-                      <th>Frecuencia</th>
-                      <th>Monto</th>
-                      <th>Base mensual</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {isLoadingAccounting ? (
-                      <tr>
-                        <td colSpan={5} className="empty-table-cell">Cargando costos fijos...</td>
-                      </tr>
-                    ) : filteredFixedCostRows.length > 0 ? (
-                      filteredFixedCostRows.map((row) => (
-                        <tr key={row._id ?? `${row.name}-${row.startDate}`}>
-                          <td>{row.name}</td>
-                          <td>{row.category}</td>
-                          <td>{row.frequency}</td>
-                          <td>{formatCurrency(row.amount)}</td>
-                          <td>{formatCurrency(normalizeMonthlyAmount(row.amount, row.frequency))}</td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={5} className="empty-table-cell">Aun no hay costos fijos registrados.</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </article>
-
-            <article className="database-card">
-              <div className="accounting-block-header">
-                <div>
-                  <p className="section-label">Gastos operacionales</p>
-                  <h2>Variables del dia a dia</h2>
-                  <p>Captura combustible, imprevistos y otros gastos variables que afectan la operacion.</p>
-                </div>
-                <button className="primary-action-button" type="button" onClick={() => setAccountingModalKind("operational-expense")}>Crear gasto</button>
-              </div>
-
-              <div className="filter-grid">
-                <label className="field">
-                  <span>Busqueda general</span>
-                  <input
-                    type="text"
-                    value={operationalExpenseFilters.search}
-                    placeholder="Buscar por concepto"
-                    onInput={(event) => handleAccountingFilterChange("operationalExpenses", "search", event.currentTarget.value)}
-                    onChange={(event) => handleAccountingFilterChange("operationalExpenses", "search", event.target.value)}
-                  />
-                </label>
-                <label className="field">
-                  <span>Categoria</span>
-                  <input
-                    type="text"
-                    value={operationalExpenseFilters.primary}
-                    placeholder="Filtrar por categoria"
-                    onInput={(event) => handleAccountingFilterChange("operationalExpenses", "primary", event.currentTarget.value)}
-                    onChange={(event) => handleAccountingFilterChange("operationalExpenses", "primary", event.target.value)}
-                  />
-                </label>
-                <label className="field">
-                  <span>Mes</span>
-                  <input
-                    type="text"
-                    value={operationalExpenseFilters.secondary}
-                    placeholder="YYYY-MM"
-                    onInput={(event) => handleAccountingFilterChange("operationalExpenses", "secondary", event.currentTarget.value)}
-                    onChange={(event) => handleAccountingFilterChange("operationalExpenses", "secondary", event.target.value)}
-                  />
-                </label>
-              </div>
-
-              {accountingStatuses.operationalExpenses ? <p className={`form-feedback ${accountingStatuses.operationalExpenses.tone}`}>{accountingStatuses.operationalExpenses.message}</p> : null}
-
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Fecha</th>
-                      <th>Concepto</th>
-                      <th>Categoria</th>
-                      <th>Monto</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {isLoadingAccounting ? (
-                      <tr>
-                        <td colSpan={4} className="empty-table-cell">Cargando gastos operacionales...</td>
-                      </tr>
-                    ) : filteredOperationalExpenseRows.length > 0 ? (
-                      filteredOperationalExpenseRows.map((row) => (
-                        <tr key={row._id ?? `${row.name}-${row.expenseDate}`}>
-                          <td>{String(row.expenseDate).slice(0, 10)}</td>
-                          <td>{row.name}</td>
-                          <td>{row.category}</td>
-                          <td>{formatCurrency(row.amount)}</td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={4} className="empty-table-cell">Aun no hay gastos operacionales registrados.</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </article>
           </section>
         ) : activeSection === "logistics-accounting" ? (
           <section className="accounting-layout">
@@ -11000,15 +12524,13 @@ export default function App() {
                               </svg>
                             </button>
                             <button
-                              className="table-action-icon"
+                              className="table-action-icon is-danger"
                               type="button"
                               aria-label="Eliminar factura"
                               title="Eliminar"
                               onClick={() => void handleDeleteLogisticsInvoice(inv._id ?? "")}
                             >
-                              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor" />
-                              </svg>
+                              x
                             </button>
                           </td>
                         </tr>
@@ -11066,92 +12588,6 @@ export default function App() {
                 </div>
               </div>
             ) : null}
-
-            <article className="database-card">
-              <div className="accounting-block-header">
-                <div>
-                  <p className="section-label">Costos fijos</p>
-                  <h2>Estructura fija de logistica</h2>
-                  <p>Registra nomina, arriendo y otros costos base de la operacion logistica.</p>
-                </div>
-                <button className="primary-action-button" type="button" onClick={() => setLogisticsAccountingModalKind("logistics-fixed-cost")}>Crear costo fijo</button>
-              </div>
-
-              {logisticsAccountingStatuses["fixedCosts"] ? <p className={`form-feedback ${logisticsAccountingStatuses["fixedCosts"].tone}`}>{logisticsAccountingStatuses["fixedCosts"].message}</p> : null}
-
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Concepto</th>
-                      <th>Categoria</th>
-                      <th>Frecuencia</th>
-                      <th>Monto (AWG)</th>
-                      <th>Base mensual (AWG)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {isLoadingLogisticsAccounting ? (
-                      <tr><td colSpan={5} className="empty-table-cell">Cargando costos fijos...</td></tr>
-                    ) : logisticsFixedCosts.length > 0 ? (
-                      logisticsFixedCosts.map((row) => (
-                        <tr key={row._id ?? `${row.name}-${row.startDate}`}>
-                          <td>{row.name}</td>
-                          <td>{row.category}</td>
-                          <td>{row.frequency}</td>
-                          <td>{formatAwgCurrency(row.amountAwg)}</td>
-                          <td>{formatAwgCurrency(normalizeMonthlyAmount(row.amountAwg, row.frequency))}</td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr><td colSpan={5} className="empty-table-cell">Aun no hay costos fijos registrados.</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </article>
-
-            <article className="database-card">
-              <div className="accounting-block-header">
-                <div>
-                  <p className="section-label">Gastos operacionales</p>
-                  <h2>Variables del dia a dia</h2>
-                  <p>Captura combustible, imprevistos y otros gastos variables de la operacion logistica.</p>
-                </div>
-                <button className="primary-action-button" type="button" onClick={() => setLogisticsAccountingModalKind("logistics-expense")}>Crear gasto</button>
-              </div>
-
-              {logisticsAccountingStatuses["expenses"] ? <p className={`form-feedback ${logisticsAccountingStatuses["expenses"].tone}`}>{logisticsAccountingStatuses["expenses"].message}</p> : null}
-
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Fecha</th>
-                      <th>Concepto</th>
-                      <th>Categoria</th>
-                      <th>Monto (AWG)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {isLoadingLogisticsAccounting ? (
-                      <tr><td colSpan={4} className="empty-table-cell">Cargando gastos...</td></tr>
-                    ) : logisticsExpenses.length > 0 ? (
-                      logisticsExpenses.map((row) => (
-                        <tr key={row._id ?? `${row.name}-${row.expenseDate}`}>
-                          <td>{String(row.expenseDate).slice(0, 10)}</td>
-                          <td>{row.name}</td>
-                          <td>{row.category}</td>
-                          <td>{formatAwgCurrency(row.amountAwg)}</td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr><td colSpan={4} className="empty-table-cell">Aun no hay gastos registrados.</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </article>
 
             {logisticsAccountingModalKind === "logistics-invoice" ? (
               <div className="modal-overlay" role="presentation" onClick={() => setLogisticsAccountingModalKind(null)}>
@@ -11618,14 +13054,10 @@ export default function App() {
                         <p>Costo total inventario (AWG)</p>
                         <strong>{formatAwgCurrency(inventoryKpis.totalInventoryCost)}</strong>
                       </article>
-                      <button
-                        className={`kpi-card kpi-card-button tone-cyan ${inventoryFilter === "expiring-soon" ? "is-active" : ""}`}
-                        type="button"
-                        onClick={toggleExpiringSoonInventoryFilter}
-                      >
-                        <p>Prontos a vencerse (2 meses)</p>
+                      <article className="kpi-card tone-cyan">
+                        <p>Próximos a vencer (2 meses)</p>
                         <strong>{inventoryKpis.expiringSoon}</strong>
-                      </button>
+                      </article>
                     </>
                   )}
               </div>
@@ -11652,94 +13084,38 @@ export default function App() {
 
             {inventoryError ? <p className="form-feedback error">{inventoryError}</p> : null}
 
+            <article className="database-card inventory-expiring-card">
+              <div className="creation-header database-header">
+                <div>
+                  <h2>Inventario próximo a vencer</h2>
+                  <p>Productos con fecha de caducidad dentro de los próximos 2 meses.</p>
+                </div>
+                <p className="management-table-meta">{filteredExpiringSoonInventoryRows.length} resultados</p>
+              </div>
+
+              <InventorySummaryTable
+                rows={filteredExpiringSoonInventoryRows}
+                isLoading={isLoadingInventory}
+                emptyMessage="No hay productos próximos a vencer dentro de los próximos 2 meses."
+                onAdjustRow={openInventoryAdjustmentModal}
+              />
+            </article>
+
             <article className="database-card">
               <div className="creation-header database-header">
                 <div>
                   <h2>Inventario actual</h2>
                   <p>Resumen por producto con cantidades, costo, venta potencial y fecha de caducidad.</p>
                 </div>
-                <p className="management-table-meta">
-                  {inventoryFilter === "expiring-soon"
-                    ? `${filteredInventoryRows.length} proximos a vencer`
-                    : `${filteredInventoryRows.length} resultados`}
-                </p>
+                <p className="management-table-meta">{filteredInventoryRows.length} resultados</p>
               </div>
 
-              <label className="field inventory-name-filter-field">
-                <span>Filtrar por nombre</span>
-                <input
-                  type="text"
-                  value={inventoryNameFilter}
-                  placeholder="Escribe el nombre del producto"
-                  onChange={(event) => setInventoryNameFilter(event.target.value)}
-                />
-              </label>
-
-              {inventoryFilter === "expiring-soon" ? (
-                <p className="form-feedback success">
-                  Mostrando solo productos proximos a vencer. Presiona el card nuevamente para ver todo el inventario.
-                </p>
-              ) : null}
-
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Producto</th>
-                      <th>Cantidad</th>
-                      <th>Costo unitario (AWG)</th>
-                      <th>Costo total (AWG)</th>
-                      <th>Venta (AWG)</th>
-                      <th>Total venta (AWG)</th>
-                      <th>Fecha de caducidad</th>
-                      <th>Accion</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {isLoadingInventory ? (
-                      <tr>
-                        <td colSpan={8} className="empty-table-cell">Cargando inventario...</td>
-                      </tr>
-                    ) : filteredInventoryRows.length > 0 ? (
-                      filteredInventoryRows.map((row) => (
-                        <tr key={row.stockRowId ?? `${row.productId}-${row.expirationDate ?? "sin-caducidad"}`}>
-                          <td>{`${row.name} (${row.sku})`}</td>
-                          <td>{row.quantity}</td>
-                          <td>{formatCurrencyUpTwoDecimals(row.unitCost)}</td>
-                          <td>{formatCurrencyUpTwoDecimals(row.totalCost)}</td>
-                          <td>{formatCurrencyUpTwoDecimals(row.salePrice)}</td>
-                          <td>{formatCurrencyUpTwoDecimals(row.totalSale)}</td>
-                          <td>{row.expirationDate ? String(row.expirationDate).slice(0, 10) : "-"}</td>
-                          <td>
-                            <div className="table-action-group">
-                              <button
-                                className="table-action-icon"
-                                type="button"
-                                aria-label="Sacar unidades del inventario"
-                                title="Sacar unidades"
-                                onClick={() => openInventoryAdjustmentModal(row)}
-                                disabled={row.quantity <= 0}
-                              >
-                                <svg viewBox="0 0 24 24" aria-hidden="true">
-                                  <path d="M4 20h4l10-10-4-4L4 16v4zm12.7-12.3 1.6-1.6a1 1 0 0 1 1.4 0l1.2 1.2a1 1 0 0 1 0 1.4L19.3 10l-2.6-2.3z" fill="currentColor" />
-                                </svg>
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={8} className="empty-table-cell">
-                          {inventoryFilter === "expiring-soon"
-                            ? "No hay productos proximos a vencer dentro de los proximos 2 meses."
-                            : "Aun no hay inventario registrado."}
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              <InventorySummaryTable
+                rows={filteredInventoryRows}
+                isLoading={isLoadingInventory}
+                emptyMessage="Aún no hay inventario registrado."
+                onAdjustRow={openInventoryAdjustmentModal}
+              />
             </article>
 
             <article className="database-card">
@@ -11890,10 +13266,10 @@ export default function App() {
                         <select
                           value={inventoryEntryWarehouseId}
                           onChange={(event) => setInventoryEntryWarehouseId(event.target.value)}
-                          disabled={warehouseOptions.length === 0}
+                            disabled={availableWarehouseOptions.length === 0}
                         >
                           <option value="">Selecciona una bodega</option>
-                          {warehouseOptions.map((warehouse) => (
+                            {availableWarehouseOptions.map((warehouse) => (
                             <option key={warehouse.value} value={warehouse.value}>{warehouse.label}</option>
                           ))}
                         </select>
@@ -11985,6 +13361,311 @@ export default function App() {
               </div>
             ) : null}
           </section>
+        ) : activeSection === "products-create" ? (
+          <section className="database-layout">
+            <article className="database-card">
+              <div className="accounting-block-header">
+                <div>
+                  <p className="section-label">Nuevo registro</p>
+                  <h2>Crear productos</h2>
+                  <p>Registra productos nuevos en una página dedicada, sin usar el modal genérico.</p>
+                </div>
+                <button className="ghost-button" type="button" onClick={() => setActiveSection("products")}>
+                  &larr; Volver a productos
+                </button>
+              </div>
+
+              <form
+                className="creation-form product-page-form"
+                onInputCapture={handlePortalInputCapture}
+                onSubmit={(event) => void handleCreationSubmit(event, productCollectionConfig)}
+              >
+                {productCollectionConfig.fields.map((field) => {
+                  if (field.type === "group-title") {
+                    return (
+                      <div className="field-group-title form-span-full" key={field.name}>
+                        <span>{field.label}</span>
+                      </div>
+                    );
+                  }
+
+                  const fieldLabel = field.name === "productWeightKg"
+                    ? {
+                        kg: "Peso por KG (kg)",
+                        lb: "Peso por LB (kg)",
+                        unidad: "Peso por UNIDAD DE EXPORTACION (kg)",
+                        paquete: "Peso por PAQUETE (kg)",
+                        caja: "Peso por CAJA (kg)",
+                      }[productPresentationDraft] ?? "Peso por unidad de exportacion (kg)"
+                    : field.label;
+
+                  if (field.type === "checkbox") {
+                    return (
+                      <label className="field field-full checkbox-field" key={field.name}>
+                        <span>Disponibilidad</span>
+                        <div className="checkbox-card">
+                          <span className="checkbox-control-shell">
+                            <input
+                              className="checkbox-input"
+                              type="checkbox"
+                              name={field.name}
+                              checked={productShareWithArubaDraft}
+                              onChange={(event) => setProductShareWithArubaDraft(event.target.checked)}
+                            />
+                          </span>
+                          <div className="checkbox-copy">
+                            <strong>{field.label}</strong>
+                            <small>
+                              Déjalo marcado para que el producto también exista en Aruba. Si lo desmarcas, quedará solo para Operaciones Colombia.
+                            </small>
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  }
+
+                  return (
+                    <label
+                      className={`field ${
+                        field.width === "third"
+                          ? "field-third"
+                          : field.width === "two-third"
+                            ? "field-two-third"
+                            : "field-full"
+                      }`}
+                      key={field.name}
+                    >
+                      <span>{fieldLabel}</span>
+                      {field.type === "select" ? (
+                        <select
+                          name={field.name}
+                          value={field.name === "presentation" ? productPresentationDraft : undefined}
+                          defaultValue={field.name === "presentation" ? undefined : getFormFieldInitialValue(field, null)}
+                          required
+                          onChange={field.name === "presentation" ? (event) => setProductPresentationDraft(event.target.value) : undefined}
+                          disabled={(field.name === "category" || field.name === "supplier") && field.options?.length === 0}
+                        >
+                          {field.options?.length ? null : (
+                            <option value="">
+                              {field.name === "category"
+                                ? "Primero crea una categoria"
+                                : "Primero crea un proveedor"}
+                            </option>
+                          )}
+                          {field.options?.map((option, optionIndex) => (
+                            <option key={`${field.name}-${option.value}-${optionIndex}`} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : field.type === "file" ? (
+                        <div className="image-upload-block">
+                          <input
+                            key={productImageInputKey}
+                            type="file"
+                            name={field.name}
+                            accept="image/*"
+                            onChange={(event) => {
+                              const file = event.target.files?.[0] ?? null;
+                              void handleProductImageChange(file);
+                            }}
+                          />
+
+                          {productImage.previewUrl ? (
+                            <div className="image-preview-card">
+                              <button className="image-remove-button" type="button" onClick={clearProductImage}>
+                                x
+                              </button>
+                              <img src={productImage.previewUrl} alt="Vista previa del producto" />
+                              <p>
+                                {productImage.isUploading
+                                  ? "Subiendo a Cloudinary..."
+                                  : productImage.uploadedUrl
+                                    ? "Imagen lista"
+                                    : productImage.error || "Imagen seleccionada"}
+                              </p>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <input
+                          type={field.type}
+                          name={field.name}
+                          placeholder={field.placeholder}
+                          defaultValue={getFormFieldInitialValue(field, null)}
+                          required={!isOptionalProductField(field)}
+                        />
+                      )}
+                    </label>
+                  );
+                })}
+
+                {productPresentationDraft === "paquete" ? (
+                  <label className="field field-full">
+                    <span>Unidades por paquete</span>
+                    <input type="number" name="unitsPerPackage" min="0" step="1" placeholder="12" defaultValue="" />
+                  </label>
+                ) : (
+                  <>
+                    <label className="field field-third">
+                      <span>Unidad equivalente</span>
+                      <select
+                        name="unitsPerBoxUnit"
+                        defaultValue={unitsPerBoxUnitOptions.some((option) => option.value === productPresentationDraft) ? productPresentationDraft : "unidad"}
+                      >
+                        {unitsPerBoxUnitOptions.map((option) => (
+                          <option key={`product-page-units-per-box-unit-${option.value}`} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="field field-two-third">
+                      <span>Cantidad equivalente por und exportación</span>
+                      <input type="number" name="unitsPerBox" min="0" step="any" placeholder="24" defaultValue="" />
+                    </label>
+                  </>
+                )}
+
+                {creationStatuses[productCollectionConfig.key] ? (
+                  <p className={`form-feedback form-span-full ${creationStatuses[productCollectionConfig.key]?.tone}`}>
+                    {creationStatuses[productCollectionConfig.key]?.message}
+                  </p>
+                ) : null}
+
+                <div className="form-span-full product-page-actions">
+                  <button className="ghost-button inline-action-button" type="button" onClick={() => setActiveSection("products")}>
+                    Cancelar
+                  </button>
+                  <button className="submit-button inline-submit-button" type="submit">
+                    Guardar producto
+                  </button>
+                </div>
+              </form>
+            </article>
+          </section>
+        ) : activeSection === "products-import" ? (
+          <section className="database-layout">
+            <article className="database-card">
+              <div className="accounting-block-header">
+                <div>
+                  <p className="section-label">Migración</p>
+                  <h2>Importar productos desde Excel</h2>
+                  <p>Sube la plantilla histórica de Aruba para crear o actualizar productos por lote usando una estructura fija.</p>
+                </div>
+                <button className="ghost-button" type="button" onClick={() => setActiveSection("products")}>
+                  &larr; Volver a productos
+                </button>
+              </div>
+
+              <div className="product-import-layout">
+                <div className="product-import-card">
+                  <h3>Plantilla esperada</h3>
+                  <p>La importación está preparada para una plantilla de productos con columnas de identificación y datos base del catálogo.</p>
+                  <div className="product-import-tags">
+                    {[
+                      "SKU",
+                      "PRODUCTO",
+                      "CATEGORIA",
+                      "PROVEEDOR",
+                      "PRESENTACION",
+                      "TIPO_CONTENEDOR",
+                      "PESO_KG",
+                      "LARGO_CM",
+                      "ANCHO_CM",
+                      "ALTO_CM",
+                      "ALERTA_INVENTARIO",
+                      "COMPARTIR_ARUBA",
+                    ].map((column) => (
+                      <span key={column} className="product-import-tag">{column}</span>
+                    ))}
+                  </div>
+                  <p className="product-import-note">
+                    Si el Excel trae encabezados equivalentes en español o inglés, el backend intenta reconocerlos también.
+                  </p>
+                </div>
+
+                <div className="product-import-card">
+                  <h3>Subir archivo</h3>
+                  <label className="field field-full">
+                    <span>Archivo Excel</span>
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0] ?? null;
+                        setProductImportStatus(null);
+                        setProductImportSummary(null);
+                        setProductImportFileDraft({
+                          file,
+                          name: file?.name ?? "",
+                        });
+                      }}
+                    />
+                    <small>
+                      {isImportingProductsExcel
+                        ? "Importando Excel de productos..."
+                        : productImportFileDraft.name
+                          ? `Archivo listo para importar: ${productImportFileDraft.name}`
+                        : productImportExcelFileName
+                          ? `Ultimo archivo importado: ${productImportExcelFileName}`
+                          : "Sube la plantilla de productos para crear o actualizar registros por SKU."}
+                    </small>
+                  </label>
+
+                  <div className="product-import-actions">
+                    <button
+                      className="submit-button inline-submit-button"
+                      type="button"
+                      disabled={isImportingProductsExcel || !productImportFileDraft.file}
+                      onClick={() => void handleProductExcelUpload(productImportFileDraft.file)}
+                    >
+                      {isImportingProductsExcel ? "Importando productos..." : "Migrar productos"}
+                    </button>
+                    <button
+                      className="ghost-button inline-action-button"
+                      type="button"
+                      disabled={isImportingProductsExcel || !productImportFileDraft.file}
+                      onClick={() => {
+                        setProductImportFileDraft({ file: null, name: "" });
+                        setProductImportStatus(null);
+                      }}
+                    >
+                      Limpiar archivo
+                    </button>
+                  </div>
+
+                  {productImportFileDraft.name ? (
+                    <p className="product-import-helper-text">
+                      El archivo no se migra al seleccionarlo. Debes pulsar <strong>Migrar productos</strong> para crear o actualizar los registros.
+                    </p>
+                  ) : null}
+
+                  {productImportStatus ? <p className={`form-feedback ${productImportStatus.tone}`}>{productImportStatus.message}</p> : null}
+
+                  {productImportSummary ? (
+                    <div className="product-import-summary-grid">
+                      <article className="kpi-card tone-cyan">
+                        <p>Procesados</p>
+                        <strong>{productImportSummary.processedCount}</strong>
+                      </article>
+                      <article className="kpi-card tone-amber">
+                        <p>Creados</p>
+                        <strong>{productImportSummary.createdCount}</strong>
+                      </article>
+                      <article className="kpi-card tone-slate">
+                        <p>Actualizados</p>
+                        <strong>{productImportSummary.updatedCount}</strong>
+                      </article>
+                      <article className="kpi-card tone-cyan">
+                        <p>Omitidos</p>
+                        <strong>{productImportSummary.skippedCount}</strong>
+                      </article>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </article>
+          </section>
         ) : activeSection === "inventory-entry" ? (
           <section className="database-layout">
             <article className="database-card">
@@ -12006,10 +13687,10 @@ export default function App() {
                     <select
                       value={inventoryEntryWarehouseId}
                       onChange={(event) => setInventoryEntryWarehouseId(event.target.value)}
-                      disabled={warehouseOptions.length === 0}
+                      disabled={availableWarehouseOptions.length === 0}
                     >
                       <option value="">Selecciona una bodega</option>
-                      {warehouseOptions.map((warehouse) => (
+                      {availableWarehouseOptions.map((warehouse) => (
                         <option key={warehouse.value} value={warehouse.value}>{warehouse.label}</option>
                       ))}
                     </select>
@@ -12186,7 +13867,7 @@ export default function App() {
                       <th>Costo USD total</th>
                       <th>Costo AWG total</th>
                       <th>Venta AWG/u</th>
-                      <th>Peso kg/u</th>
+                      <th>Peso kg/export.</th>
                       <th>Caducidad</th>
                       <th>Accion</th>
                     </tr>
@@ -12436,12 +14117,9 @@ export default function App() {
                         <select
                           value={inventoryEntryItemDraft.productId}
                           onChange={(event) => {
-                            const selectedProduct = productOptions.find((product) => product.value === event.target.value);
                             setInventoryEntryItemDraft((current) => ({
                               ...current,
                               productId: event.target.value,
-                              salePriceAwg: current.salePriceAwg || String(selectedProduct?.salePrice ?? ""),
-                              productWeightKg: current.productWeightKg || String(selectedProduct?.productWeightKg ?? ""),
                             }));
                           }}
                         >
@@ -12477,41 +14155,12 @@ export default function App() {
                       </label>
 
                       <label className="field">
-                        <span>Venta AWG por unidad</span>
-                        <input
-                          type="number"
-                          min="0"
-                          step="any"
-                          value={inventoryEntryItemDraft.salePriceAwg}
-                          placeholder="0.00"
-                          onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, salePriceAwg: event.target.value }))}
-                        />
-                      </label>
-
-                      <label className="field">
-                        <span>Peso por unidad (kg)</span>
-                        <input
-                          type="number"
-                          min="0"
-                          step="any"
-                          value={inventoryEntryItemDraft.productWeightKg}
-                          placeholder="0.00"
-                          onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, productWeightKg: event.target.value }))}
-                        />
-                      </label>
-
-                      <label className="field">
                         <span>Fecha de caducidad</span>
                         <input
                           type="date"
                           value={inventoryEntryItemDraft.expirationDate}
                           onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, expirationDate: event.target.value }))}
                         />
-                      </label>
-
-                      <label className="field">
-                        <span>Costo AWG total (calculado)</span>
-                        <input type="number" readOnly value={getInventoryEntryCostAwg(inventoryEntryItemDraft.costUsd)} placeholder="0.00" />
                       </label>
                     </div>
 
@@ -12542,6 +14191,11 @@ export default function App() {
               </div>
 
               {warehouseOrdersError ? <p className="form-feedback error">{warehouseOrdersError}</p> : null}
+              {warehouseOrderCompletionStatus ? (
+                <p className={`form-feedback ${warehouseOrderCompletionStatus.tone === "error" ? "error" : "success"}`}>
+                  {warehouseOrderCompletionStatus.message}
+                </p>
+              ) : null}
 
               <div className="table-wrap">
                 <table className="data-table">
@@ -12564,6 +14218,7 @@ export default function App() {
                     ) : warehouseReceivedOrders.length > 0 ? (
                       warehouseReceivedOrders.map((order) => {
                         const totalUnits = order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+                        const isDeletingOrder = deletingWarehouseOrderId === order._id;
 
                         return (
                           <tr key={order._id}>
@@ -12573,15 +14228,28 @@ export default function App() {
                             <td>{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
                             <td>{formatSellerOrderStatus(order.status)}</td>
                             <td>{`${order.items.length} producto${order.items.length === 1 ? "" : "s"} / ${totalUnits} und`}</td>
-                            <td>
+                            <td className="table-actions-cell">
                               {order.items.length > 0 ? (
-                                <button
-                                  className="seller-order-detail-trigger"
-                                  type="button"
-                                  onClick={() => setSelectedWarehouseOrderDetail(order)}
-                                >
-                                  Ver mas
-                                </button>
+                                <>
+                                  <button
+                                    className="seller-order-detail-trigger"
+                                    type="button"
+                                    disabled={isDeletingOrder}
+                                    onClick={() => setSelectedWarehouseOrderDetail(order)}
+                                  >
+                                    Ver mas
+                                  </button>
+                                  <button
+                                    className="table-action-icon is-danger"
+                                    type="button"
+                                    aria-label="Borrar pedido recibido"
+                                    title="Borrar pedido"
+                                    disabled={isDeletingOrder}
+                                    onClick={() => void handleDeleteWarehouseOrder(order)}
+                                  >
+                                    x
+                                  </button>
+                                </>
                               ) : "-"}
                             </td>
                           </tr>
@@ -12605,12 +14273,6 @@ export default function App() {
                 </div>
                 <p className="management-table-meta">{warehouseCompletedOrders.length} pedidos</p>
               </div>
-
-              {warehouseOrderCompletionStatus ? (
-                <p className={`form-feedback ${warehouseOrderCompletionStatus.tone === "error" ? "error" : "success"}`}>
-                  {warehouseOrderCompletionStatus.message}
-                </p>
-              ) : null}
 
               <div className="table-wrap">
                 <table className="data-table">
@@ -12672,7 +14334,7 @@ export default function App() {
                                 aria-label="Borrar pedido"
                                 title="Borrar pedido"
                                 disabled={isDeletingOrder}
-                                onClick={() => void handleDeleteCompletedWarehouseOrder(order)}
+                                onClick={() => void handleDeleteWarehouseOrder(order)}
                               >
                                 x
                               </button>
@@ -12699,7 +14361,19 @@ export default function App() {
                       <h2>{selectedWarehouseOrderDetail.storeName}</h2>
                       <p>{selectedWarehouseOrderDetail.salesRepName} · {formatSellerOrderDate(selectedWarehouseOrderDetail.createdAt)}</p>
                     </div>
-                    <button className="modal-close-button" type="button" onClick={() => setSelectedWarehouseOrderDetail(null)}>Cerrar</button>
+                    <div className="table-action-group">
+                      <button
+                        className="table-action-icon is-danger"
+                        type="button"
+                        aria-label="Borrar pedido abierto"
+                        title="Borrar pedido"
+                        disabled={deletingWarehouseOrderId === selectedWarehouseOrderDetail._id}
+                        onClick={() => void handleDeleteWarehouseOrder(selectedWarehouseOrderDetail)}
+                      >
+                        x
+                      </button>
+                      <button className="modal-close-button" type="button" onClick={() => setSelectedWarehouseOrderDetail(null)}>Cerrar</button>
+                    </div>
                   </div>
 
                   <div className="table-wrap">
@@ -12793,10 +14467,10 @@ export default function App() {
                       ? {
                           kg: "Peso por KG (kg)",
                           lb: "Peso por LB (kg)",
-                          unidad: "Peso por UNIDAD (kg)",
+                          unidad: "Peso por UNIDAD DE EXPORTACION (kg)",
                           paquete: "Peso por PAQUETE (kg)",
                           caja: "Peso por CAJA (kg)",
-                        }[productPresentationDraft] ?? "Peso por unidad (kg)"
+                        }[productPresentationDraft] ?? "Peso por unidad de exportacion (kg)"
                       : field.label;
 
                   return (
@@ -12871,59 +14545,79 @@ export default function App() {
                             </div>
                           ) : null}
                         </div>
+                      ) : field.type === "checkbox" ? (
+                        <input
+                          key={`${field.name}-${String(editingRow?._id ?? "new")}-${getFormFieldInitialValue(field, editingRow)}`}
+                          type="checkbox"
+                          className="checkbox-input"
+                          name={field.name}
+                          defaultChecked={getFormFieldInitialValue(field, editingRow) === "true"}
+                        />
                       ) : (
                         <input
                           type={field.type}
                           name={field.name}
                           placeholder={field.placeholder}
                           defaultValue={getFormFieldInitialValue(field, editingRow)}
-                          required
+                          required={selectedCollection.key !== "products" || !isOptionalProductField(field)}
                         />
                       )}
                     </label>
                   );
                 })}
 
-                {selectedCollection.key === "products" && productPresentationDraft === "caja" ? (
-                  <>
-                    <label className="field field-third">
-                      <span>Unidad dentro de la caja</span>
-                      <select
-                        name="unitsPerBoxUnit"
-                        defaultValue={getFormFieldInitialValue({
-                          name: "unitsPerBoxUnit",
-                          label: "Unidad dentro de la caja",
-                          type: "select",
-                          options: unitsPerBoxUnitOptions,
-                        }, editingRow)}
-                        required
-                      >
-                        {unitsPerBoxUnitOptions.map((option) => (
-                          <option key={`units-per-box-unit-${option.value}`} value={option.value}>{option.label}</option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="field field-two-third">
-                      <span>Contenido por caja</span>
+                {selectedCollection.key === "products" ? (
+                  productPresentationDraft === "paquete" ? (
+                    <label className="field field-full">
+                      <span>Unidades por paquete</span>
                       <input
                         type="number"
-                        name="unitsPerBox"
+                        name="unitsPerPackage"
                         min="0"
-                        step="any"
-                        placeholder="24"
-                        defaultValue={getFormFieldInitialValue({
-                          name: "unitsPerBox",
-                          label: "Contenido por caja",
-                          type: "number",
-                        }, editingRow)}
-                        required
+                        step="1"
+                        placeholder="12"
+                        defaultValue={editingRow?.presentation === "paquete" ? String(editingRow?.unitsPerBox ?? "") : ""}
                       />
                     </label>
-                  </>
+                  ) : (
+                    <>
+                      <label className="field field-third">
+                        <span>Unidad equivalente</span>
+                        <select
+                          name="unitsPerBoxUnit"
+                          defaultValue={getFormFieldInitialValue({
+                            name: "unitsPerBoxUnit",
+                            label: "Unidad equivalente",
+                            type: "select",
+                            options: unitsPerBoxUnitOptions,
+                          }, editingRow)}
+                        >
+                          {unitsPerBoxUnitOptions.map((option) => (
+                            <option key={`units-per-box-unit-${option.value}`} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="field field-two-third">
+                        <span>Cantidad equivalente por und exportación</span>
+                        <input
+                          type="number"
+                          name="unitsPerBox"
+                          min="0"
+                          step="any"
+                          placeholder="24"
+                          defaultValue={getFormFieldInitialValue({
+                            name: "unitsPerBox",
+                            label: "Cantidad equivalente por und exportación",
+                            type: "number",
+                          }, editingRow)}
+                        />
+                      </label>
+                    </>
+                  )
                 ) : null}
 
-                {selectedCollection.key === "clients" ? (
+                {selectedCollection.key === "clients" && selectedCollection.endpoint === "/management/clients" ? (
                   <div className="client-product-assignment form-span-full">
                     <div className="client-product-assignment-header">
                       <div>

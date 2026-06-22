@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { Router } from "express";
-import twilio from "twilio";
+import { assertTwilioWhatsAppConfigured, buildInboundWhatsappAutoReplyMessage, normalizePhoneForWhatsApp, renderCatalogWhatsappMessage, resolveClientWhatsappNumber, sendWhatsAppMessage, } from "../services/twilio.service.js";
 import * as XLSX from "xlsx";
 import { env } from "../config/env.js";
 import { FixedCost } from "../modules/accounting/fixed-cost.model.js";
@@ -25,6 +25,8 @@ import { Store } from "../modules/stores/store.model.js";
 import { Supplier } from "../modules/suppliers/supplier.model.js";
 import { User } from "../modules/users/user.model.js";
 import { Warehouse } from "../modules/warehouses/warehouse.model.js";
+import { isFirebasePushConfigured } from "../services/firebase-admin.service.js";
+import { notifyNewSalesOrder, notifyRouteAssigned, registerPushToken, unregisterPushToken, } from "../services/push-notification.service.js";
 export const apiRouter = Router();
 const cloudinaryProductFolder = "spste/products";
 const cloudinaryImportDocumentsFolder = "spste/import-documents";
@@ -247,19 +249,6 @@ function getCloudinaryFolder(purpose) {
         return cloudinaryCatalogPdfFolder;
     }
     return cloudinaryProductFolder;
-}
-function normalizePhoneForWhatsApp(value) {
-    const normalizedValue = typeof value === "string" ? value.trim() : "";
-    if (!normalizedValue) {
-        return "";
-    }
-    const compactValue = normalizedValue
-        .replace(/[\s()-]/g, "")
-        .replace(/(?!^)\+/g, "");
-    if (!compactValue) {
-        return "";
-    }
-    return compactValue.startsWith("+") ? compactValue : `+${compactValue}`;
 }
 function normalizeImportExpenseItems(payload) {
     if (Array.isArray(payload.expenseItems)) {
@@ -939,6 +928,61 @@ apiRouter.post("/auth/login", async (request, response) => {
         role: user.role,
     });
 });
+apiRouter.get("/push/config", (_request, response) => {
+    if (!isFirebasePushConfigured()) {
+        response.status(503).json({ message: "Push notifications are not configured." });
+        return;
+    }
+    const projectId = env.FIREBASE_PROJECT_ID?.trim() ?? "";
+    const messagingSenderId = env.FIREBASE_MESSAGING_SENDER_ID?.trim() ?? "";
+    const apiKey = env.FIREBASE_WEB_API_KEY?.trim() ?? "";
+    const appId = env.FIREBASE_WEB_APP_ID?.trim() ?? "";
+    const vapidKey = env.FIREBASE_WEB_VAPID_KEY?.trim() ?? "";
+    if (!projectId || !messagingSenderId || !apiKey || !appId || !vapidKey) {
+        response.status(503).json({ message: "Firebase web config is incomplete." });
+        return;
+    }
+    response.json({
+        apiKey,
+        authDomain: `${projectId}.firebaseapp.com`,
+        projectId,
+        storageBucket: `${projectId}.firebasestorage.app`,
+        messagingSenderId,
+        appId,
+        vapidKey,
+    });
+});
+apiRouter.post("/push/register", async (request, response) => {
+    try {
+        const { userId, token } = request.body;
+        if (!userId || !token) {
+            response.status(400).json({ message: "userId and token are required." });
+            return;
+        }
+        const result = await registerPushToken(userId, token);
+        response.status(201).json({
+            message: "Push token registered.",
+            expiresAt: result.expiresAt.toISOString(),
+        });
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
+apiRouter.post("/push/unregister", async (request, response) => {
+    try {
+        const { userId, token } = request.body;
+        if (!userId || !token) {
+            response.status(400).json({ message: "userId and token are required." });
+            return;
+        }
+        await unregisterPushToken(userId, token);
+        response.json({ message: "Push token unregistered." });
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
 apiRouter.get("/sales/routes", async (request, response) => {
     const salesRepId = typeof request.query.salesRepId === "string" ? request.query.salesRepId.trim() : "";
     if (!salesRepId) {
@@ -1124,6 +1168,7 @@ apiRouter.post("/sales/orders", async (request, response) => {
             message: `Pedido enviado a bodega para ${store.name}.`,
             order,
         });
+        void notifyNewSalesOrder(order);
     }
     catch (error) {
         sendCreationError(response, error);
@@ -2499,9 +2544,7 @@ apiRouter.put("/management/catalogs/:id/client-pricing", async (request, respons
 });
 apiRouter.post("/management/catalogs/:id/send-whatsapp", async (request, response) => {
     try {
-        if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN) {
-            throw new Error("Configura TWILIO_ACCOUNT_SID y TWILIO_AUTH_TOKEN para enviar catalogos por WhatsApp.");
-        }
+        assertTwilioWhatsAppConfigured();
         const catalog = await CatalogRecord.findById(request.params.id).lean();
         if (!catalog) {
             response.status(404).json({ message: "El catalogo no existe." });
@@ -2514,27 +2557,22 @@ apiRouter.post("/management/catalogs/:id/send-whatsapp", async (request, respons
         if (missingClientId) {
             throw new Error("Uno o varios clientes seleccionados ya no existen.");
         }
-        const fromNumber = normalizePhoneForWhatsApp(env.TWILIO_WHATSAPP_FROM_NUMBER);
-        if (!fromNumber) {
-            throw new Error("El numero de WhatsApp configurado para la empresa no es valido.");
-        }
-        const twilioClient = twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
         const deliveryResults = await Promise.allSettled(payload.clientIds.map(async (clientId) => {
             const client = clientsById.get(clientId);
             if (!client) {
                 throw new Error("Cliente no encontrado.");
             }
-            const destinationNumber = normalizePhoneForWhatsApp(client.phone);
+            const destinationNumber = resolveClientWhatsappNumber(client);
             if (!destinationNumber) {
-                throw new Error(`El cliente ${client.name} no tiene un telefono valido.`);
+                throw new Error(`El cliente ${client.name} no tiene un telefono valido para WhatsApp.`);
             }
-            const messageBody = (payload.message || "Hola {{cliente}}, te compartimos el catalogo general {{catalogo}} de SPS Trading Enterprises. Archivo: {{archivo}}")
-                .replace(/\{\{\s*cliente\s*\}\}/gi, client.name)
-                .replace(/\{\{\s*catalogo\s*\}\}/gi, catalog.name)
-                .replace(/\{\{\s*archivo\s*\}\}/gi, payload.fileName);
-            await twilioClient.messages.create({
-                from: `whatsapp:${fromNumber}`,
-                to: `whatsapp:${destinationNumber}`,
+            const messageBody = renderCatalogWhatsappMessage(payload.message, {
+                clientName: client.name,
+                catalogName: catalog.name,
+                fileName: payload.fileName,
+            });
+            await sendWhatsAppMessage({
+                to: destinationNumber,
                 body: messageBody,
                 mediaUrl: [payload.pdfUrl],
             });
@@ -2545,7 +2583,11 @@ apiRouter.post("/management/catalogs/:id/send-whatsapp", async (request, respons
                 return [];
             }
             const client = clientsById.get(payload.clientIds[index]);
-            return [client?.name ?? payload.clientIds[index]];
+            const reason = result.reason instanceof Error ? result.reason.message : "Error desconocido";
+            return [{
+                    name: client?.name ?? payload.clientIds[index],
+                    reason,
+                }];
         });
         const sentCount = payload.clientIds.length - failedClients.length;
         if (sentCount === 0) {
@@ -2561,11 +2603,34 @@ apiRouter.post("/management/catalogs/:id/send-whatsapp", async (request, respons
                 ? `Catalogo enviado por WhatsApp a ${sentCount} cliente${sentCount === 1 ? "" : "s"}.`
                 : `Catalogo enviado a ${sentCount} cliente${sentCount === 1 ? "" : "s"}. No fue posible entregarlo a ${failedClients.length}.`,
             sentCount,
-            failedClients,
+            failedClients: failedClients.map((entry) => entry.name),
+            failedDetails: failedClients,
         });
     }
     catch (error) {
         sendCreationError(response, error);
+    }
+});
+apiRouter.post("/webhooks/twilio/whatsapp", async (request, response) => {
+    response.status(200).type("text/plain").send("");
+    try {
+        assertTwilioWhatsAppConfigured();
+        const incomingFrom = typeof request.body?.From === "string"
+            ? request.body.From.replace(/^whatsapp:/i, "")
+            : "";
+        const incomingBody = typeof request.body?.Body === "string" ? request.body.Body.trim() : "";
+        const senderNumber = normalizePhoneForWhatsApp(incomingFrom);
+        const twilioSenderNumber = normalizePhoneForWhatsApp(env.TWILIO_WHATSAPP_FROM_NUMBER);
+        if (!senderNumber || !incomingBody || senderNumber === twilioSenderNumber) {
+            return;
+        }
+        await sendWhatsAppMessage({
+            to: senderNumber,
+            body: buildInboundWhatsappAutoReplyMessage(),
+        });
+    }
+    catch (error) {
+        console.error("Twilio inbound WhatsApp webhook failed", error);
     }
 });
 apiRouter.post("/management/suppliers", async (request, response) => {
@@ -2657,6 +2722,7 @@ apiRouter.post("/management/routes", async (request, response) => {
             ...normalizeSalesRoutePayload(request.body),
         });
         response.status(201).json(route);
+        void notifyRouteAssigned(route);
     }
     catch (error) {
         sendCreationError(response, error);
@@ -2673,6 +2739,7 @@ apiRouter.put("/management/routes/:id", async (request, response) => {
             return;
         }
         response.json(route);
+        void notifyRouteAssigned(route);
     }
     catch (error) {
         sendCreationError(response, error);

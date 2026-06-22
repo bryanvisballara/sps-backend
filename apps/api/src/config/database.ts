@@ -17,6 +17,8 @@ import { ExportRequest } from "../modules/procurement/export-request.model.js";
 import { SalesRoute } from "../modules/routes/route.model.js";
 import { Store } from "../modules/stores/store.model.js";
 import { Supplier } from "../modules/suppliers/supplier.model.js";
+import { PushNotificationLog } from "../modules/notifications/push-notification-log.model.js";
+import { PushToken } from "../modules/notifications/push-token.model.js";
 import { User } from "../modules/users/user.model.js";
 import { Warehouse } from "../modules/warehouses/warehouse.model.js";
 
@@ -35,6 +37,8 @@ const mongoModels = [
   SalesRoute,
   Store,
   Supplier,
+  PushNotificationLog,
+  PushToken,
   User,
   Warehouse,
 ];
