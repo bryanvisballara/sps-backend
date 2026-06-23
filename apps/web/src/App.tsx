@@ -839,9 +839,31 @@ type LogisticsInvoiceFormState = {
   }>;
 };
 
-const apiBaseUrl = import.meta.env.DEV
-  ? "http://127.0.0.1:4000/api"
-  : (import.meta.env.VITE_API_URL as string | undefined) ?? "https://sps-backend-jxms.onrender.com/api";
+function resolveApiBaseUrl(): string {
+  if (import.meta.env.DEV) {
+    return "http://127.0.0.1:4000/api";
+  }
+
+  const configured = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
+  const productionDefault = "https://sps-backend-jxms.onrender.com/api";
+
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    const isLocalHost = host === "localhost" || host === "127.0.0.1";
+
+    if (!isLocalHost) {
+      if (configured && !/localhost|127\.0\.0\.1/.test(configured)) {
+        return configured;
+      }
+
+      return productionDefault;
+    }
+  }
+
+  return configured || productionDefault;
+}
+
+const apiBaseUrl = resolveApiBaseUrl();
 const sellerCatalogPageSize = 30;
 const cloudinaryCloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME as string | undefined;
 const cloudinaryUploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET as string | undefined;
