@@ -1318,14 +1318,6 @@ async function applyOrderInventoryDeduction(order: {
     const stockRows = (await WarehouseStock.find({ productId }).lean()).sort(compareWarehouseStockLotsByConsumptionPriority);
 
     if (stockRows.length > 0) {
-      const availableUnits = stockRows.reduce((sum, row) => sum + Number(row.availableUnits ?? 0), 0);
-
-      if (quantityToDeduct > availableUnits) {
-        throw new Error(
-          `No hay inventario suficiente para completar el pedido de ${productId}. Disponible: ${availableUnits}, solicitado: ${quantityToDeduct}.`,
-        );
-      }
-
       let remaining = quantityToDeduct;
 
       for (const stockRow of stockRows) {

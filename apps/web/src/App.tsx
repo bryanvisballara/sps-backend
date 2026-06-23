@@ -183,6 +183,8 @@ type ProductOption = {
   salePrice: number;
   inventoryAlert: number;
   productWeightKg: number;
+  arubaPurchaseCostUsd: number;
+  arubaUsdToAwgRate: number;
   presentation: string;
   containerType: string;
   shareWithAruba: boolean;
@@ -1899,22 +1901,26 @@ type InventorySummaryTableProps = {
   isLoading: boolean;
   emptyMessage: string;
   onAdjustRow: (row: InventorySummaryRow) => void;
+  layout?: "table" | "cards";
 };
 
-function InventorySummaryTable({ rows, isLoading, emptyMessage, onAdjustRow }: InventorySummaryTableProps) {
+function InventorySummaryTable({ rows, isLoading, emptyMessage, onAdjustRow, layout = "cards" }: InventorySummaryTableProps) {
+  const wrapClassName = layout === "table" ? "table-wrap table-wrap--warehouse-items" : "table-wrap table-wrap--cards";
+  const isCompactTable = layout === "table";
+
   return (
-    <div className="table-wrap table-wrap--cards">
+    <div className={wrapClassName}>
       <table className="data-table data-table--inventory">
         <thead>
           <tr>
             <th>Producto</th>
-            <th>Cantidad</th>
-            <th>Costo unitario (AWG)</th>
-            <th>Costo total (AWG)</th>
-            <th>Venta (AWG)</th>
-            <th>Total venta (AWG)</th>
-            <th>Fecha de caducidad</th>
-            <th>Accion</th>
+            <th>{isCompactTable ? "Cant." : "Cantidad"}</th>
+            <th className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{isCompactTable ? "Costo u. (AWG)" : "Costo unitario (AWG)"}</th>
+            <th className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{isCompactTable ? "Costo t. (AWG)" : "Costo total (AWG)"}</th>
+            <th className={isCompactTable ? "warehouse-order-col-optional" : undefined}>Venta (AWG)</th>
+            <th className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{isCompactTable ? "Total v. (AWG)" : "Total venta (AWG)"}</th>
+            <th>{isCompactTable ? "Vence" : "Fecha de caducidad"}</th>
+            <th>{isCompactTable ? "Salida" : "Accion"}</th>
           </tr>
         </thead>
         <tbody>
@@ -1925,28 +1931,54 @@ function InventorySummaryTable({ rows, isLoading, emptyMessage, onAdjustRow }: I
           ) : rows.length > 0 ? (
             rows.map((row) => (
               <tr key={row.stockRowId ?? `${row.productId}-${row.expirationDate ?? "sin-caducidad"}`}>
-                <td>{`${row.name} (${row.sku})`}</td>
+                <td>
+                  {isCompactTable ? (
+                    <div className="warehouse-inventory-product">
+                      <strong>{row.name}</strong>
+                      <span>{row.sku}</span>
+                    </div>
+                  ) : (
+                    `${row.name} (${row.sku})`
+                  )}
+                </td>
                 <td>{row.quantity}</td>
-                <td>{formatCurrencyUpTwoDecimals(row.unitCost)}</td>
-                <td>{formatCurrencyUpTwoDecimals(row.totalCost)}</td>
-                <td>{formatCurrencyUpTwoDecimals(row.salePrice)}</td>
-                <td>{formatCurrencyUpTwoDecimals(row.totalSale)}</td>
+                <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.unitCost)}</td>
+                <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.totalCost)}</td>
+                <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.salePrice)}</td>
+                <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.totalSale)}</td>
                 <td>{row.expirationDate ? String(row.expirationDate).slice(0, 10) : "-"}</td>
                 <td>
-                  <div className="table-action-group">
-                    <button
-                      className="table-action-icon"
-                      type="button"
-                      aria-label="Sacar unidades del inventario"
-                      title="Sacar unidades"
-                      onClick={() => onAdjustRow(row)}
-                      disabled={row.quantity <= 0}
-                    >
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M4 20h4l10-10-4-4L4 16v4zm12.7-12.3 1.6-1.6a1 1 0 0 1 1.4 0l1.2 1.2a1 1 0 0 1 0 1.4L19.3 10l-2.6-2.3z" fill="currentColor" />
-                      </svg>
-                    </button>
-                  </div>
+                  {row.quantity > 0 ? (
+                    isCompactTable ? (
+                      <button
+                        className="warehouse-inventory-out-button"
+                        type="button"
+                        aria-label={`Sacar unidades de ${row.name}`}
+                        title="Registrar salida de inventario"
+                        onClick={() => onAdjustRow(row)}
+                      >
+                        Sacar
+                      </button>
+                    ) : (
+                      <div className="table-action-group">
+                        <button
+                          className="table-action-icon"
+                          type="button"
+                          aria-label="Sacar unidades del inventario"
+                          title="Registrar salida de inventario"
+                          onClick={() => onAdjustRow(row)}
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M19 7h-3V6a2 2 0 0 0-2-2H10a2 2 0 0 0-2 2v1H5a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1h1v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9h1a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zM10 6h4v1h-4V6zm2 11a1 1 0 0 1-1-1v-4a1 1 0 1 1 2 0v4a1 1 0 0 1-1 1z" fill="currentColor" />
+                          </svg>
+                        </button>
+                      </div>
+                    )
+                  ) : (
+                    <span className="warehouse-inventory-no-action" title="Sin unidades disponibles">
+                      {isCompactTable ? "-" : "Sin stock"}
+                    </span>
+                  )}
                 </td>
               </tr>
             ))
@@ -2134,6 +2166,22 @@ function sanitizePdfFileName(value: string) {
     .toLowerCase();
 }
 
+function openPdfInNewTab(pdf: jsPDF, fileName: string) {
+  const pdfBlob = pdf.output("blob");
+  const url = URL.createObjectURL(pdfBlob);
+  const popup = window.open(url, "_blank", "noopener,noreferrer");
+
+  if (!popup) {
+    const link = document.createElement("a");
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.click();
+  }
+
+  window.setTimeout(() => URL.revokeObjectURL(url), 120_000);
+}
+
 async function loadImageForPdf(imageUrl: string) {
   if (!imageUrl.trim()) {
     return null;
@@ -2262,6 +2310,87 @@ function createInventoryEntryDraftItem(productId = ""): InventoryEntryDraftItem 
     expirationDate: "",
     productWeightKg: "",
   };
+}
+
+type SearchableProductSelectProps = {
+  products: ProductOption[];
+  value: string;
+  onChange: (productId: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+};
+
+function SearchableProductSelect({
+  products,
+  value,
+  onChange,
+  placeholder = "Buscar producto por nombre o SKU...",
+  disabled = false,
+}: SearchableProductSelectProps) {
+  const selectedProduct = products.find((product) => product.value === value) ?? null;
+  const [query, setQuery] = useState(selectedProduct ? `${selectedProduct.label} (${selectedProduct.sku})` : "");
+  const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    const nextSelectedProduct = products.find((product) => product.value === value) ?? null;
+    setQuery(nextSelectedProduct ? `${nextSelectedProduct.label} (${nextSelectedProduct.sku})` : "");
+  }, [products, value]);
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredProducts = normalizedQuery
+    ? products.filter((product) => (
+      product.label.toLowerCase().includes(normalizedQuery)
+      || product.sku.toLowerCase().includes(normalizedQuery)
+    )).slice(0, 50)
+    : products.slice(0, 50);
+
+  return (
+    <div className={`searchable-select${isOpen ? " is-open" : ""}`}>
+      <input
+        className="searchable-select-input"
+        type="text"
+        value={query}
+        placeholder={placeholder}
+        disabled={disabled}
+        autoComplete="off"
+        onChange={(event) => {
+          setQuery(event.target.value);
+          setIsOpen(true);
+
+          if (!event.target.value.trim()) {
+            onChange("");
+          }
+        }}
+        onFocus={() => setIsOpen(true)}
+        onBlur={() => {
+          window.setTimeout(() => setIsOpen(false), 120);
+        }}
+      />
+
+      {isOpen && filteredProducts.length > 0 ? (
+        <ul className="searchable-select-menu" role="listbox">
+          {filteredProducts.map((product) => (
+            <li key={product.value}>
+              <button
+                type="button"
+                role="option"
+                className="searchable-select-option"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onChange(product.value);
+                  setQuery(`${product.label} (${product.sku})`);
+                  setIsOpen(false);
+                }}
+              >
+                <strong>{product.label}</strong>
+                <span>{product.sku}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
 }
 
 function createInitialContainerImportForm(products: ProductOption[]): ContainerImportFormState {
@@ -3024,9 +3153,6 @@ export default function App() {
     return map;
   }, new Map<string, InventorySummaryRow>());
   const productOptionsById = new Map(productOptions.map((product) => [product.value, product]));
-  const warehouseOrderClient = selectedWarehouseOrderDetail
-    ? storeOptionsById.get(selectedWarehouseOrderDetail.storeId) ?? null
-    : null;
   const warehousePricedItems = selectedWarehouseOrderDetail
     ? selectedWarehouseOrderDetail.items.map((item) => {
       const catalogItem = catalogPreviewItems.find((previewItem) => previewItem.productId === item.productId);
@@ -3049,10 +3175,21 @@ export default function App() {
   const warehouseFallbackPriceCount = warehousePricedItems.filter((item) => item.priceSource !== "catalog").length;
   const warehouseReceivedOrders = warehouseOrders.filter((order) => order.status !== "delivered");
   const warehouseCompletedOrders = warehouseOrders.filter((order) => order.status === "delivered");
-  const warehouseAllItemsChecked = selectedWarehouseOrderDetail
-    ? selectedWarehouseOrderDetail.items.length > 0
-      && selectedWarehouseOrderDetail.items.every((item) => Boolean(warehouseOrderChecklist[item.productId]))
-    : false;
+  const warehouseAllItemsChecked = warehousePricedItems.length > 0
+    && warehousePricedItems.every((item) => Boolean(warehouseOrderChecklist[item.productId]));
+  const warehouseOrderCompletionHints: string[] = [];
+
+  if (selectedCatalogId && isLoadingCatalogPreview) {
+    warehouseOrderCompletionHints.push("Cargando precios del catálogo semanal...");
+  }
+
+  if (warehousePricedItems.length > 0 && !warehouseAllItemsChecked) {
+    warehouseOrderCompletionHints.push("Marca todos los productos como preparados en la tabla.");
+  }
+
+  if (selectedWarehouseOrderDetail?.status === "delivered") {
+    warehouseOrderCompletionHints.push("Este pedido ya fue completado.");
+  }
   const selectedClientDraftProducts = clientProductDraft.productIds
     .map((productId) => productOptionsById.get(productId))
     .filter((product): product is ProductOption => Boolean(product));
@@ -4980,6 +5117,8 @@ export default function App() {
             salePrice: roundCurrencyValue(Number(product.salePrice ?? 0)),
             inventoryAlert: Number(product.inventoryAlert ?? 0),
             productWeightKg: Number(product.productWeightKg ?? 0),
+            arubaPurchaseCostUsd: Number(product.arubaPurchaseCostUsd ?? 0),
+            arubaUsdToAwgRate: Number(product.arubaUsdToAwgRate ?? 1.79) || 1.79,
             presentation: String(product.presentation ?? "unidad"),
             containerType: String(product.containerType ?? "seco"),
             shareWithAruba: product.shareWithAruba !== false,
@@ -5367,8 +5506,16 @@ export default function App() {
     setInventoryEntryStatus(null);
     setInventoryEntryWarehouseId(selectedWarehouseId || availableWarehouseOptions[0]?.value || "");
     setInventoryUsdToAwgRate("1.79");
-    setInventoryEntryItems([createInventoryEntryDraftItem()]);
+    setInventoryEntryItems([]);
     setInventoryEntryExpenseItems([]);
+    setInventoryEntryItemDraft({
+      productId: "",
+      quantity: "",
+      costUsd: "",
+      salePriceAwg: "",
+      expirationDate: "",
+      productWeightKg: "",
+    });
     setIsInventoryEntryModalOpen(true);
   }
 
@@ -5396,9 +5543,9 @@ export default function App() {
     setInventoryEntryItems((current) => [...current, createInventoryEntryDraftItem()]);
   }
 
-  function removeInventoryEntryRow(id: string) {
+  function removeInventoryEntryRow(id: string, allowEmpty = false) {
     setInventoryEntryItems((current) => (
-      current.length <= 1
+      !allowEmpty && current.length <= 1
         ? current
         : current.filter((item) => item.id !== id)
     ));
@@ -5574,6 +5721,66 @@ export default function App() {
 
   function closeInventoryEntryItemModal() {
     setIsInventoryEntryItemModalOpen(false);
+  }
+
+  function addWarehouseInventoryEntryItem() {
+    const productId = inventoryEntryItemDraft.productId.trim();
+    const quantity = Number(inventoryEntryItemDraft.quantity || 0);
+    const expirationDate = inventoryEntryItemDraft.expirationDate.trim();
+    const selectedProduct = productOptions.find((product) => product.value === productId);
+
+    if (!productId || !selectedProduct) {
+      setInventoryEntryStatus({ tone: "error", message: "Selecciona un producto para agregarlo a la tabla." });
+      return;
+    }
+
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setInventoryEntryStatus({ tone: "error", message: "La cantidad debe ser mayor a cero." });
+      return;
+    }
+
+    if (expirationDate) {
+      const date = new Date(expirationDate);
+
+      if (Number.isNaN(date.getTime())) {
+        setInventoryEntryStatus({ tone: "error", message: "La fecha de caducidad no es valida." });
+        return;
+      }
+    }
+
+    const nextLotKey = buildInventoryEntryLotKey(productId, expirationDate);
+
+    setInventoryEntryItems((current) => {
+      if (current.some((item) => buildInventoryEntryLotKey(item.productId, item.expirationDate) === nextLotKey)) {
+        return current.map((item) => (
+          buildInventoryEntryLotKey(item.productId, item.expirationDate) === nextLotKey
+            ? {
+                ...item,
+                quantity: String(quantity),
+                expirationDate,
+              }
+            : item
+        ));
+      }
+
+      return [...current, {
+        id: createInventoryEntryDraftItem(productId).id,
+        productId,
+        quantity: String(quantity),
+        costUsd: "",
+        salePriceAwg: "",
+        expirationDate,
+        productWeightKg: "",
+      }];
+    });
+
+    setInventoryEntryItemDraft((current) => ({
+      ...current,
+      productId: "",
+      quantity: "",
+      expirationDate: "",
+    }));
+    setInventoryEntryStatus(null);
   }
 
   function submitInventoryEntryItemModal(event: FormEvent<HTMLFormElement>) {
@@ -5965,52 +6172,108 @@ export default function App() {
       return;
     }
 
-    const usdToAwgRate = Number(inventoryUsdToAwgRate || 0);
-
-    if (!Number.isFinite(usdToAwgRate) || usdToAwgRate <= 0) {
-      setInventoryEntryStatus({ tone: "error", message: "Ingresa una tasa valida en USD@AWG mayor a cero." });
-      return;
-    }
+    const isWarehouseInventoryEntry = sessionUser?.role === "warehouse-aruba";
+    let usdToAwgRate = Number(inventoryUsdToAwgRate || 0);
+    let normalizedItems: Array<{
+      productId: string;
+      quantity: number;
+      costUsd: number;
+      salePriceAwg: number;
+      expirationDate: string;
+      productWeightKg: number;
+    }>;
 
     try {
-      const normalizedItems = inventoryEntryItems.map((item, index) => {
-        const productId = item.productId.trim();
-        const quantity = Number(item.quantity || 0);
-        const costUsd = Number(item.costUsd || 0);
-        const salePriceAwg = Number(item.salePriceAwg || 0);
-        const productWeightKg = Number(item.productWeightKg || 0);
-        const expirationDate = item.expirationDate.trim();
-
-        if (!productId) {
-          throw new Error(`Selecciona el producto en la fila ${index + 1}.`);
+      if (isWarehouseInventoryEntry) {
+        if (inventoryEntryItems.length === 0) {
+          setInventoryEntryStatus({ tone: "error", message: "Agrega al menos un producto a la tabla." });
+          return;
         }
 
-        if (!Number.isFinite(quantity) || quantity <= 0) {
-          throw new Error(`La cantidad de la fila ${index + 1} debe ser mayor a cero.`);
-        }
+        normalizedItems = inventoryEntryItems.map((item, index) => {
+          const productId = item.productId.trim();
+          const quantity = Number(item.quantity || 0);
+          const expirationDate = item.expirationDate.trim();
+          const selectedProduct = productOptions.find((product) => product.value === productId);
 
-        if (!Number.isFinite(costUsd) || costUsd < 0) {
-          throw new Error(`El costo en USD de la fila ${index + 1} debe ser cero o mayor.`);
-        }
-
-        if (!Number.isFinite(salePriceAwg) || salePriceAwg < 0) {
-          throw new Error(`La venta AWG de la fila ${index + 1} debe ser cero o mayor.`);
-        }
-
-        if (!Number.isFinite(productWeightKg) || productWeightKg < 0) {
-          throw new Error(`El peso por unidad de exportacion de la fila ${index + 1} debe ser cero o mayor.`);
-        }
-
-        if (expirationDate) {
-          const date = new Date(expirationDate);
-
-          if (Number.isNaN(date.getTime())) {
-            throw new Error(`La caducidad de la fila ${index + 1} no es valida.`);
+          if (!productId || !selectedProduct) {
+            throw new Error(`Selecciona el producto en la fila ${index + 1}.`);
           }
+
+          if (!Number.isFinite(quantity) || quantity <= 0) {
+            throw new Error(`La cantidad de la fila ${index + 1} debe ser mayor a cero.`);
+          }
+
+          if (expirationDate) {
+            const date = new Date(expirationDate);
+
+            if (Number.isNaN(date.getTime())) {
+              throw new Error(`La caducidad de la fila ${index + 1} no es valida.`);
+            }
+          }
+
+          const unitCostUsd = Number(selectedProduct.arubaPurchaseCostUsd ?? 0);
+
+          return {
+            productId,
+            quantity,
+            costUsd: roundCurrencyValue(unitCostUsd * quantity),
+            salePriceAwg: selectedProduct.salePrice,
+            expirationDate,
+            productWeightKg: selectedProduct.productWeightKg,
+          };
+        });
+
+        const resolvedRates = normalizedItems
+          .map((item) => productOptions.find((product) => product.value === item.productId)?.arubaUsdToAwgRate ?? 0)
+          .filter((rate) => Number.isFinite(rate) && rate > 0);
+
+        usdToAwgRate = resolvedRates[0] ?? 1.79;
+      } else {
+        if (!Number.isFinite(usdToAwgRate) || usdToAwgRate <= 0) {
+          setInventoryEntryStatus({ tone: "error", message: "Ingresa una tasa valida en USD@AWG mayor a cero." });
+          return;
         }
 
-        return { productId, quantity, costUsd, salePriceAwg, expirationDate, productWeightKg };
-      });
+        normalizedItems = inventoryEntryItems.map((item, index) => {
+          const productId = item.productId.trim();
+          const quantity = Number(item.quantity || 0);
+          const costUsd = Number(item.costUsd || 0);
+          const salePriceAwg = Number(item.salePriceAwg || 0);
+          const productWeightKg = Number(item.productWeightKg || 0);
+          const expirationDate = item.expirationDate.trim();
+
+          if (!productId) {
+            throw new Error(`Selecciona el producto en la fila ${index + 1}.`);
+          }
+
+          if (!Number.isFinite(quantity) || quantity <= 0) {
+            throw new Error(`La cantidad de la fila ${index + 1} debe ser mayor a cero.`);
+          }
+
+          if (!Number.isFinite(costUsd) || costUsd < 0) {
+            throw new Error(`El costo en USD de la fila ${index + 1} debe ser cero o mayor.`);
+          }
+
+          if (!Number.isFinite(salePriceAwg) || salePriceAwg < 0) {
+            throw new Error(`La venta AWG de la fila ${index + 1} debe ser cero o mayor.`);
+          }
+
+          if (!Number.isFinite(productWeightKg) || productWeightKg < 0) {
+            throw new Error(`El peso por unidad de exportacion de la fila ${index + 1} debe ser cero o mayor.`);
+          }
+
+          if (expirationDate) {
+            const date = new Date(expirationDate);
+
+            if (Number.isNaN(date.getTime())) {
+              throw new Error(`La caducidad de la fila ${index + 1} no es valida.`);
+            }
+          }
+
+          return { productId, quantity, costUsd, salePriceAwg, expirationDate, productWeightKg };
+        });
+      }
 
       if (new Set(normalizedItems.map((item) => buildInventoryEntryLotKey(item.productId, item.expirationDate))).size !== normalizedItems.length) {
         setInventoryEntryStatus({ tone: "error", message: "No repitas el mismo lote dentro del mismo registro de inventario." });
@@ -6103,11 +6366,17 @@ export default function App() {
 
       setCatalogs(data);
       setSelectedCatalogId((current) => {
-        if (current && data.some((catalog) => catalog._id === current)) {
+        const orderReady = data.filter((catalog) => catalog.availableForOrders === true);
+
+        if (current && orderReady.some((catalog) => catalog._id === current)) {
           return current;
         }
 
-        return data[0]?._id ?? "";
+        if (current && orderReady.length === 0 && data.some((catalog) => catalog._id === current)) {
+          return current;
+        }
+
+        return orderReady[0]?._id ?? "";
       });
     } catch {
       setCatalogError("No fue posible conectar con el backend.");
@@ -6150,13 +6419,13 @@ export default function App() {
   }
 
   async function buildWarehouseInvoicePdfDocument(order: SellerOrderRecord) {
-    if (!selectedCatalogRecord) {
-      throw new Error("Selecciona un catalogo antes de generar la factura.");
-    }
-
     if (warehousePricedItems.length === 0) {
       throw new Error("Este pedido no tiene productos para facturar.");
     }
+
+    const pricingSourceLabel = selectedCatalogRecord
+      ? `Catalogo semanal: ${selectedCatalogRecord.name}`
+      : "Precios segun ficha del producto";
 
     const pdf = new jsPDF({ unit: "mm", format: "a4" });
     const generatedAt = new Date();
@@ -6181,7 +6450,7 @@ export default function App() {
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(9.5);
       pdf.text(`Generada el ${generatedAtLabel}`, margin, 23);
-      pdf.text(`Catalogo: ${selectedCatalogRecord.name}`, margin, 28);
+      pdf.text(pricingSourceLabel, margin, 28);
 
       if (logoImage) {
         pdf.setFillColor(255, 255, 255);
@@ -6214,7 +6483,13 @@ export default function App() {
     pdf.text(`Vendedor: ${order.salesRepName}`, margin, 59);
     pdf.text(`Ruta: ${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`, margin, 65);
     pdf.text(`Estado: ${formatSellerOrderStatus(order.status)}`, margin, 71);
-    pdf.text(`Factura basada en el catalogo ${selectedCatalogRecord.name}.`, margin, 77);
+    pdf.text(
+      selectedCatalogRecord
+        ? `Factura con precios del catalogo semanal ${selectedCatalogRecord.name}.`
+        : "Factura con precios de venta registrados en cada producto.",
+      margin,
+      77,
+    );
 
     let currentY = 86;
     drawTableHeader(currentY);
@@ -6255,7 +6530,11 @@ export default function App() {
     pdf.setFontSize(8.5);
     pdf.text("SPS Trading Enterprises", margin, pageHeight - 8);
 
-    const fileName = sanitizePdfFileName(`factura-${order.storeName}-${selectedCatalogRecord.name}-${generatedAtLabel}`) || "factura-pedido";
+    const fileName = sanitizePdfFileName(
+      selectedCatalogRecord
+        ? `factura-${order.storeName}-${selectedCatalogRecord.name}-${generatedAtLabel}`
+        : `factura-${order.storeName}-${generatedAtLabel}`,
+    ) || "factura-pedido";
     return { pdf, fileName };
   }
 
@@ -6264,21 +6543,19 @@ export default function App() {
       return;
     }
 
-    if (!selectedCatalogRecord) {
-      setWarehouseOrderCompletionStatus({ tone: "error", message: "Selecciona un catalogo antes de completar el pedido." });
+    if (!warehouseAllItemsChecked) {
+      setWarehouseOrderCompletionStatus({ tone: "error", message: "Marca todos los productos con su check antes de completar el pedido." });
       return;
     }
 
-    if (!warehouseAllItemsChecked) {
-      setWarehouseOrderCompletionStatus({ tone: "error", message: "Marca todos los productos con su check antes de completar el pedido." });
+    if (selectedCatalogId && isLoadingCatalogPreview) {
+      setWarehouseOrderCompletionStatus({ tone: "error", message: "Espera a que carguen los precios del catalogo semanal." });
       return;
     }
 
     try {
       setIsCompletingWarehouseOrder(true);
       setWarehouseOrderCompletionStatus(null);
-      const { pdf, fileName } = await buildWarehouseInvoicePdfDocument(selectedWarehouseOrderDetail);
-      pdf.save(`${fileName}.pdf`);
 
       const response = await fetch(`${apiBaseUrl}/warehouse/orders/${selectedWarehouseOrderDetail._id}/complete`, {
         method: "PUT",
@@ -6289,19 +6566,31 @@ export default function App() {
         throw new Error(data.message ?? "No fue posible completar el pedido.");
       }
 
+      const completedOrderId = String(data.order._id);
+      const completedOrder = {
+        ...selectedWarehouseOrderDetail,
+        status: data.order.status,
+        updatedAt: data.order.updatedAt,
+      };
+
       setWarehouseOrders((current) => current.map((order) => (
-        order._id === data.order?._id
-          ? { ...order, status: data.order.status, updatedAt: data.order.updatedAt }
+        String(order._id) === completedOrderId
+          ? { ...order, status: data.order!.status, updatedAt: data.order!.updatedAt }
           : order
       )));
-      setSelectedWarehouseOrderDetail((current) => (
-        current && current._id === data.order?._id
-          ? { ...current, status: data.order.status, updatedAt: data.order.updatedAt }
-          : current
-      ));
+
+      await refreshWarehouseOrders();
       await refreshInventorySummary();
-      setWarehouseOrderChecklist((current) => Object.fromEntries(Object.keys(current).map((key) => [key, true])));
-      setWarehouseOrderCompletionStatus({ tone: "success", message: "Factura generada y pedido marcado como completado." });
+
+      const { pdf, fileName } = await buildWarehouseInvoicePdfDocument(completedOrder);
+      openPdfInNewTab(pdf, fileName);
+
+      setSelectedWarehouseOrderDetail(null);
+      setWarehouseOrderChecklist({});
+      setWarehouseOrderCompletionStatus({
+        tone: "success",
+        message: "Pedido completado. La factura se abrio en una pestaña nueva.",
+      });
     } catch (error) {
       setWarehouseOrderCompletionStatus({
         tone: "error",
@@ -6384,7 +6673,7 @@ export default function App() {
     pdf.text("SPS Trading Enterprises", margin, pageHeight - 8);
 
     const fileName = sanitizePdfFileName(`factura-${order.storeName}-${order.routeName}-${generatedAt}`) || "factura-pedido";
-    pdf.save(`${fileName}.pdf`);
+    openPdfInNewTab(pdf, fileName);
   }
 
   async function handleDeleteWarehouseOrder(order: SellerOrderRecord) {
@@ -7683,6 +7972,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             salePrice: roundCurrencyValue(Number(product.salePrice ?? 0)),
             inventoryAlert: Number(product.inventoryAlert ?? 0),
             productWeightKg: Number(product.productWeightKg ?? 0),
+            arubaPurchaseCostUsd: Number(product.arubaPurchaseCostUsd ?? 0),
+            arubaUsdToAwgRate: Number(product.arubaUsdToAwgRate ?? 1.79) || 1.79,
             presentation: String(product.presentation ?? "unidad"),
             containerType: String(product.containerType ?? "seco"),
             shareWithAruba: product.shareWithAruba !== false,
@@ -8780,6 +9071,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             salePrice: roundCurrencyValue(Number(product.salePrice ?? 0)),
             inventoryAlert: Number(product.inventoryAlert ?? 0),
             productWeightKg: Number(product.productWeightKg ?? 0),
+            arubaPurchaseCostUsd: Number(product.arubaPurchaseCostUsd ?? 0),
+            arubaUsdToAwgRate: Number(product.arubaUsdToAwgRate ?? 1.79) || 1.79,
             presentation: String(product.presentation ?? "unidad"),
             containerType: String(product.containerType ?? "seco"),
             shareWithAruba: product.shareWithAruba !== false,
@@ -10296,26 +10589,24 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </div>
 
                       <div className="warehouse-order-summary-card">
-                        <p className="section-label">Catálogo</p>
+                        <p className="section-label">Catálogo semanal (opcional)</p>
                         <label className="field warehouse-order-catalog-field">
-                          <span>Selecciona un catálogo</span>
+                          <span>Precios variables</span>
                           <select
                             value={selectedCatalogId}
                             onChange={(event) => setSelectedCatalogId(event.target.value)}
-                            disabled={isLoadingCatalogs || orderReadyCatalogs.length === 0}
+                            disabled={isLoadingCatalogs}
                           >
-                            <option value="">Selecciona un catálogo guardado</option>
+                            <option value="">Sin catálogo — precio del producto</option>
                             {orderReadyCatalogs.map((catalog) => (
                               <option key={catalog._id ?? catalog.code} value={catalog._id}>{catalog.name}</option>
                             ))}
                           </select>
                         </label>
                         <p>
-                          {orderReadyCatalogs.length === 0
-                            ? "Todavía no hay catálogos guardados para pedidos desde gerencia."
-                            : warehouseOrderClient
-                            ? `Cliente del pedido: ${warehouseOrderClient.label}`
-                            : `Cliente del pedido: ${selectedWarehouseOrderDetail.storeName}`}
+                          {selectedCatalogRecord
+                            ? `Aplicando precios semanales de: ${selectedCatalogRecord.name}`
+                            : "Solo para frutas, verduras o refrigerados con precios que cambian cada semana. Sin catálogo, se usa el precio de venta del producto."}
                         </p>
                       </div>
 
@@ -10323,7 +10614,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         <p className="section-label">Factura</p>
                         <strong>{formatCurrency(warehouseInvoiceTotal)}</strong>
                         <p>
-                          {warehouseFallbackPriceCount > 0
+                          {!selectedCatalogId
+                            ? "Total calculado con el precio de venta de cada producto."
+                            : warehouseFallbackPriceCount > 0
                             ? `${warehouseFallbackPriceCount} producto${warehouseFallbackPriceCount === 1 ? " usa" : "s usan"} precio base del producto fuera del catálogo.`
                             : "Todos los productos tienen precio resuelto desde el catálogo seleccionado."}
                         </p>
@@ -10338,18 +10631,18 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </p>
                     ) : null}
 
-                    <div className="table-wrap table-wrap--cards">
+                    <div className="table-wrap table-wrap--warehouse-items">
                       <table className="data-table data-table--warehouse-order-items">
                         <thead>
                           <tr>
-                            <th>Check</th>
+                            <th className="warehouse-order-col-check">Listo</th>
                             <th>SKU</th>
                             <th>Producto</th>
-                            <th>Stock actual</th>
-                            <th>Cantidad</th>
+                            <th className="warehouse-order-col-optional">Stock</th>
+                            <th>Cant.</th>
                             <th>Precio</th>
                             <th>Total</th>
-                            <th>Notas</th>
+                            <th className="warehouse-order-col-optional">Notas</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -10371,11 +10664,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               </td>
                               <td>{item.productSku}</td>
                               <td>{item.productName}</td>
-                              <td>{item.stockCurrent ?? "-"}</td>
+                              <td className="warehouse-order-col-optional">{item.stockCurrent ?? "-"}</td>
                               <td>{item.quantity}</td>
                               <td>{formatCurrency(item.resolvedSalePrice)}</td>
                               <td>{formatCurrency(item.lineTotal)}</td>
-                              <td>{item.notes || "-"}</td>
+                              <td className="warehouse-order-col-optional">{item.notes || "-"}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -10386,13 +10679,19 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <p>
                         Estado actual: <strong>{formatSellerOrderStatus(selectedWarehouseOrderDetail.status)}</strong>
                       </p>
+                      {warehouseOrderCompletionHints.length > 0 ? (
+                        <ul className="warehouse-order-hints">
+                          {warehouseOrderCompletionHints.map((hint) => (
+                            <li key={hint}>{hint}</li>
+                          ))}
+                        </ul>
+                      ) : null}
                       <button
                         className="submit-button seller-order-submit"
                         type="button"
                         disabled={
                           isCompletingWarehouseOrder
-                          || isLoadingCatalogPreview
-                          || !selectedCatalogId
+                          || (Boolean(selectedCatalogId) && isLoadingCatalogPreview)
                           || warehousePricedItems.length === 0
                           || !warehouseAllItemsChecked
                           || selectedWarehouseOrderDetail.status === "delivered"
@@ -10412,6 +10711,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <p className="route-helper-text">Aquí llegan los pedidos creados por los vendedores para preparación y despacho desde bodega.</p>
                   </article>
 
+                  {warehouseOrderCompletionStatus ? (
+                    <p className={`form-feedback ${warehouseOrderCompletionStatus.tone === "error" ? "error" : "success"}`}>
+                      {warehouseOrderCompletionStatus.message}
+                    </p>
+                  ) : null}
+
                   <article className="database-card">
                     <div className="management-table-header">
                       <div>
@@ -10423,17 +10728,17 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
                     {warehouseOrdersError ? <p className="form-feedback error">{warehouseOrdersError}</p> : null}
 
-                    <div className="table-wrap table-wrap--cards">
+                    <div className="table-wrap table-wrap--warehouse-items">
                       <table className="data-table data-table--warehouse-orders">
                         <thead>
                           <tr>
                             <th>Fecha</th>
-                            <th>Vendedor</th>
+                            <th className="warehouse-order-col-optional">Vendedor</th>
                             <th>Cliente</th>
-                            <th>Ruta</th>
+                            <th className="warehouse-order-col-optional">Ruta</th>
                             <th>Estado</th>
-                            <th>Productos</th>
-                            <th>Detalle</th>
+                            <th>Und.</th>
+                            <th>Ver</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -10448,11 +10753,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               return (
                                 <tr key={order._id}>
                                   <td>{formatSellerOrderDate(order.createdAt)}</td>
-                                  <td>{order.salesRepName}</td>
+                                  <td className="warehouse-order-col-optional">{order.salesRepName}</td>
                                   <td>{order.storeName}</td>
-                                  <td>{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
+                                  <td className="warehouse-order-col-optional">{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
                                   <td>{formatSellerOrderStatus(order.status)}</td>
-                                  <td>{`${order.items.length} producto${order.items.length === 1 ? "" : "s"} / ${totalUnits} und`}</td>
+                                  <td>{`${order.items.length} prod. / ${totalUnits} und`}</td>
                                   <td>
                                     {order.items.length > 0 ? (
                                       <button
@@ -10460,7 +10765,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                         type="button"
                                         onClick={() => setSelectedWarehouseOrderDetail(order)}
                                       >
-                                        Ver mas
+                                        Ver
                                       </button>
                                     ) : "-"}
                                   </td>
@@ -10486,17 +10791,17 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <p className="management-table-meta">{warehouseCompletedOrders.length} pedidos</p>
                     </div>
 
-                    <div className="table-wrap table-wrap--cards">
+                    <div className="table-wrap table-wrap--warehouse-items">
                       <table className="data-table data-table--warehouse-orders">
                         <thead>
                           <tr>
                             <th>Fecha</th>
-                            <th>Vendedor</th>
+                            <th className="warehouse-order-col-optional">Vendedor</th>
                             <th>Cliente</th>
-                            <th>Ruta</th>
+                            <th className="warehouse-order-col-optional">Ruta</th>
                             <th>Estado</th>
-                            <th>Productos</th>
-                            <th>Detalle</th>
+                            <th>Und.</th>
+                            <th>Ver</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -10511,11 +10816,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               return (
                                 <tr key={order._id}>
                                   <td>{formatSellerOrderDate(order.createdAt)}</td>
-                                  <td>{order.salesRepName}</td>
+                                  <td className="warehouse-order-col-optional">{order.salesRepName}</td>
                                   <td>{order.storeName}</td>
-                                  <td>{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
+                                  <td className="warehouse-order-col-optional">{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
                                   <td>{formatSellerOrderStatus(order.status)}</td>
-                                  <td>{`${order.items.length} producto${order.items.length === 1 ? "" : "s"} / ${totalUnits} und`}</td>
+                                  <td>{`${order.items.length} prod. / ${totalUnits} und`}</td>
                                   <td>
                                     {order.items.length > 0 ? (
                                       <button
@@ -10523,7 +10828,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                         type="button"
                                         onClick={() => setSelectedWarehouseOrderDetail(order)}
                                       >
-                                        Ver mas
+                                        Ver
                                       </button>
                                     ) : "-"}
                                   </td>
@@ -10585,6 +10890,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   isLoading={isLoadingInventory}
                   emptyMessage="No hay productos próximos a vencer dentro de los próximos 2 meses."
                   onAdjustRow={openInventoryAdjustmentModal}
+                  layout="table"
                 />
               </article>
 
@@ -10607,6 +10913,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   isLoading={isLoadingInventory}
                   emptyMessage="Aún no hay inventario registrado."
                   onAdjustRow={openInventoryAdjustmentModal}
+                  layout="table"
                 />
               </article>
 
@@ -10689,18 +10996,18 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
               {isInventoryEntryModalOpen ? (
                 <div className="modal-overlay" role="presentation" onClick={closeInventoryEntryModal}>
-                  <div className="modal-card inventory-entry-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                  <div className="modal-card inventory-entry-modal inventory-entry-modal--warehouse" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                     <div className="modal-header">
                       <div>
                         <p className="section-label">Entrada de inventario</p>
                         <h2>Registrar inventario</h2>
-                        <p>Selecciona los productos que ingresan, define la tasa USD@AWG y revisa el costo convertido en florines.</p>
+                        <p>Agrega productos con cantidad y fecha de caducidad. Los precios y costos se toman de la ficha del producto.</p>
                       </div>
                       <button className="modal-close-button" type="button" onClick={closeInventoryEntryModal}>Cerrar</button>
                     </div>
 
-                    <form className="inventory-adjustment-form" onSubmit={handleInventoryEntrySubmit}>
-                      <div className="inventory-entry-top-grid">
+                    <form className="inventory-adjustment-form inventory-entry-form--warehouse" onSubmit={handleInventoryEntrySubmit}>
+                      <div className="inventory-entry-form-top">
                         <label className="field field-full">
                           <span>Bodega</span>
                           <select
@@ -10715,119 +11022,94 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           </select>
                         </label>
 
-                        <label className="field field-full">
-                          <span>USD@AWG</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="any"
-                            value={inventoryUsdToAwgRate}
-                            placeholder="1.79"
-                            onChange={(event) => setInventoryUsdToAwgRate(event.target.value)}
-                          />
-                        </label>
+                        <div className="inventory-entry-warehouse-add">
+                          <label className="field field-full">
+                            <span>Producto</span>
+                            <SearchableProductSelect
+                              products={productOptions}
+                              value={inventoryEntryItemDraft.productId}
+                              onChange={(productId) => setInventoryEntryItemDraft((current) => ({ ...current, productId }))}
+                              disabled={productOptions.length === 0}
+                            />
+                          </label>
+
+                          <label className="field">
+                            <span>Cantidad</span>
+                            <input
+                              type="number"
+                              min="1"
+                              step="1"
+                              value={inventoryEntryItemDraft.quantity}
+                              placeholder="0"
+                              onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, quantity: event.target.value }))}
+                            />
+                          </label>
+
+                          <label className="field">
+                            <span>Fecha de caducidad</span>
+                            <input
+                              type="date"
+                              value={inventoryEntryItemDraft.expirationDate}
+                              onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, expirationDate: event.target.value }))}
+                            />
+                          </label>
+
+                          <button className="small-add-button" type="button" onClick={addWarehouseInventoryEntryItem}>
+                            Agregar a la tabla
+                          </button>
+                        </div>
                       </div>
 
-                      <div className="inventory-entry-products">
-                        {inventoryEntryItems.map((item, index) => (
-                          <article key={item.id} className="inventory-entry-row">
-                            <label className="field field-full">
-                              <span>{`Producto ${index + 1}`}</span>
-                              <select
-                                value={item.productId}
-                                onChange={(event) => updateInventoryEntryRow(item.id, "productId", event.target.value)}
-                              >
-                                <option value="">Selecciona un producto</option>
-                                {productOptions.map((product) => (
-                                  <option key={product.value} value={product.value}>{`${product.label} (${product.sku})`}</option>
-                                ))}
-                              </select>
-                            </label>
+                      <div className="inventory-entry-table-panel">
+                        <p className="management-table-meta">{inventoryEntryItems.length} producto{inventoryEntryItems.length === 1 ? "" : "s"} en la entrada</p>
+                        <div className="table-wrap table-wrap--warehouse-items">
+                          <table className="data-table data-table--inventory-entry">
+                            <thead>
+                              <tr>
+                                <th>Producto</th>
+                                <th>SKU</th>
+                                <th>Cant.</th>
+                                <th>Vence</th>
+                                <th>Acc.</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {inventoryEntryItems.length > 0 ? (
+                                inventoryEntryItems.map((item) => {
+                                  const selectedProduct = productOptions.find((product) => product.value === item.productId);
 
-                            <label className="field field-full">
-                              <span>Cantidad</span>
-                              <input
-                                type="number"
-                                min="0"
-                                step="1"
-                                value={item.quantity}
-                                placeholder="0"
-                                onChange={(event) => updateInventoryEntryRow(item.id, "quantity", event.target.value)}
-                              />
-                            </label>
-
-                            <label className="field field-full">
-                              <span>Costo USD total del lote</span>
-                              <input
-                                type="number"
-                                min="0"
-                                step="any"
-                                value={item.costUsd}
-                                placeholder="0.00"
-                                onChange={(event) => updateInventoryEntryRow(item.id, "costUsd", event.target.value)}
-                              />
-                            </label>
-
-                            <label className="field field-full">
-                              <span>Venta AWG por unidad</span>
-                              <input
-                                type="number"
-                                min="0"
-                                step="any"
-                                value={item.salePriceAwg}
-                                placeholder="0.00"
-                                onChange={(event) => updateInventoryEntryRow(item.id, "salePriceAwg", event.target.value)}
-                              />
-                            </label>
-
-                            <label className="field field-full">
-                              <span>Peso por unidad de exportacion (kg)</span>
-                              <input
-                                type="number"
-                                min="0"
-                                step="any"
-                                value={item.productWeightKg}
-                                placeholder="0.00"
-                                onChange={(event) => updateInventoryEntryRow(item.id, "productWeightKg", event.target.value)}
-                              />
-                            </label>
-
-                            <label className="field field-full">
-                              <span>Fecha de caducidad</span>
-                              <input
-                                type="date"
-                                value={item.expirationDate}
-                                onChange={(event) => updateInventoryEntryRow(item.id, "expirationDate", event.target.value)}
-                              />
-                            </label>
-
-                            <label className="field field-full">
-                              <span>Costo AWG total (calculado)</span>
-                              <input type="number" readOnly value={getInventoryEntryCostAwg(item.costUsd)} placeholder="0.00" />
-                            </label>
-
-                            <button
-                              className="ghost-button inventory-entry-remove"
-                              type="button"
-                              onClick={() => removeInventoryEntryRow(item.id)}
-                              disabled={inventoryEntryItems.length <= 1}
-                            >
-                              Quitar
-                            </button>
-                          </article>
-                        ))}
+                                  return (
+                                    <tr key={item.id}>
+                                      <td>{selectedProduct?.label ?? "Producto"}</td>
+                                      <td>{selectedProduct?.sku ?? "-"}</td>
+                                      <td>{item.quantity}</td>
+                                      <td>{item.expirationDate ? String(item.expirationDate).slice(0, 10) : "-"}</td>
+                                      <td>
+                                        <button
+                                          className="ghost-button inventory-entry-remove"
+                                          type="button"
+                                          onClick={() => removeInventoryEntryRow(item.id, true)}
+                                        >
+                                          Quitar
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                              ) : (
+                                <tr>
+                                  <td colSpan={5} className="empty-table-cell">Agrega productos con cantidad y caducidad.</td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
 
-                      <div className="catalog-form-actions inventory-adjustment-actions">
-                        <button className="ghost-button" type="button" onClick={addInventoryEntryRow}>
-                          Agregar producto
-                        </button>
-                      </div>
-
-                      {inventoryEntryStatus ? <p className={`form-feedback ${inventoryEntryStatus.tone}`}>{inventoryEntryStatus.message}</p> : null}
+                      {inventoryEntryStatus ? <p className={`form-feedback inventory-entry-form-feedback ${inventoryEntryStatus.tone}`}>{inventoryEntryStatus.message}</p> : null}
 
                       <div className="inventory-entry-submit-actions">
-                        <button className="submit-button" type="submit" disabled={isSavingInventoryEntry}>
+                        <button className="submit-button" type="submit" disabled={isSavingInventoryEntry || inventoryEntryItems.length === 0}>
                           {isSavingInventoryEntry ? "Registrando inventario..." : "Guardar entrada de inventario"}
                         </button>
                       </div>
