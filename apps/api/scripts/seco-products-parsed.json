@@ -1,0 +1,1450 @@
+[
+  {
+    "sku": "B0015",
+    "name": "PONY MALTA 1 LT",
+    "description": "PACK X 1 LT X 15 UN",
+    "salePrice": 42.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 15
+  },
+  {
+    "sku": "B0016",
+    "name": "PONY MALTA 1.5 LT",
+    "description": "PACK X 1.5 LT X 6 UN",
+    "salePrice": 28.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "B0017",
+    "name": "PONY MALTA BLEKI X 330 ML",
+    "description": "PACK X 330 ML X 24 UN.",
+    "salePrice": 44.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 24
+  },
+  {
+    "sku": "B0018",
+    "name": "PONY MALTA MINI 200 ML",
+    "description": "PACK X 30 UN X 200 ML",
+    "salePrice": 32.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 30
+  },
+  {
+    "sku": "B0019",
+    "name": "PONY MALTA VIDRIO 330ML",
+    "description": "PACK X 330 ML X 30 UN",
+    "salePrice": 50.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 30
+  },
+  {
+    "sku": "B0020",
+    "name": "GASEOSA KOLA ROMAN 1.5 LT",
+    "description": "1.5 LT X 12 UN",
+    "salePrice": 42.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "B0021",
+    "name": "GASEOSA QUATRO 1.5 LT",
+    "description": "PACK X 1.5 LT X 12 UN",
+    "salePrice": 42.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "B0024",
+    "name": "GASEOSA QUATRO 400 ML.",
+    "description": "PACK X 400 ML X 12 UN",
+    "salePrice": 20.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "B0025",
+    "name": "GASEOSA KOLA ROMAN 400 ML",
+    "description": "PACK X 400 ML X 12 UN",
+    "salePrice": 20.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "B0041",
+    "name": "HIDRALYTE MARACUYA",
+    "description": "PACK X 24 UND X 640 ML",
+    "salePrice": 78.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 24
+  },
+  {
+    "sku": "B0043",
+    "name": "HIDRALYTE BLUEBERRY",
+    "description": "PACK X 24 UND X 640 ML",
+    "salePrice": 78.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 24
+  },
+  {
+    "sku": "B0044",
+    "name": "HIDRALYTE UVA",
+    "description": "PACK X 24 UND X 640 ML",
+    "salePrice": 78.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 24
+  },
+  {
+    "sku": "B0047",
+    "name": "ENJOY LEMON DRINK 1,5 LT",
+    "description": "PACK X 6 UND X 1,5 LT",
+    "salePrice": 21.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "B0048",
+    "name": "ENJOY ORANGE DRINK 1,5 LT",
+    "description": "PACK X 6 UND X 1,5 LT",
+    "salePrice": 21.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "CA0001",
+    "name": "COLOR REY 55 GR",
+    "description": "PACK X 50 GR X 12 UN",
+    "salePrice": 11.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "CA0002",
+    "name": "COMINO EL REY 55 GR",
+    "description": "PACK X 55 GR X 12 UN",
+    "salePrice": 32.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "CA0003",
+    "name": "COLOR REY FRASCO",
+    "description": "PACK X 12 X 60 GR",
+    "salePrice": 32.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "CA0005",
+    "name": "GOISCO IOD SALT 26 OZ",
+    "description": "PACK 26 OZ X 24 UN",
+    "salePrice": 49.8,
+    "presentation": "paquete",
+    "unitsPerPackage": 24
+  },
+  {
+    "sku": "CA0006",
+    "name": "PAPA HOT DOGS CRISPY 900 GR",
+    "description": "PACK X 900 GR X 25 UN",
+    "salePrice": 185.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 25
+  },
+  {
+    "sku": "CA0022",
+    "name": "MAGGI SOPA COSTILLA FIDEO",
+    "description": "PACK X 65 GR X 24 UN",
+    "salePrice": 39.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 24
+  },
+  {
+    "sku": "CA0023",
+    "name": "MAGGI SOPA GALLINA FIDEO",
+    "description": "PACK 52 GRS X 24 UN",
+    "salePrice": 39.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 24
+  },
+  {
+    "sku": "CA0024",
+    "name": "MAGGI SOPA SANCOCHO",
+    "description": "PACK X 60 GR X 24 UN",
+    "salePrice": 46.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 24
+  },
+  {
+    "sku": "CA0026",
+    "name": "RICOSTILLA CUBO X 12",
+    "description": "PACK X 72 DISP X 12 UN",
+    "salePrice": 270.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "CA0027",
+    "name": "RICOSTILLA CUBO X 8",
+    "description": "PACK X 144 DISP X 8 UN",
+    "salePrice": 390.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 8
+  },
+  {
+    "sku": "CA0028",
+    "name": "DOÑA GALLINA CUBO X 12",
+    "description": "PACK X 72 DISP X 12 UN",
+    "salePrice": 255.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "CA0029",
+    "name": "DOÑA GALLINA CUBO X 8",
+    "description": "PACK X 144 DISP X 8 UN",
+    "salePrice": 360.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 8
+  },
+  {
+    "sku": "D0006",
+    "name": "BOCADILLO VELEÑO X 36 UN",
+    "description": "DISPL X 36 UN",
+    "salePrice": 11.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 36
+  },
+  {
+    "sku": "D0013",
+    "name": "OBLEA + AREQUIPE ALQUERIA",
+    "description": "240 GR X 16 UN",
+    "salePrice": 12.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 16
+  },
+  {
+    "sku": "D0014",
+    "name": "OBLEA GRANDE 50 UN",
+    "description": "DISPL X 50 UN",
+    "salePrice": 10.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 50
+  },
+  {
+    "sku": "D0018",
+    "name": "BREVAS CON AREQUIPE",
+    "description": "DISPL X 6 UN",
+    "salePrice": 6.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "D0019",
+    "name": "MANJAR DE LECHE",
+    "description": "DISPL X 12 UN",
+    "salePrice": 6.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "D0020",
+    "name": "SUPERCOCO BON BON X 24 UN",
+    "description": "DISPL X 24 UN",
+    "salePrice": 11.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 24
+  },
+  {
+    "sku": "D0022",
+    "name": "SUPERCOCO TURRON X 100 UN",
+    "description": "DISPL X 100 UN",
+    "salePrice": 14.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 100
+  },
+  {
+    "sku": "D0023",
+    "name": "TAMARINDO BOLITAS DULCE X 50 UN",
+    "description": "DISPL X 50 UN",
+    "salePrice": 8.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 50
+  },
+  {
+    "sku": "D0027",
+    "name": "LECHE CONDENSADA 90 GR",
+    "description": "PACK X 90 GR X 12 UN",
+    "salePrice": 27.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "D0028",
+    "name": "AREQUIPE REPOSTERIA ALQUERIA 1.5 KG",
+    "description": "1.5 KG X UN",
+    "salePrice": 19.0,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "D0029",
+    "name": "AREQUIPE ALQUERIA 150 GR",
+    "description": "PACK X 12 UN X 150 GR",
+    "salePrice": 32.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "D0030",
+    "name": "GELATINA DE PATA 40 DISP X 13 UN",
+    "description": "GELATINA DE PATA 40 DISP X 13 UN",
+    "salePrice": 160.0,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "DA0003",
+    "name": "PAPEL ALUMINIO FOIL 25 SQF",
+    "description": "PACK 25 SQF X 24 UN",
+    "salePrice": 67.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 24
+  },
+  {
+    "sku": "DA0004",
+    "name": "PAPEL ALUMINIO FOIL 75 SQF",
+    "description": "PACK 75 SQF X 24 UN",
+    "salePrice": 120.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 24
+  },
+  {
+    "sku": "DA0041",
+    "name": "GELATINA FRUTIÑO SIN SABOR",
+    "description": "CAJA X 96 UN",
+    "salePrice": 125.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "DA0045",
+    "name": "MIEL DE ABEJAS",
+    "description": "CAJA X 25 UND",
+    "salePrice": 325.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "DA0046",
+    "name": "PANELA 454 GR",
+    "description": "CAJA X 24 UND X 454 GR",
+    "salePrice": 65.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "DA0050",
+    "name": "GOISCO SWEET CORN 340 GR",
+    "description": "PACK X 12 UND X 340 GR",
+    "salePrice": 30.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "DA0052",
+    "name": "INDIA CROWN PREMIUM BASMATI RICE 1 KG",
+    "description": "PACK X 10 UND X 1 KG",
+    "salePrice": 69.0,
+    "presentation": "kg",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "E0003",
+    "name": "AZUCAR MORENA MANUELITA 500 GR",
+    "description": "PACK X 500 GR X 25 UN",
+    "salePrice": 44.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 25
+  },
+  {
+    "sku": "E0004",
+    "name": "AZUCAR INCAUCA BLANCA 500 GR",
+    "description": "PACK X 500 GR X 50 UN",
+    "salePrice": 84.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 50
+  },
+  {
+    "sku": "E0005",
+    "name": "AZUCAR INCAUCA MORENA 1 KG",
+    "description": "PACK X 1 KG X 25 UN",
+    "salePrice": 84.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 25
+  },
+  {
+    "sku": "E0006",
+    "name": "AZUCAR INCAUCA MORENA 500 GR",
+    "description": "PACK X 500 GR X 50 UN",
+    "salePrice": 84.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 50
+  },
+  {
+    "sku": "E0007",
+    "name": "AZUCAR INCAUCA BLANCA 1 KG",
+    "description": "PACK X 1 KG X 25 UN",
+    "salePrice": 84.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 25
+  },
+  {
+    "sku": "E0012",
+    "name": "AZUCAR RIOPAILA MORENA 1000 GR",
+    "description": "PACK X 1000 GR X 25 UN",
+    "salePrice": 84.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 25
+  },
+  {
+    "sku": "EL0001",
+    "name": "GOISCO COCONUT MILK 400 ML",
+    "description": "PACK 400 ML X 24 UN",
+    "salePrice": 67.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 24
+  },
+  {
+    "sku": "EL0002",
+    "name": "GOISCO COCONUT CREAM 400 ML",
+    "description": "PACK 400ML X 24 UND",
+    "salePrice": 97.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 24
+  },
+  {
+    "sku": "EL0003",
+    "name": "GOISCO CORN ON THE COB 30 OZ",
+    "description": "PACK X 30 OZ X 12 UN",
+    "salePrice": 52.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "EL0005",
+    "name": "ATUN VAN CAMPS ACEITE 160 GR",
+    "description": "CAJA PACK X 48 UN X 160 GR",
+    "salePrice": 245.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "EL0006",
+    "name": "ATUN VAN CAMPS AGUA 160 GR",
+    "description": "CAJA PACK X 48 UN X 160 GR",
+    "salePrice": 245.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "EL0007",
+    "name": "SARDINA VAN CAMPS SALSA TOMATE 425 GR",
+    "description": "PACK X 24 UN X 425 GR",
+    "salePrice": 185.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 24
+  },
+  {
+    "sku": "EL0008",
+    "name": "SARDINA VAN CAMPS ACEITE 425 GR",
+    "description": "PACK X 24 UN X 425 GR",
+    "salePrice": 185.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 24
+  },
+  {
+    "sku": "GC0004",
+    "name": "MAIZ PILADO AMARILLO",
+    "description": "SACO X 40 KG",
+    "salePrice": 91.0,
+    "presentation": "kg",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "GC0005",
+    "name": "MAIZ PILADO BLANCO 40 KG",
+    "description": "SACO X 40 KG",
+    "salePrice": 87.0,
+    "presentation": "kg",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "H0001",
+    "name": "HARINA BUÑUELO COLMAIZ 1 KG",
+    "description": "PACK X 1 KG X 25 UN",
+    "salePrice": 140.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 25
+  },
+  {
+    "sku": "H032",
+    "name": "HUEVOS DE CODORNIZ DISP X 24 UND",
+    "description": "HUEVOS DE CODORNIZ DISP X 24 UND",
+    "salePrice": 6.0,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "L0002",
+    "name": "QUESO SEMIDURO",
+    "description": "KG.",
+    "salePrice": 18.0,
+    "presentation": "kg",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "L0003",
+    "name": "QUESO SEMI DURO BLOQUE",
+    "description": "KG.",
+    "salePrice": 23.0,
+    "presentation": "kg",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "L0005",
+    "name": "QUESO DURO",
+    "description": "KG",
+    "salePrice": 18.0,
+    "presentation": "kg",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "L0006",
+    "name": "QUESO CREMA COLANTA 230 GR",
+    "description": "UN X 230 GR",
+    "salePrice": 5.0,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "L0007",
+    "name": "LECHE ALQUERIA DESLACTOSADA",
+    "description": "PACK X 1L X 12 UN",
+    "salePrice": 38.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "L0009",
+    "name": "LECHE ALQUERIA SUPERCREMOSA",
+    "description": "PACK X 1L X 12 UN",
+    "salePrice": 38.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "L0010",
+    "name": "MANTEQUILLA COLANTA 125 GR",
+    "description": "UN X 125 GR",
+    "salePrice": 5.0,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "L0014",
+    "name": "GELATINA NARANJA",
+    "description": "PACK X 90 GR X 4 UN",
+    "salePrice": 4.1,
+    "presentation": "paquete",
+    "unitsPerPackage": 4
+  },
+  {
+    "sku": "L0017",
+    "name": "GELATINA CEREZA",
+    "description": "PACK X 90 GR X 4 UN",
+    "salePrice": 4.1,
+    "presentation": "paquete",
+    "unitsPerPackage": 4
+  },
+  {
+    "sku": "L0018",
+    "name": "YOGURT X 3 SURTIDO",
+    "description": "PACK X 150 GR X 3 UN",
+    "salePrice": 6.5,
+    "presentation": "paquete",
+    "unitsPerPackage": 3
+  },
+  {
+    "sku": "L0022",
+    "name": "AVENA PRO AUTENTICA ALQUERIA 220 GR",
+    "description": "PACK X 220 GR X 32 UN",
+    "salePrice": 60.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 32
+  },
+  {
+    "sku": "L0029",
+    "name": "AVENA PRO CUBANA ALQUERIA 220 GR",
+    "description": "PACK X 220 GR X 32 UN",
+    "salePrice": 60.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 32
+  },
+  {
+    "sku": "L0030",
+    "name": "CREMA DE LECHE TETRA",
+    "description": "CAJA X 180 GR PACK X 180 GR X 28 UN",
+    "salePrice": 63.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "L0032",
+    "name": "SUERO COSTEÑO 400 GR UND",
+    "description": "SUERO COSTEÑO 400 GR UND",
+    "salePrice": 8.2,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "L0033",
+    "name": "QUESO COMBINADO BOCADILLO X 6 38 GR",
+    "description": "PACK X 49 GR X 6 UN",
+    "salePrice": 16.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "L0035",
+    "name": "ALQUEMIX HOJUELAS X 3",
+    "description": "PACK X 170 GR X 3 UN",
+    "salePrice": 9.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 3
+  },
+  {
+    "sku": "L0036",
+    "name": "CEREAL FORTIKIDS MIX X 6",
+    "description": "PACK X 120 GR X 6 UN",
+    "salePrice": 10.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "L0044",
+    "name": "AVENA ORIG TETRA ALQUERIA 180 ML",
+    "description": "CAJA X 24 UN",
+    "salePrice": 30.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "L0045",
+    "name": "AVENA CANELA TETRA ALQUERIA 180 ML",
+    "description": "CAJA X 24 UN",
+    "salePrice": 30.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "L0046",
+    "name": "AVENA ORIG TETRA ALQUERIA 1LT",
+    "description": "CAJA X 12 L",
+    "salePrice": 60.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "L0047",
+    "name": "AVENA CANELA TETRA ALQUERIA 1LT",
+    "description": "CAJA X 12 LT",
+    "salePrice": 60.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "L0048",
+    "name": "CHOCOLECHE TETRA 180 ML",
+    "description": "CAJA PACK X 28 UN X 180 ML",
+    "salePrice": 44.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "L0049",
+    "name": "SUERO COSTEÑO ALQUERIA",
+    "description": "CAJA PACK X 20 UN X 200 GR",
+    "salePrice": 90.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "L0051",
+    "name": "SUERO COSTEÑO ALQUERIA 400 GR",
+    "description": "PACK X 15 UN X 400 GR",
+    "salePrice": 135.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 15
+  },
+  {
+    "sku": "L0053",
+    "name": "YOGURT ACTIGEST FRUTAS",
+    "description": "PACK X 100 GR X12 UN",
+    "salePrice": 10.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "L0054",
+    "name": "CREMA AGRIA COLANTA 200 GR",
+    "description": "UN X 200 GR",
+    "salePrice": 6.0,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "L0055",
+    "name": "CREMA AGRIA COLANTA 400 GR",
+    "description": "UN X 400 GR",
+    "salePrice": 10.5,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "M0004",
+    "name": "CHUNKY ADULTO 10* 2 KG",
+    "description": "BAG X 10 UND X 2 KG",
+    "salePrice": 84.0,
+    "presentation": "kg",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "M0005",
+    "name": "CHUNKY ADULTO 20*500 GR",
+    "description": "BAG X 20 UND X 500 GR",
+    "salePrice": 46.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 20
+  },
+  {
+    "sku": "M0006",
+    "name": "CHUNKY ADULTO RAZ PEQ 20*500 GR",
+    "description": "BAG X 20 UND X 500 GR",
+    "salePrice": 46.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 20
+  },
+  {
+    "sku": "M0007",
+    "name": "CHUNKY ADUL RAZ PEQ 6*1,5 KG",
+    "description": "BAG X 6 UND X 1,5 KG",
+    "salePrice": 39.0,
+    "presentation": "kg",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "M0008",
+    "name": "CHUNKY ADUL RAZ PEQ 4 * 4 KG",
+    "description": "BAG X 4 UND X 4 KG",
+    "salePrice": 62.0,
+    "presentation": "kg",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "M0009",
+    "name": "CHUNKY CAHORROS 10* 2 KG",
+    "description": "BAG X 10 UND X 2 KG",
+    "salePrice": 84.0,
+    "presentation": "kg",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "M0010",
+    "name": "CHUNKY CACHORROS 20*500 GR",
+    "description": "BAG X 20 UND X 500 GR",
+    "salePrice": 46.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 20
+  },
+  {
+    "sku": "M0011",
+    "name": "CHUNKY GATOS SALMON Y CORD 6*1,5 KG",
+    "description": "BAG X 6 UND X 1,5 KG",
+    "salePrice": 58.0,
+    "presentation": "kg",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "M0012",
+    "name": "CHUNKY GATOS POLLO 6*1,5 KG",
+    "description": "BAG X 6 UND X 1,5 KG",
+    "salePrice": 55.0,
+    "presentation": "kg",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "M0013",
+    "name": "DELICAPRICHOS GATOS 10*75 GR DISP X 10 UND X 75 GR",
+    "description": "DELICAPRICHOS GATOS 10*75 GR DISP X 10 UND X 75 GR",
+    "salePrice": 11.0,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "M0014",
+    "name": "DELICAPRICHOS 8*160 GR DISP X 8 UND X 160 GR",
+    "description": "DELICAPRICHOS 8*160 GR DISP X 8 UND X 160 GR",
+    "salePrice": 12.0,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "M0015",
+    "name": "DELICAT TROZ POLLO 12*80 GR",
+    "description": "DELICAT TROZ POLLO 12*80 GR",
+    "salePrice": 53.0,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "M0016",
+    "name": "DELICAT TROZ SALMON 12*80 GR",
+    "description": "DELICAT TROZ SALMON 12*80 GR",
+    "salePrice": 53.0,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "M0017",
+    "name": "DELIDOG DENT 10*150 GR DISP X 10 UND X 150 GR",
+    "description": "DELIDOG DENT 10*150 GR DISP X 10 UND X 150 GR",
+    "salePrice": 22.0,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "M0018",
+    "name": "DELIDOG MIX",
+    "description": "CAJA 10*280 GR DISP X 10 UND X 280 GR",
+    "salePrice": 37.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "M0019",
+    "name": "DELIDOG TROZ CARNES 12*100 GR",
+    "description": "DELIDOG TROZ CARNES 12*100 GR",
+    "salePrice": 56.0,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "M0020",
+    "name": "DELIDOG TROZ PAVO 12*100 GR",
+    "description": "DELIDOG TROZ PAVO 12*100 GR",
+    "salePrice": 56.0,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "P0003",
+    "name": "GOISCO MACARRONI 500 GR",
+    "description": "PACK X 500 GR X 20 UN",
+    "salePrice": 43.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 20
+  },
+  {
+    "sku": "P0004",
+    "name": "GOISCO SPAGHETTI 500 GR",
+    "description": "PACK 500 GRS X 20 UN",
+    "salePrice": 41.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 20
+  },
+  {
+    "sku": "PA0003",
+    "name": "RECOGEDORES",
+    "description": "PACK X 12 UN",
+    "salePrice": 36.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0001",
+    "name": "NUTRIBELA DISPL TRATAMIENTO CELULAS MA",
+    "description": "DISPL X 12 UN",
+    "salePrice": 13.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0002",
+    "name": "NUTRIBELA DISPL TRATAMIENTO NUTRICION A",
+    "description": "DISPL X 12 UN",
+    "salePrice": 13.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0003",
+    "name": "NUTRIBELA ACONDICIONADOR ENZIMOTERAP",
+    "description": "PACK X 370 GR X 6 UN",
+    "salePrice": 85.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0004",
+    "name": "NUTRIBELA DISPL TRATAMIENTO ENZIMOTERA",
+    "description": "DISPL X 12 UN",
+    "salePrice": 13.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0005",
+    "name": "NUTRIBELA DISPL TRATAMIENTO PRO HYALU",
+    "description": "DISPL X 12 UN",
+    "salePrice": 13.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0006",
+    "name": "NUTRIBELA ACONDICIONADOR CELULAS MADR",
+    "description": "PACK X 370 GR X 6 UN",
+    "salePrice": 85.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0007",
+    "name": "NUTRIBELA TRATAMIENTO PRO HYALURONIC 3",
+    "description": "PACK X 6 UN X 300 GR",
+    "salePrice": 80.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0008",
+    "name": "NUTRIBELA DISPL TRATAMIENTO REPARACION",
+    "description": "DISPL X 12 UN",
+    "salePrice": 13.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0009",
+    "name": "NUTRIBELA TRATAMIENTO CELULAS MADRES",
+    "description": "PACK X 6 UN X 300 GR",
+    "salePrice": 80.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0010",
+    "name": "NUTRIBELA TRATAMIENTO ENZIMOTERAPIA 30",
+    "description": "PACK X 6 UN X 300 GR",
+    "salePrice": 80.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0011",
+    "name": "NUTRIBELA TRATAMIENTO REPARACION INTEN",
+    "description": "PACK X 6 UN X 300 GR",
+    "salePrice": 80.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0013",
+    "name": "NUTRIBELA",
+    "description": "DISPL SHAMPOO REP. INTENSIVA DISPL X 12 UN",
+    "salePrice": 10.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0014",
+    "name": "NUTRIBELA DISPL ACONDICIONADOR REPARA",
+    "description": "DISPL X 12 UN",
+    "salePrice": 10.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0015",
+    "name": "NUTRIBELA DISPL SHAMPOO ENZIMOTERAPIA",
+    "description": "DISPL X 12 UN",
+    "salePrice": 10.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0016",
+    "name": "NUTRIBELA DISPL ACONDICIONADOR ENZIMO",
+    "description": "DISPL X 12 UN",
+    "salePrice": 10.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0017",
+    "name": "NUTRIBELA DISPL SHAMPOO CELULAS MADR",
+    "description": "DISPL X 12 UN",
+    "salePrice": 10.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0018",
+    "name": "NUTRIBELA DISPL ACONDICIONADOR CELULA",
+    "description": "DISPL X 12 UN",
+    "salePrice": 10.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0019",
+    "name": "NUTRIBELA DISPL SHAMPOO PRO HYALURONI",
+    "description": "DISPL X 12 UN",
+    "salePrice": 10.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0020",
+    "name": "NUTRIBELA DISPL ACONDICIONADOR PRO HY",
+    "description": "DISPL X 12 UN",
+    "salePrice": 10.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0021",
+    "name": "NUTRIBELA SHAMPOO REPARACION INTENSIVA 400 GR",
+    "description": "PACK X 400 GR X 6 UN",
+    "salePrice": 85.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0022",
+    "name": "NUTRIBELA CREMA PARA PEINAR REPARACION",
+    "description": "PACK X 400 GR X 6 UN",
+    "salePrice": 85.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0023",
+    "name": "NUTRIBELA CREMA PARA PEINAR ENZIMOTERA",
+    "description": "PACK X 400 GR X 6 UN",
+    "salePrice": 85.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0024",
+    "name": "NUTRIBELA CREMA PARA PEINAR BIOKERATINA",
+    "description": "PACK X 400 GR X 6 UN",
+    "salePrice": 85.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0025",
+    "name": "NUTRIBELA SHAMPOO PRO HYALURONIC 400 GR",
+    "description": "PACK X 370 GR X 6 UN",
+    "salePrice": 85.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0026",
+    "name": "NUTRIBELA SHAMPOO CELULAS MADRES 400 GR",
+    "description": "PACK X 370 GR X 6 UN",
+    "salePrice": 85.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0027",
+    "name": "NUTRIBELA SHAMPOO REP. INTENSIVA 400 GR",
+    "description": "PACK X 6 UN X 300 GR",
+    "salePrice": 80.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0029",
+    "name": "NUTRIBELA ACONDICIONADOR PRO HYALURONIC",
+    "description": "PACK X 6 UN X 300 GR",
+    "salePrice": 80.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0030",
+    "name": "NUTRIBELA ACONDICIONADOR REPARACION INTENSIVA",
+    "description": "DISPL X 12 UN",
+    "salePrice": 13.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0031",
+    "name": "NUTRIBELA TRATAMIENTO REPOLARIZACION 300 GR",
+    "description": "DISPL X 12 UN",
+    "salePrice": 13.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0033",
+    "name": "NUTRIBELA TRATAMIENTO TERMOPROTECCION",
+    "description": "DISPL X 12 UN",
+    "salePrice": 10.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0034",
+    "name": "NUTRIBELA DISPL TRATAMIENTO REPOLARIZACION",
+    "description": "DISPL X 12 UN",
+    "salePrice": 13.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0035",
+    "name": "NUTRIBELA SHAMPOO BIOKERATINA 400 GR",
+    "description": "PACK X 400 GR X 6 UN",
+    "salePrice": 85.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0036",
+    "name": "NUTRIBELA DISPL TRATAMIENTO BIOKERATINA",
+    "description": "PACK X 370 GR X 6 UN",
+    "salePrice": 85.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0037",
+    "name": "NUTRIBELA DISPL ACONDICIONADOR BIOKERATINA",
+    "description": "PACK X 6 UN X 300 GR",
+    "salePrice": 80.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0038",
+    "name": "NUTRIBELA",
+    "description": "DISPL SHAMPOO BIOKERATINA DISPL X 12 UN",
+    "salePrice": 10.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "PC0039",
+    "name": "NUTRIBELA DISPL TRATAMIENTO TERMOPROTECCION",
+    "description": "PACK X 400 GR X 6 UN",
+    "salePrice": 85.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0040",
+    "name": "NUTRIBELA ACONDICIONADOR BIOKERATINA 400 GR",
+    "description": "PACK X 300 GR X 6 UN",
+    "salePrice": 70.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0041",
+    "name": "NUTRIBELA TRATAMIENTO BIOKERATINA 300 GR",
+    "description": "PACK X 300 GR X 6 UN",
+    "salePrice": 70.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PC0042",
+    "name": "NUTRIBELA TRATAMIENTO NUTRICION AVANZADA",
+    "description": "PACK X 300 GR X 6 UN",
+    "salePrice": 70.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "PF0001",
+    "name": "RAMO PONQUE TRADICIONAL",
+    "description": "UN X 230 GR",
+    "salePrice": 4.5,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "PF0004",
+    "name": "CHOCORAMO MINI",
+    "description": "DISPL X 20 GR X 20 UN",
+    "salePrice": 13.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 20
+  },
+  {
+    "sku": "PF0005",
+    "name": "TOSTAOS MANTEQUILLA BIMBO",
+    "description": "UN X 300 GR",
+    "salePrice": 6.5,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "PF0009",
+    "name": "BROWNIE AREQUIPE",
+    "description": "UN X 60 GR.",
+    "salePrice": 2.0,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "PF0010",
+    "name": "BROWNIE CHOCOLATE",
+    "description": "UN X 50 GR",
+    "salePrice": 2.0,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "PF0011",
+    "name": "CHOCORAMO",
+    "description": "DISPL DISPL X 65 GR X 5 UN",
+    "salePrice": 9.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 5
+  },
+  {
+    "sku": "PF0020",
+    "name": "TOSTAOS INTEGRALES BIMBO 300 GR",
+    "description": "UN X 300 GR",
+    "salePrice": 7.0,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "PF0023",
+    "name": "BROWNIE MILO",
+    "description": "UN X 60 GR.",
+    "salePrice": 2.0,
+    "presentation": "unidad",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "S0007",
+    "name": "MANIMOTO LIMON",
+    "description": "DISPL X 12 UN",
+    "salePrice": 16.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "S0013",
+    "name": "MANIMOTO NATURAL",
+    "description": "DISPL X 12 UN",
+    "salePrice": 16.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "S0047",
+    "name": "POPETAS FAMILIAR CARAMELO",
+    "description": "CAJA CAJA X 20 UN X 165 GR",
+    "salePrice": 70.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "S0049",
+    "name": "POPETAS FAMILIAR CARAMELO QUESO",
+    "description": "CAJA CAJA X 20 UN X 121 GR",
+    "salePrice": 70.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "S0050",
+    "name": "POPETAS CARAMELO",
+    "description": "CAJA CAJA X 10 DISP X 6 UN X 44 GR",
+    "salePrice": 87.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "S0051",
+    "name": "POPETAS CARAMELO MANTEQUILLA",
+    "description": "CAJA CAJA X 10 DISP X 6 UN X 22 GR",
+    "salePrice": 87.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "S0052",
+    "name": "POPETAS CARAMELO QUESO",
+    "description": "CAJA CAJA X 10 DISP X 6 UN X 39 GR",
+    "salePrice": 87.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "S0058",
+    "name": "POPETAS FAMILIAR CARAMELO MANTEQUILLA",
+    "description": "CAJA X 20 UN X 165 GR",
+    "salePrice": 70.0,
+    "presentation": "caja",
+    "unitsPerPackage": 0
+  },
+  {
+    "sku": "S0080",
+    "name": "PAPAS MONTEROJO LIMA LIMON 100 GR",
+    "description": "PACK X 100 GR X 12 UN",
+    "salePrice": 45.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "S0081",
+    "name": "PLATANO VERDE MONTEROJO LIMA - LIMON 100 GR",
+    "description": "PACK X 100 GR X 18 UND",
+    "salePrice": 70.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 18
+  },
+  {
+    "sku": "S0082",
+    "name": "PLATANO MADURO MONTEROJO SAL MARINA 100 GR",
+    "description": "PACK X 110 GR X 18 UN",
+    "salePrice": 70.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 18
+  },
+  {
+    "sku": "S0083",
+    "name": "CHICHARRON CARNUDO LIMA LIMON",
+    "description": "PACK X 90 GR X 18 UND",
+    "salePrice": 150.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 18
+  },
+  {
+    "sku": "S0084",
+    "name": "CHICHARRON CARNUDO SAL MARINA",
+    "description": "PACK X 90 GR X 18 UND",
+    "salePrice": 150.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 18
+  },
+  {
+    "sku": "S0085",
+    "name": "PAPAS MONTEROJO BBQ DULCE 100 GR",
+    "description": "PACK X 100 GR X 12 UN",
+    "salePrice": 45.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "S0086",
+    "name": "PAPAS MONTEROJO SAL ROSADA 100 GR",
+    "description": "PACK X 100 GR X 12 UN",
+    "salePrice": 45.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "S0087",
+    "name": "PAPAS MONTEROJO CREMA Y CEBOLLA 100 GR",
+    "description": "PACK X 100 GR X 12 UN",
+    "salePrice": 45.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "S0088",
+    "name": "PAPAS MONTEROJO NUGGETS DE POLLO 100 GR",
+    "description": "PACK X 100 GR X 12 UN",
+    "salePrice": 45.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "S0089",
+    "name": "MEZCLA ANDINA MONTEROJO LIMON 100 GR",
+    "description": "PACK X 100 GR X 12 UN",
+    "salePrice": 45.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "S0090",
+    "name": "MEZCLA ANDINA MONTEROJO BBQ DULCE 100 GR",
+    "description": "PACK X 100 GR X 12 UN",
+    "salePrice": 45.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  },
+  {
+    "sku": "S0095",
+    "name": "PAPAS MONTEROJO LIMA - LIMON X 6 UND",
+    "description": "PACK X 8 DISP X 6 UND X 25 GR",
+    "salePrice": 60.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "S0096",
+    "name": "PAPAS MONTEROJO SAL ROSADA X 6 UND",
+    "description": "PACK X 8 DISP X 6 UND X 25 GR",
+    "salePrice": 60.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "S0097",
+    "name": "MEZCLA ANDINA LIMA LIMON X 6 UND",
+    "description": "PACK X 8 DISP X 6 UND X 30 GR",
+    "salePrice": 60.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "S0098",
+    "name": "CHICHARRON CARNUDO LIMA LIMON X 6 UND",
+    "description": "PACK X 8 DISP X 6 UND X 30 GR",
+    "salePrice": 140.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "S0099",
+    "name": "CHICHARRON CARNUDO SAL MARINA X 6 UNDPACK X 8 DISP X 6 UND X 30 GR",
+    "description": "CHICHARRON CARNUDO SAL MARINA X 6 UNDPACK X 8 DISP X 6 UND X 30 GR",
+    "salePrice": 140.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 6
+  },
+  {
+    "sku": "S0100",
+    "name": "PAPAS MONTEROJO MIEL MOSTAZA 100 GR",
+    "description": "PACK X 100 GR X 12 UN",
+    "salePrice": 45.0,
+    "presentation": "paquete",
+    "unitsPerPackage": 12
+  }
+]

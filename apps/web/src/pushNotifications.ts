@@ -85,14 +85,15 @@ async function ensureFirebaseMessaging(config: PushConfig) {
   if (!foregroundListenerAttached) {
     foregroundListenerAttached = true;
     onMessage(messagingClient, (payload) => {
-      const title = payload.notification?.title ?? "SPS";
-      const body = payload.notification?.body ?? "";
+      const title = payload.data?.title ?? payload.notification?.title ?? "SPS";
+      const body = payload.data?.body ?? payload.notification?.body ?? "";
       const link = payload.data?.link ?? payload.fcmOptions?.link ?? "/";
 
       if (Notification.permission === "granted") {
         const notification = new Notification(title, {
           body,
           icon: "/icons/icon-192.png",
+          tag: payload.messageId ?? payload.data?.tag ?? "sps-push",
         });
 
         notification.onclick = () => {

@@ -80,21 +80,18 @@ async function sendPushToTokens(messaging, tokens, payload) {
     let sent = 0;
     await Promise.all(tokens.map(async (token) => {
         try {
+            const link = payload.url ?? "/";
+            // Data-only payload: the web client shows one notification via onMessage / onBackgroundMessage.
+            // Including a top-level or webpush.notification field causes duplicate system notifications.
             await messaging.send({
                 token,
-                notification: {
+                data: {
                     title: payload.title,
                     body: payload.body,
+                    link,
                 },
                 webpush: {
-                    fcmOptions: {
-                        link: payload.url ?? "/",
-                    },
-                    notification: {
-                        title: payload.title,
-                        body: payload.body,
-                        icon: "/sps-logo.jpeg",
-                    },
+                    fcmOptions: { link },
                 },
             });
             sent += 1;

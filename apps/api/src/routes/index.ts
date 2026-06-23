@@ -33,6 +33,7 @@ import { OperationsClient } from "../modules/stores/operations-client.model.js";
 import { Store } from "../modules/stores/store.model.js";
 import { Supplier } from "../modules/suppliers/supplier.model.js";
 import { User } from "../modules/users/user.model.js";
+import { SalesRepGoal } from "../modules/users/sales-rep-goal.model.js";
 import { Warehouse } from "../modules/warehouses/warehouse.model.js";
 import { isFirebasePushConfigured } from "../services/firebase-admin.service.js";
 import {
@@ -1081,6 +1082,186 @@ function normalizeOptionalDateValue(value: unknown) {
   return new Date(`${date.toISOString().slice(0, 10)}T00:00:00.000Z`);
 }
 
+async function getSalesRepRouteStoreIds(salesRepId: string) {
+  const routes = await SalesRoute.find({ salesRepId, active: { $ne: false } }).lean();
+  return new Set(
+    routes.flatMap((route) => route.days.flatMap((day) => day.stores.map((store) => store.storeId))),
+  );
+}
+
+async function assertSalesRepCanManageStore(salesRepId: string, storeId: string) {
+  const salesRep = await User.findById(salesRepId).lean();
+
+  if (!salesRep || salesRep.role !== "sales-rep-aruba") {
+    throw new Error("El vendedor no existe o no esta habilitado.");
+  }
+
+  const allowedStoreIds = await getSalesRepRouteStoreIds(salesRepId);
+
+  if (!allowedStoreIds.has(storeId)) {
+    throw new Error("Este cliente no esta asignado en tus rutas activas.");
+  }
+
+  return salesRep;
+}
+
+async function buildSalesProductCatalog(storeId?: string) {
+  const [products, warehouseStocks, store] = await Promise.all([
+    Product.find({ active: { $ne: false }, shareWithAruba: { $ne: false } }).sort({ name: 1 }).lean(),
+    WarehouseStock.find({ availableUnits: { $gt: 0 } }).lean(),
+    storeId ? Store.findById(storeId).select({ assignedProductIds: 1 }).lean() : Promise.resolve(null),
+  ]);
+
+  const assignedProductIds = new Set(
+    Array.isArray(store?.assignedProductIds)
+      ? store.assignedProductIds.map((entry) => String(entry)).filter(Boolean)
+      : [],
+  );
+
+  const stockByProduct = new Map<string, { total: number; nearestExpiration: Date | null }>();
+  const now = new Date();
+  const twoMonthsLater = new Date(now);
+  twoMonthsLater.setMonth(twoMonthsLater.getMonth() + 2);
+
+  warehouseStocks.forEach((row) => {
+    const productId = String(row.productId);
+    const current = stockByProduct.get(productId) ?? { total: 0, nearestExpiration: null };
+    current.total += Number(row.availableUnits ?? 0);
+
+    const expirationDate = normalizeOptionalDateValue(row.expirationDate);
+
+    if (expirationDate && expirationDate >= now) {
+      if (!current.nearestExpiration || expirationDate < current.nearestExpiration) {
+        current.nearestExpiration = expirationDate;
+      }
+    }
+
+    stockByProduct.set(productId, current);
+  });
+
+  const rows = products.map((product) => {
+    const productId = String(product._id);
+    const stockInfo = stockByProduct.get(productId) ?? { total: 0, nearestExpiration: null };
+    let nearestExpiration = stockInfo.nearestExpiration;
+
+    if (!nearestExpiration && product.expirationDate) {
+      const productExpiration = normalizeOptionalDateValue(product.expirationDate);
+
+      if (productExpiration && productExpiration >= now) {
+        nearestExpiration = productExpiration;
+      }
+    }
+
+    const isExpiringSoon = Boolean(
+      nearestExpiration &&
+      nearestExpiration >= now &&
+      nearestExpiration <= twoMonthsLater,
+    );
+
+    return {
+      productId,
+      sku: product.sku,
+      name: product.name,
+      category: product.category ?? "",
+      imageUrl: product.imageUrl ?? "",
+      salePrice: Number(product.salePrice ?? 0),
+      warehouseStock: stockInfo.total,
+      isExpiringSoon,
+      nearestExpirationDate: nearestExpiration ? nearestExpiration.toISOString() : null,
+      isAssigned: assignedProductIds.has(productId),
+    };
+  });
+
+  const expiringSoon = rows
+    .filter((row) => row.isExpiringSoon && row.warehouseStock > 0)
+    .sort((left, right) => String(left.nearestExpirationDate).localeCompare(String(right.nearestExpirationDate)));
+  const expiringProductIds = new Set(expiringSoon.map((row) => row.productId));
+  const catalogProducts = rows
+    .filter((row) => !expiringProductIds.has(row.productId))
+    .sort((left, right) => left.name.localeCompare(right.name));
+
+  return { expiringSoon, products: catalogProducts };
+}
+
+async function sanitizeSalesRoutesWithStores(routes: unknown[]) {
+  const typedRoutes = routes as Array<{
+    days: Array<{ day: string; stores: Array<{ storeId: string; storeName: string; address?: string | null }> }>;
+    plannedStops?: number;
+    assignedDays?: number;
+    [key: string]: unknown;
+  }>;
+  const storeIds = [...new Set(
+    typedRoutes.flatMap((route) => route.days.flatMap((day) => day.stores.map((store) => store.storeId))),
+  )].filter(Boolean);
+
+  if (storeIds.length === 0) {
+    return typedRoutes.map((route) => ({
+      ...route,
+      days: [],
+      plannedStops: 0,
+      assignedDays: 0,
+    }));
+  }
+
+  const stores = await Store.find({ _id: { $in: storeIds } }).select({ name: 1, address: 1 }).lean();
+  const storeById = new Map(stores.map((store) => [String(store._id), store]));
+
+  return typedRoutes.map((route) => {
+    const days = route.days
+      .map((day) => ({
+        ...day,
+        stores: day.stores
+          .filter((store) => storeById.has(store.storeId))
+          .map((store) => {
+            const currentStore = storeById.get(store.storeId)!;
+
+            return {
+              storeId: store.storeId,
+              storeName: String(currentStore.name ?? store.storeName),
+              address: String(currentStore.address ?? store.address ?? ""),
+            };
+          }),
+      }))
+      .filter((day) => day.stores.length > 0);
+
+    return {
+      ...route,
+      days,
+      plannedStops: days.reduce((sum, day) => sum + day.stores.length, 0),
+      assignedDays: days.length,
+    };
+  });
+}
+
+async function removeStoreFromAllRoutes(storeId: string) {
+  const routes = await SalesRoute.find({ "days.stores.storeId": storeId });
+
+  await Promise.all(
+    routes.map(async (route) => {
+      const sanitizedDays = route.days
+        .map((day) => ({
+          day: day.day,
+          stores: day.stores
+            .filter((store) => store.storeId !== storeId)
+            .map((store) => ({
+              storeId: store.storeId,
+              storeName: store.storeName,
+              address: store.address ?? "",
+            })),
+        }))
+        .filter((day) => day.stores.length > 0);
+
+      const plannedStops = sanitizedDays.reduce((sum, day) => sum + day.stores.length, 0);
+      const assignedDays = sanitizedDays.length;
+
+      await SalesRoute.updateOne(
+        { _id: route._id },
+        { $set: { days: sanitizedDays, plannedStops, assignedDays } },
+      );
+    }),
+  );
+}
+
 function compareWarehouseStockLotsByConsumptionPriority(
   left: { expirationDate?: Date | string | null; createdAt?: Date | string | null },
   right: { expirationDate?: Date | string | null; createdAt?: Date | string | null },
@@ -1327,7 +1508,102 @@ apiRouter.get("/sales/routes", async (request, response) => {
   const routes = await SalesRoute.find({ salesRepId, active: { $ne: false } })
     .sort({ weekStart: -1, createdAt: -1 })
     .lean();
-  response.json(routes);
+  response.json(await sanitizeSalesRoutesWithStores(routes));
+});
+
+apiRouter.get("/sales/product-catalog", async (request, response) => {
+  try {
+    const salesRepId = typeof request.query.salesRepId === "string" ? request.query.salesRepId.trim() : "";
+    const storeId = typeof request.query.storeId === "string" ? request.query.storeId.trim() : "";
+
+    if (!salesRepId) {
+      response.status(400).json({ message: "Indica el vendedor para consultar el catalogo." });
+      return;
+    }
+
+    const salesRep = await User.findById(salesRepId).lean();
+
+    if (!salesRep || salesRep.role !== "sales-rep-aruba") {
+      response.status(404).json({ message: "El vendedor no existe o no esta habilitado." });
+      return;
+    }
+
+    if (storeId) {
+      await assertSalesRepCanManageStore(salesRepId, storeId);
+
+      const store = await Store.findById(storeId).lean();
+
+      if (!store) {
+        response.status(404).json({ message: "El cliente no existe." });
+        return;
+      }
+    }
+
+    const catalog = await buildSalesProductCatalog(storeId || undefined);
+    response.json(catalog);
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.post("/sales/stores/:id/assigned-products/add", async (request, response) => {
+  try {
+    const salesRepId = typeof request.body?.salesRepId === "string" ? request.body.salesRepId.trim() : "";
+    const productId = typeof request.body?.productId === "string" ? request.body.productId.trim() : "";
+    const storeId = request.params.id;
+
+    if (!salesRepId || !productId) {
+      response.status(400).json({ message: "Indica el vendedor y el producto a asignar." });
+      return;
+    }
+
+    await assertSalesRepCanManageStore(salesRepId, storeId);
+
+    const [store, product] = await Promise.all([
+      Store.findById(storeId),
+      Product.findOne({ _id: productId, active: { $ne: false }, shareWithAruba: { $ne: false } }).lean(),
+    ]);
+
+    if (!store) {
+      response.status(404).json({ message: "El cliente no existe." });
+      return;
+    }
+
+    if (!product) {
+      response.status(404).json({ message: "El producto no existe o no esta disponible para Aruba." });
+      return;
+    }
+
+    const currentAssignedProductIds = Array.isArray(store.assignedProductIds)
+      ? store.assignedProductIds.map((entry) => String(entry)).filter(Boolean)
+      : [];
+
+    if (currentAssignedProductIds.includes(productId)) {
+      response.json({
+        message: `${product.name} ya estaba asignado a ${store.name}.`,
+        store: {
+          _id: String(store._id),
+          name: store.name,
+          assignedProductIds: currentAssignedProductIds,
+        },
+      });
+      return;
+    }
+
+    store.assignedProductIds = [...currentAssignedProductIds, productId] as typeof store.assignedProductIds;
+    await store.save();
+
+    response.status(201).json({
+      message: `${product.name} agregado a ${store.name}.`,
+      store: {
+        _id: String(store._id),
+        name: store.name,
+        assignedProductIds: store.assignedProductIds.map((entry) => String(entry)),
+      },
+    });
+  } catch (error) {
+    sendCreationError(response, error);
+  }
 });
 
 apiRouter.get("/sales/stores/:id/products", async (request, response) => {
@@ -1405,6 +1681,8 @@ apiRouter.put("/sales/stores/:id/assigned-products", async (request, response) =
       response.status(404).json({ message: "El cliente no existe." });
       return;
     }
+
+    await assertSalesRepCanManageStore(salesRepId, String(store._id));
 
     await Store.findByIdAndUpdate(store._id, {
       assignedProductIds,
@@ -1782,6 +2060,884 @@ apiRouter.get("/management/clients", async (_request, response) => {
   response.json(clients);
 });
 
+apiRouter.get("/management/stores/:id/summary", async (request, response) => {
+  try {
+    const storeId = String(request.params.id ?? "").trim();
+    const store = await Store.findById(storeId).lean();
+
+    if (!store) {
+      response.status(404).json({ message: "La tienda no existe." });
+      return;
+    }
+
+    const assignedProductIds = Array.isArray(store.assignedProductIds)
+      ? store.assignedProductIds.map((entry) => String(entry)).filter(Boolean)
+      : [];
+
+    const [assignedProducts, routes, orders, billedInvoices] = await Promise.all([
+      assignedProductIds.length > 0
+        ? Product.find({ _id: { $in: assignedProductIds }, active: { $ne: false }, shareWithAruba: { $ne: false } })
+          .sort({ name: 1 })
+          .lean()
+        : Promise.resolve([]),
+      sanitizeSalesRoutesWithStores(
+        await SalesRoute.find({ active: { $ne: false } }).sort({ weekStart: -1, createdAt: -1 }).lean(),
+      ),
+      Order.find({ storeId }).sort({ createdAt: -1, updatedAt: -1 }).limit(50).lean(),
+      LogisticsInvoice.find({
+        active: { $ne: false },
+        storeName: store.name,
+        orderId: { $exists: true, $ne: "" },
+      }).sort({ invoiceDate: -1, createdAt: -1 }).lean(),
+    ]);
+
+    const visitSchedule: Array<{
+      routeId: string;
+      routeName: string;
+      salesRepId: string;
+      salesRepName: string;
+      weekLabel: string;
+      weekStart: string;
+      day: string;
+    }> = [];
+
+    const salesRepTracker = new Map<string, { salesRepName: string; visitCount: number; routeNames: Set<string> }>();
+
+    for (const route of routes) {
+      const routeRecord = route as Record<string, unknown> & {
+        days: Array<{ day: string; stores: Array<{ storeId: string }> }>;
+      };
+      const routeId = String(routeRecord._id ?? routeRecord.code ?? "");
+      const routeName = String(routeRecord.name ?? "");
+      const salesRepId = String(routeRecord.salesRepId ?? "");
+      const salesRepName = String(routeRecord.salesRepName ?? "");
+      const weekLabel = String(routeRecord.weekLabel ?? "");
+      const weekStartValue = routeRecord.weekStart;
+      const weekStart = weekStartValue instanceof Date
+        ? weekStartValue.toISOString()
+        : String(weekStartValue ?? "");
+
+      for (const day of routeRecord.days ?? []) {
+        const isAssignedToDay = (day.stores ?? []).some((entry) => String(entry.storeId) === storeId);
+
+        if (!isAssignedToDay) {
+          continue;
+        }
+
+        visitSchedule.push({
+          routeId,
+          routeName,
+          salesRepId,
+          salesRepName,
+          weekLabel,
+          weekStart,
+          day: day.day,
+        });
+
+        const current = salesRepTracker.get(salesRepId) ?? {
+          salesRepName,
+          visitCount: 0,
+          routeNames: new Set<string>(),
+        };
+        current.visitCount += 1;
+        current.routeNames.add(routeName);
+        salesRepTracker.set(salesRepId, current);
+      }
+    }
+
+    const orderProductIds = Array.from(new Set(
+      orders.flatMap((order) => order.items.map((item) => String(item.productId)).filter(Boolean)),
+    ));
+    const orderProducts = orderProductIds.length > 0
+      ? await Product.find({ _id: { $in: orderProductIds } }).select({ _id: 1, name: 1, sku: 1 }).lean()
+      : [];
+    const orderProductsById = new Map(orderProducts.map((product) => [String(product._id), product]));
+
+    const enrichedOrders = orders.map((order) => ({
+      _id: String(order._id),
+      routeId: order.routeId ?? "",
+      routeName: order.routeName ?? "",
+      routeDay: order.routeDay ?? "",
+      storeId: order.storeId,
+      storeName: order.storeName,
+      salesRepId: order.salesRepId,
+      salesRepName: order.salesRepName,
+      deliveryZone: order.deliveryZone,
+      status: order.status,
+      createdAt: order.createdAt,
+      updatedAt: order.updatedAt,
+      items: order.items.map((item) => {
+        const relatedProduct = orderProductsById.get(String(item.productId));
+
+        return {
+          productId: String(item.productId),
+          stockCurrent: item.stockCurrent === undefined || item.stockCurrent === null ? null : Number(item.stockCurrent),
+          quantity: Number(item.quantity ?? 0),
+          notes: item.notes ?? "",
+          productName: relatedProduct?.name ?? "Producto eliminado",
+          productSku: relatedProduct?.sku ?? "-",
+        };
+      }),
+    }));
+
+    const productSalesMap = new Map<string, { productId: string; productName: string; productSku: string; totalUnits: number }>();
+
+    for (const order of enrichedOrders) {
+      for (const item of order.items) {
+        const current = productSalesMap.get(item.productId) ?? {
+          productId: item.productId,
+          productName: item.productName,
+          productSku: item.productSku,
+          totalUnits: 0,
+        };
+        current.totalUnits += Number(item.quantity ?? 0);
+        productSalesMap.set(item.productId, current);
+      }
+    }
+
+    const topProducts = Array.from(productSalesMap.values())
+      .sort((left, right) => right.totalUnits - left.totalUnits)
+      .slice(0, 8);
+
+    const deliveredOrders = enrichedOrders.filter((order) => order.status === "delivered").length;
+    const pendingOrders = enrichedOrders.length - deliveredOrders;
+    const totalUnitsOrdered = enrichedOrders.reduce(
+      (total, order) => total + order.items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0),
+      0,
+    );
+
+    response.json({
+      store: {
+        id: String(store._id),
+        code: store.code ?? "",
+        name: store.name,
+        address: store.address ?? "",
+        email: store.email ?? "",
+        phoneCountryCode: store.phoneCountryCode ?? "",
+        phone: store.phone ?? "",
+        managerName: store.managerName ?? "",
+        active: store.active !== false,
+        createdAt: store.createdAt,
+      },
+      assignedProducts: assignedProducts.map((product) => ({
+        productId: String(product._id),
+        sku: product.sku,
+        name: product.name,
+        category: product.category,
+        imageUrl: product.imageUrl ?? "",
+        salePrice: Number(product.salePrice ?? 0),
+      })),
+      visitSchedule,
+      visitsPerWeek: visitSchedule.length,
+      salesReps: Array.from(salesRepTracker.entries()).map(([salesRepId, entry]) => ({
+        salesRepId,
+        salesRepName: entry.salesRepName,
+        visitCount: entry.visitCount,
+        routeNames: Array.from(entry.routeNames),
+      })),
+      orders: enrichedOrders,
+      orderStats: {
+        total: enrichedOrders.length,
+        delivered: deliveredOrders,
+        pending: pendingOrders,
+        totalUnitsOrdered,
+        lastOrderDate: enrichedOrders[0]?.createdAt ? String(enrichedOrders[0].createdAt) : null,
+      },
+      billingStats: {
+        totalRevenueAwg: billedInvoices.reduce((total, invoice) => total + Number(invoice.totalRevenueAwg ?? 0), 0),
+        totalUtilityAwg: billedInvoices.reduce((total, invoice) => total + Number(invoice.totalUtilityAwg ?? 0), 0),
+        invoiceCount: billedInvoices.length,
+      },
+      topProducts,
+    });
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+async function buildStorePerformanceRankings() {
+  await syncDeliveredOrdersIntoLogisticsInvoices();
+
+  const [stores, billedInvoices, orders] = await Promise.all([
+    Store.find({ active: { $ne: false } }).sort({ name: 1 }).lean(),
+    LogisticsInvoice.find({ active: { $ne: false } }).lean(),
+    Order.find().select({ storeId: 1, storeName: 1, status: 1 }).lean(),
+  ]);
+
+  const storeStats = new Map<string, {
+    storeId: string;
+    storeName: string;
+    address: string;
+    totalRevenueAwg: number;
+    totalUtilityAwg: number;
+    invoiceCount: number;
+    orderCount: number;
+    deliveredOrders: number;
+  }>();
+
+  for (const store of stores) {
+    const storeId = String(store._id);
+    storeStats.set(storeId, {
+      storeId,
+      storeName: store.name,
+      address: String(store.address ?? ""),
+      totalRevenueAwg: 0,
+      totalUtilityAwg: 0,
+      invoiceCount: 0,
+      orderCount: 0,
+      deliveredOrders: 0,
+    });
+  }
+
+  const storeIdByName = new Map(stores.map((store) => [store.name.trim().toLowerCase(), String(store._id)]));
+
+  for (const invoice of billedInvoices) {
+    const storeName = String(invoice.storeName ?? "").trim();
+    const storeId = storeIdByName.get(storeName.toLowerCase()) ?? "";
+
+    if (!storeId || !storeStats.has(storeId)) {
+      continue;
+    }
+
+    const current = storeStats.get(storeId)!;
+    current.totalRevenueAwg += Number(invoice.totalRevenueAwg ?? 0);
+    current.totalUtilityAwg += Number(invoice.totalUtilityAwg ?? 0);
+    current.invoiceCount += 1;
+  }
+
+  for (const order of orders) {
+    const storeId = String(order.storeId ?? "").trim();
+
+    if (!storeId || !storeStats.has(storeId)) {
+      continue;
+    }
+
+    const current = storeStats.get(storeId)!;
+    current.orderCount += 1;
+
+    if (order.status === "delivered") {
+      current.deliveredOrders += 1;
+    }
+  }
+
+  const rankedStores = Array.from(storeStats.values()).sort((left, right) => {
+    if (right.totalRevenueAwg !== left.totalRevenueAwg) {
+      return right.totalRevenueAwg - left.totalRevenueAwg;
+    }
+
+    return right.orderCount - left.orderCount;
+  });
+
+  return {
+    leaders: rankedStores.slice(0, 20),
+    lowPerformers: [...rankedStores].reverse().slice(0, 20),
+  };
+}
+
+async function buildProductPerformanceRankings() {
+  await syncDeliveredOrdersIntoLogisticsInvoices();
+
+  const [products, billedInvoices, orders, inventoryStocks] = await Promise.all([
+    Product.find({ active: { $ne: false }, shareWithAruba: { $ne: false } }).sort({ name: 1 }).lean(),
+    LogisticsInvoice.find({ active: { $ne: false } }).lean(),
+    Order.find().select({ items: 1, status: 1, createdAt: 1 }).lean(),
+    WarehouseStock.find({ availableUnits: { $gt: 0 } }).select({ productId: 1, availableUnits: 1, expirationDate: 1 }).lean(),
+  ]);
+
+  const productStats = new Map<string, {
+    productId: string;
+    productName: string;
+    productSku: string;
+    category: string;
+    totalUnits: number;
+    totalRevenueAwg: number;
+    orderCount: number;
+  }>();
+
+  for (const product of products) {
+    const productId = String(product._id);
+    productStats.set(productId, {
+      productId,
+      productName: product.name,
+      productSku: product.sku,
+      category: String(product.category ?? ""),
+      totalUnits: 0,
+      totalRevenueAwg: 0,
+      orderCount: 0,
+    });
+  }
+
+  for (const invoice of billedInvoices) {
+    for (const item of invoice.items ?? []) {
+      const productId = String(item.productId ?? "").trim();
+      const current = productStats.get(productId);
+
+      if (!current) {
+        continue;
+      }
+
+      current.totalUnits += Number(item.quantity ?? 0);
+      current.totalRevenueAwg += Number(item.lineTotalAwg ?? 0);
+    }
+  }
+
+  for (const order of orders) {
+    for (const item of order.items ?? []) {
+      const productId = String(item.productId ?? "").trim();
+      const current = productStats.get(productId);
+
+      if (!current) {
+        continue;
+      }
+
+      current.orderCount += 1;
+    }
+  }
+
+  const rankedProducts = Array.from(productStats.values())
+    .sort((left, right) => {
+      if (right.totalUnits !== left.totalUnits) {
+        return right.totalUnits - left.totalUnits;
+      }
+
+      return right.totalRevenueAwg - left.totalRevenueAwg;
+    });
+
+  const inventoryByProduct = new Map<string, { quantity: number; nearestExpiration: string | null }>();
+
+  for (const stock of inventoryStocks) {
+    const productId = String(stock.productId ?? "").trim();
+
+    if (!productId) {
+      continue;
+    }
+
+    const current = inventoryByProduct.get(productId) ?? { quantity: 0, nearestExpiration: null };
+    current.quantity += Number(stock.availableUnits ?? 0);
+
+    const expirationDate = stock.expirationDate ? String(stock.expirationDate).slice(0, 10) : null;
+
+    if (expirationDate && (!current.nearestExpiration || expirationDate < current.nearestExpiration)) {
+      current.nearestExpiration = expirationDate;
+    }
+
+    inventoryByProduct.set(productId, current);
+  }
+
+  const twoMonthsFromNow = new Date();
+  twoMonthsFromNow.setMonth(twoMonthsFromNow.getMonth() + 2);
+  const expiringThreshold = twoMonthsFromNow.toISOString().slice(0, 10);
+
+  const noSalesWithStock = rankedProducts
+    .filter((product) => product.totalUnits === 0 && (inventoryByProduct.get(product.productId)?.quantity ?? 0) > 0)
+    .slice(0, 10)
+    .map((product) => ({
+      ...product,
+      stockQuantity: inventoryByProduct.get(product.productId)?.quantity ?? 0,
+    }));
+
+  const expiringLowSales = rankedProducts
+    .filter((product) => {
+      const inventory = inventoryByProduct.get(product.productId);
+
+      return Boolean(
+        inventory?.nearestExpiration
+        && inventory.nearestExpiration <= expiringThreshold
+        && product.totalUnits <= 5,
+      );
+    })
+    .slice(0, 10)
+    .map((product) => ({
+      ...product,
+      stockQuantity: inventoryByProduct.get(product.productId)?.quantity ?? 0,
+      nearestExpiration: inventoryByProduct.get(product.productId)?.nearestExpiration ?? null,
+    }));
+
+  const highInventoryLowSales = rankedProducts
+    .filter((product) => {
+      const stockQuantity = inventoryByProduct.get(product.productId)?.quantity ?? 0;
+
+      return stockQuantity >= 20 && product.totalUnits <= 10;
+    })
+    .slice(0, 10)
+    .map((product) => ({
+      ...product,
+      stockQuantity: inventoryByProduct.get(product.productId)?.quantity ?? 0,
+    }));
+
+  return {
+    leaders: rankedProducts.slice(0, 20),
+    lowPerformers: [...rankedProducts].reverse().slice(0, 20),
+    insights: {
+      noSalesWithStock,
+      expiringLowSales,
+      highInventoryLowSales,
+      totalTrackedProducts: rankedProducts.length,
+      productsWithoutSales: rankedProducts.filter((product) => product.totalUnits === 0).length,
+    },
+  };
+}
+
+async function enrichOrdersForPerformance(orders: Array<Record<string, unknown>>) {
+  const productIds = Array.from(new Set(
+    orders.flatMap((order) => (
+      Array.isArray(order.items)
+        ? order.items.map((item) => String((item as { productId?: string }).productId ?? "")).filter(Boolean)
+        : []
+    )),
+  ));
+  const products = productIds.length > 0
+    ? await Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1 }).lean()
+    : [];
+  const productsById = new Map(products.map((product) => [String(product._id), product]));
+
+  return orders.map((order) => ({
+    _id: String(order._id),
+    routeId: String(order.routeId ?? ""),
+    routeName: String(order.routeName ?? ""),
+    routeDay: String(order.routeDay ?? ""),
+    storeId: String(order.storeId ?? ""),
+    storeName: String(order.storeName ?? ""),
+    salesRepId: String(order.salesRepId ?? ""),
+    salesRepName: String(order.salesRepName ?? ""),
+    deliveryZone: String(order.deliveryZone ?? ""),
+    status: String(order.status ?? "submitted"),
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+    items: (Array.isArray(order.items) ? order.items : []).map((item) => {
+      const typedItem = item as { productId?: string; stockCurrent?: number | null; quantity?: number; notes?: string };
+      const relatedProduct = productsById.get(String(typedItem.productId ?? ""));
+
+      return {
+        productId: String(typedItem.productId ?? ""),
+        stockCurrent: typedItem.stockCurrent === undefined || typedItem.stockCurrent === null ? null : Number(typedItem.stockCurrent),
+        quantity: Number(typedItem.quantity ?? 0),
+        notes: String(typedItem.notes ?? ""),
+        productName: relatedProduct?.name ?? "Producto eliminado",
+        productSku: relatedProduct?.sku ?? "-",
+      };
+    }),
+  }));
+}
+
+function getPerformanceWeekRange(referenceDate = new Date()) {
+  const date = new Date(referenceDate);
+  const day = date.getDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + offset);
+  date.setHours(0, 0, 0, 0);
+  const weekStart = new Date(date);
+  const weekEnd = new Date(date);
+  weekEnd.setDate(weekEnd.getDate() + 7);
+  return { weekStart, weekEnd };
+}
+
+function getPerformanceMonthRange(referenceDate = new Date()) {
+  const monthStart = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1);
+  const monthEnd = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 1);
+  return { monthStart, monthEnd };
+}
+
+function invoiceDateInRange(invoiceDate: unknown, rangeStart: Date, rangeEnd: Date) {
+  const date = new Date(String(invoiceDate ?? ""));
+
+  if (Number.isNaN(date.getTime())) {
+    return false;
+  }
+
+  return date >= rangeStart && date < rangeEnd;
+}
+
+function sumInvoiceRevenueInRange(
+  invoices: Array<{ invoiceDate?: unknown; totalRevenueAwg?: number }>,
+  rangeStart: Date,
+  rangeEnd: Date,
+) {
+  return invoices.reduce((total, invoice) => (
+    invoiceDateInRange(invoice.invoiceDate, rangeStart, rangeEnd)
+      ? total + Number(invoice.totalRevenueAwg ?? 0)
+      : total
+  ), 0);
+}
+
+function roundPerformanceGoalAwg(value: number) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 5000;
+  }
+
+  return Math.ceil(value / 500) * 500;
+}
+
+function suggestWeeklyGoalFromInvoices(invoices: Array<{ invoiceDate?: unknown; totalRevenueAwg?: number }>) {
+  const weeklyTotals = new Map<string, number>();
+
+  for (const invoice of invoices) {
+    const date = new Date(String(invoice.invoiceDate ?? ""));
+
+    if (Number.isNaN(date.getTime())) {
+      continue;
+    }
+
+    const { weekStart } = getPerformanceWeekRange(date);
+    const key = weekStart.toISOString().slice(0, 10);
+    weeklyTotals.set(key, (weeklyTotals.get(key) ?? 0) + Number(invoice.totalRevenueAwg ?? 0));
+  }
+
+  const recentWeekTotals = Array.from(weeklyTotals.values())
+    .sort((left, right) => right - left)
+    .slice(0, 8);
+
+  if (recentWeekTotals.length === 0) {
+    return 7000;
+  }
+
+  const averageWeekly = recentWeekTotals.reduce((total, value) => total + value, 0) / recentWeekTotals.length;
+  return roundPerformanceGoalAwg(Math.max(averageWeekly * 1.35, averageWeekly + 1500));
+}
+
+function buildOrderSubmissionTimeline(
+  orders: Array<{
+    _id: string;
+    createdAt: unknown;
+    storeId: string;
+    storeName: string;
+    routeName: string;
+    routeDay: string;
+    status: string;
+    items: Array<{ quantity?: number }>;
+  }>,
+) {
+  const sortedAsc = [...orders].sort((left, right) => (
+    new Date(String(left.createdAt ?? "")).getTime() - new Date(String(right.createdAt ?? "")).getTime()
+  ));
+  const previousByDay = new Map<string, number>();
+
+  const timeline = sortedAsc.map((order) => {
+    const createdAtMs = new Date(String(order.createdAt ?? "")).getTime();
+    const dayKey = Number.isNaN(createdAtMs) ? "" : new Date(createdAtMs).toISOString().slice(0, 10);
+    const previousMs = dayKey ? previousByDay.get(dayKey) : undefined;
+    const minutesSincePrevious = previousMs !== undefined && !Number.isNaN(createdAtMs)
+      ? Math.max(0, Math.round((createdAtMs - previousMs) / 60000))
+      : null;
+
+    if (dayKey && !Number.isNaN(createdAtMs)) {
+      previousByDay.set(dayKey, createdAtMs);
+    }
+
+    return {
+      orderId: order._id,
+      createdAt: String(order.createdAt ?? ""),
+      storeId: order.storeId,
+      storeName: order.storeName,
+      routeName: order.routeName,
+      routeDay: order.routeDay,
+      status: order.status,
+      productCount: order.items.length,
+      totalUnits: order.items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0),
+      minutesSincePrevious,
+    };
+  });
+
+  return timeline.sort((left, right) => (
+    new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+  ));
+}
+
+function normalizeSalesRepGoalPayload(body: unknown) {
+  const payload = body as Record<string, unknown>;
+
+  return {
+    weeklyGoalAwg: Math.max(0, Number(payload.weeklyGoalAwg ?? 0)),
+    monthlyGoalAwg: Math.max(0, Number(payload.monthlyGoalAwg ?? 0)),
+    weeklyBonusAwg: Math.max(0, Number(payload.weeklyBonusAwg ?? 0)),
+    monthlyBonusAwg: Math.max(0, Number(payload.monthlyBonusAwg ?? 0)),
+  };
+}
+
+async function buildSalesRepPerformanceBundle() {
+  await syncDeliveredOrdersIntoLogisticsInvoices();
+
+  const now = new Date();
+  const { weekStart, weekEnd } = getPerformanceWeekRange(now);
+  const { monthStart, monthEnd } = getPerformanceMonthRange(now);
+
+  const [salesReps, routes, orders, billedInvoices, savedGoals] = await Promise.all([
+    User.find({ role: "sales-rep-aruba", active: { $ne: false } }).sort({ name: 1 }).lean(),
+    sanitizeSalesRoutesWithStores(
+      await SalesRoute.find({ active: { $ne: false } }).sort({ weekStart: -1, createdAt: -1 }).lean(),
+    ),
+    Order.find().sort({ createdAt: -1, updatedAt: -1 }).lean(),
+    LogisticsInvoice.find({ active: { $ne: false } }).lean(),
+    SalesRepGoal.find({ active: { $ne: false } }).lean(),
+  ]);
+
+  const goalsByRepId = new Map(savedGoals.map((goal) => [String(goal.salesRepId), goal]));
+  const enrichedOrders = await enrichOrdersForPerformance(orders as Array<Record<string, unknown>>);
+
+  const performance = salesReps.map((rep) => {
+    const salesRepId = String(rep._id);
+    const salesRepName = String(rep.name ?? rep.email ?? "Vendedor");
+    const repRoutes = routes.filter((route) => String((route as Record<string, unknown>).salesRepId ?? "") === salesRepId);
+    const repOrders = enrichedOrders.filter((order) => order.salesRepId === salesRepId);
+    const repInvoices = billedInvoices.filter((invoice) => String(invoice.salesRepName ?? "") === salesRepName);
+    const weeklyRevenueAwg = sumInvoiceRevenueInRange(repInvoices, weekStart, weekEnd);
+    const monthlyRevenueAwg = sumInvoiceRevenueInRange(repInvoices, monthStart, monthEnd);
+    const suggestedWeeklyGoalAwg = suggestWeeklyGoalFromInvoices(repInvoices);
+    const suggestedMonthlyGoalAwg = roundPerformanceGoalAwg(suggestedWeeklyGoalAwg * 4);
+    const savedGoal = goalsByRepId.get(salesRepId);
+    const hasCustomGoals = Boolean(savedGoal);
+    const weeklyGoalAwg = hasCustomGoals ? Number(savedGoal?.weeklyGoalAwg ?? 0) : 0;
+    const monthlyGoalAwg = hasCustomGoals ? Number(savedGoal?.monthlyGoalAwg ?? 0) : 0;
+    const weeklyBonusAwg = Number(savedGoal?.weeklyBonusAwg ?? 0);
+    const monthlyBonusAwg = Number(savedGoal?.monthlyBonusAwg ?? 0);
+    const weeklyProgress = hasCustomGoals && weeklyGoalAwg > 0
+      ? Math.min(100, Math.round((weeklyRevenueAwg / weeklyGoalAwg) * 100))
+      : 0;
+    const monthlyProgress = hasCustomGoals && monthlyGoalAwg > 0
+      ? Math.min(100, Math.round((monthlyRevenueAwg / monthlyGoalAwg) * 100))
+      : 0;
+
+    const assignedStoresMap = new Map<string, { storeId: string; storeName: string; address: string }>();
+
+    for (const route of repRoutes) {
+      const routeRecord = route as Record<string, unknown> & {
+        days: Array<{ stores: Array<{ storeId: string; storeName: string; address?: string }> }>;
+      };
+
+      for (const day of routeRecord.days ?? []) {
+        for (const store of day.stores ?? []) {
+          assignedStoresMap.set(store.storeId, {
+            storeId: store.storeId,
+            storeName: store.storeName,
+            address: String(store.address ?? ""),
+          });
+        }
+      }
+    }
+
+    const routeSummaries = repRoutes.map((route) => {
+      const routeRecord = route as Record<string, unknown> & {
+        _id?: unknown;
+        code?: string;
+        name?: string;
+        weekLabel?: string;
+        plannedStops?: number;
+        assignedDays?: number;
+      };
+
+      return {
+        routeId: String(routeRecord._id ?? routeRecord.code ?? ""),
+        routeName: String(routeRecord.name ?? ""),
+        weekLabel: String(routeRecord.weekLabel ?? ""),
+        plannedStops: Number(routeRecord.plannedStops ?? 0),
+        assignedDays: Number(routeRecord.assignedDays ?? 0),
+      };
+    });
+
+    const orderSubmissions = buildOrderSubmissionTimeline(repOrders).slice(0, 100);
+
+    const ordersByRoute = Array.from(
+      repOrders.reduce((map, order) => {
+        const key = order.routeName || "Sin ruta";
+        const current = map.get(key) ?? { routeName: key, orderCount: 0, storeNames: new Set<string>() };
+        current.orderCount += 1;
+        current.storeNames.add(order.storeName);
+        map.set(key, current);
+        return map;
+      }, new Map<string, { routeName: string; orderCount: number; storeNames: Set<string> }>()).values(),
+    ).map((entry) => ({
+      routeName: entry.routeName,
+      orderCount: entry.orderCount,
+      storeNames: Array.from(entry.storeNames),
+    }));
+
+    const ordersByStore = Array.from(
+      repOrders.reduce((map, order) => {
+        const current = map.get(order.storeId) ?? {
+          storeId: order.storeId,
+          storeName: order.storeName,
+          orderCount: 0,
+          lastOrderDate: "",
+          totalUnits: 0,
+        };
+        current.orderCount += 1;
+        current.totalUnits += order.items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0);
+
+        const createdAt = String(order.createdAt ?? "");
+
+        if (!current.lastOrderDate || createdAt > current.lastOrderDate) {
+          current.lastOrderDate = createdAt;
+        }
+
+        map.set(order.storeId, current);
+        return map;
+      }, new Map<string, { storeId: string; storeName: string; orderCount: number; lastOrderDate: string; totalUnits: number }>()).values(),
+    ).sort((left, right) => right.orderCount - left.orderCount);
+
+    return {
+      salesRepId,
+      salesRepName,
+      email: String(rep.email ?? ""),
+      billingStats: {
+        weeklyRevenueAwg,
+        monthlyRevenueAwg,
+        invoiceCount: repInvoices.length,
+      },
+      goals: {
+        weeklyGoalAwg,
+        monthlyGoalAwg,
+        weeklyBonusAwg,
+        monthlyBonusAwg,
+        suggestedWeeklyGoalAwg,
+        suggestedMonthlyGoalAwg,
+        weeklyProgress,
+        monthlyProgress,
+        weeklyGoalMet: hasCustomGoals && weeklyRevenueAwg >= weeklyGoalAwg && weeklyGoalAwg > 0,
+        monthlyGoalMet: hasCustomGoals && monthlyRevenueAwg >= monthlyGoalAwg && monthlyGoalAwg > 0,
+        hasCustomGoals,
+      },
+      assignedStoreCount: assignedStoresMap.size,
+      assignedStores: Array.from(assignedStoresMap.values()).sort((left, right) => left.storeName.localeCompare(right.storeName, "es")),
+      routes: routeSummaries,
+      orderSubmissions,
+      ordersByRoute,
+      ordersByStore,
+      orderStats: {
+        total: repOrders.length,
+        delivered: repOrders.filter((order) => order.status === "delivered").length,
+        pending: repOrders.filter((order) => order.status !== "delivered").length,
+        lastSubmissionAt: repOrders[0]?.createdAt ? String(repOrders[0].createdAt) : null,
+      },
+      recentOrders: repOrders.slice(0, 30),
+    };
+  });
+
+  const rankedByWeekly = [...performance].sort((left, right) => right.billingStats.weeklyRevenueAwg - left.billingStats.weeklyRevenueAwg);
+
+  return {
+    weekLabel: weekStart.toISOString().slice(0, 10),
+    monthLabel: monthStart.toISOString().slice(0, 7),
+    leaders: rankedByWeekly.slice(0, 20).map((rep) => ({
+      salesRepId: rep.salesRepId,
+      salesRepName: rep.salesRepName,
+      weeklyRevenueAwg: rep.billingStats.weeklyRevenueAwg,
+      monthlyRevenueAwg: rep.billingStats.monthlyRevenueAwg,
+      weeklyProgress: rep.goals.weeklyProgress,
+    })),
+    lowPerformers: [...rankedByWeekly].reverse().slice(0, 20).map((rep) => ({
+      salesRepId: rep.salesRepId,
+      salesRepName: rep.salesRepName,
+      weeklyRevenueAwg: rep.billingStats.weeklyRevenueAwg,
+      monthlyRevenueAwg: rep.billingStats.monthlyRevenueAwg,
+      weeklyProgress: rep.goals.weeklyProgress,
+    })),
+    salesReps: performance,
+  };
+}
+
+apiRouter.get("/management/performance/store-rankings", async (_request, response) => {
+  try {
+    response.json(await buildStorePerformanceRankings());
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.get("/management/performance/product-rankings", async (_request, response) => {
+  try {
+    response.json(await buildProductPerformanceRankings());
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.get("/management/performance/sales-reps", async (_request, response) => {
+  try {
+    response.json(await buildSalesRepPerformanceBundle());
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.put("/management/performance/sales-reps/:id/goals", async (request, response) => {
+  try {
+    const salesRepId = String(request.params.id ?? "").trim();
+    const salesRep = await User.findOne({ _id: salesRepId, role: "sales-rep-aruba", active: { $ne: false } }).lean();
+
+    if (!salesRep) {
+      response.status(404).json({ message: "El vendedor no existe o no esta activo." });
+      return;
+    }
+
+    const payload = normalizeSalesRepGoalPayload(request.body);
+
+    if (payload.weeklyGoalAwg <= 0 || payload.monthlyGoalAwg <= 0) {
+      response.status(400).json({ message: "Indica metas semanal y mensual mayores a cero." });
+      return;
+    }
+
+    const goal = await SalesRepGoal.findOneAndUpdate(
+      { salesRepId },
+      {
+        salesRepId,
+        weeklyGoalAwg: payload.weeklyGoalAwg,
+        monthlyGoalAwg: payload.monthlyGoalAwg,
+        weeklyBonusAwg: payload.weeklyBonusAwg,
+        monthlyBonusAwg: payload.monthlyBonusAwg,
+        active: true,
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+
+    response.json({
+      message: `Metas actualizadas para ${salesRep.name}.`,
+      goal: {
+        salesRepId,
+        weeklyGoalAwg: Number(goal.weeklyGoalAwg ?? 0),
+        monthlyGoalAwg: Number(goal.monthlyGoalAwg ?? 0),
+        weeklyBonusAwg: Number(goal.weeklyBonusAwg ?? 0),
+        monthlyBonusAwg: Number(goal.monthlyBonusAwg ?? 0),
+      },
+    });
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.get("/sales/performance/me", async (request, response) => {
+  try {
+    const salesRepId = typeof request.query.salesRepId === "string" ? request.query.salesRepId.trim() : "";
+
+    if (!salesRepId) {
+      response.status(400).json({ message: "Indica el vendedor para consultar su desempeno." });
+      return;
+    }
+
+    const salesRep = await User.findOne({ _id: salesRepId, role: "sales-rep-aruba", active: { $ne: false } }).lean();
+
+    if (!salesRep) {
+      response.status(404).json({ message: "El vendedor no existe o no esta habilitado." });
+      return;
+    }
+
+    const bundle = await buildSalesRepPerformanceBundle();
+    const repPerformance = bundle.salesReps.find((rep) => rep.salesRepId === salesRepId);
+
+    if (!repPerformance) {
+      response.status(404).json({ message: "No fue posible cargar el desempeno del vendedor." });
+      return;
+    }
+
+    response.json({
+      weekLabel: bundle.weekLabel,
+      monthLabel: bundle.monthLabel,
+      performance: repPerformance,
+    });
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
 apiRouter.get("/management/ops-clients", async (_request, response) => {
   const clients = await OperationsClient.find().sort({ createdAt: -1 }).lean();
   response.json(clients);
@@ -1850,7 +3006,7 @@ apiRouter.get("/management/warehouses", async (_request, response) => {
 
 apiRouter.get("/management/routes", async (_request, response) => {
   const routes = await SalesRoute.find().sort({ weekStart: -1, createdAt: -1 }).lean();
-  response.json(routes);
+  response.json(await sanitizeSalesRoutesWithStores(routes));
 });
 
 apiRouter.get("/management/accounting/import-costs", async (_request, response) => {
@@ -2989,6 +4145,8 @@ apiRouter.delete("/management/clients/:id", async (request, response) => {
       response.status(404).json({ message: "El cliente no existe." });
       return;
     }
+
+    await removeStoreFromAllRoutes(String(client._id));
 
     response.json({ message: "Cliente borrado correctamente." });
   } catch (error) {
