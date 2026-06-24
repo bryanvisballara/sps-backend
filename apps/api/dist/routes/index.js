@@ -768,6 +768,78 @@ function normalizeSalesOrderPayload(body) {
         items,
     };
 }
+function normalizeWarehouseOrderItems(rawItems, existingItems) {
+    if (!Array.isArray(rawItems) || rawItems.length === 0) {
+        throw new Error("Agrega al menos un producto al pedido.");
+    }
+    const existingByProductId = new Map(existingItems.map((item) => [String(item.productId), item]));
+    const items = rawItems.flatMap((item, index) => {
+        if (typeof item !== "object" || item === null) {
+            throw new Error(`El producto #${index + 1} del pedido no es valido.`);
+        }
+        const currentItem = item;
+        const productId = typeof currentItem.productId === "string" ? currentItem.productId.trim() : "";
+        const quantity = Number(currentItem.quantity ?? 0);
+        const notes = typeof currentItem.notes === "string" ? currentItem.notes.trim() : undefined;
+        if (!productId) {
+            throw new Error(`El producto #${index + 1} no tiene identificador valido.`);
+        }
+        if (!existingByProductId.has(productId)) {
+            throw new Error("Solo puedes ajustar o quitar productos que ya venian en el pedido.");
+        }
+        if (!Number.isFinite(quantity) || quantity < 0) {
+            throw new Error(`La cantidad del producto #${index + 1} debe ser cero o mayor.`);
+        }
+        if (quantity <= 0) {
+            return [];
+        }
+        const existingItem = existingByProductId.get(productId);
+        return [{
+                productId,
+                stockCurrent: existingItem.stockCurrent === undefined || existingItem.stockCurrent === null
+                    ? null
+                    : Number(existingItem.stockCurrent),
+                quantity,
+                notes: notes ?? (typeof existingItem.notes === "string" ? existingItem.notes.trim() : ""),
+            }];
+    });
+    if (items.length === 0) {
+        throw new Error("El pedido debe conservar al menos un producto con cantidad mayor a cero.");
+    }
+    return items;
+}
+async function mapWarehouseOrderRecord(order) {
+    const productIds = Array.from(new Set(order.items.map((item) => String(item.productId)).filter(Boolean)));
+    const products = productIds.length > 0
+        ? await Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1 }).lean()
+        : [];
+    const productsById = new Map(products.map((product) => [String(product._id), product]));
+    return {
+        _id: String(order._id),
+        routeId: order.routeId ?? "",
+        routeName: order.routeName ?? "",
+        routeDay: order.routeDay ?? "",
+        storeId: order.storeId,
+        storeName: order.storeName,
+        salesRepId: order.salesRepId,
+        salesRepName: order.salesRepName,
+        deliveryZone: order.deliveryZone,
+        status: order.status,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt,
+        items: order.items.map((item) => {
+            const relatedProduct = productsById.get(String(item.productId));
+            return {
+                productId: String(item.productId),
+                stockCurrent: item.stockCurrent === undefined || item.stockCurrent === null ? null : Number(item.stockCurrent),
+                quantity: Number(item.quantity ?? 0),
+                notes: item.notes ?? "",
+                productName: relatedProduct?.name ?? "Producto eliminado",
+                productSku: relatedProduct?.sku ?? "-",
+            };
+        }),
+    };
+}
 function isDuplicateKeyError(error) {
     return (typeof error === "object" &&
         error !== null &&
@@ -1463,36 +1535,41 @@ apiRouter.get("/warehouse/orders", async (_request, response) => {
         const orders = await Order.find()
             .sort({ createdAt: -1, updatedAt: -1 })
             .lean();
-        const productIds = Array.from(new Set(orders.flatMap((order) => order.items.map((item) => String(item.productId)).filter(Boolean))));
-        const products = productIds.length > 0
-            ? await Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1 }).lean()
-            : [];
-        const productsById = new Map(products.map((product) => [String(product._id), product]));
-        response.json(orders.map((order) => ({
-            _id: String(order._id),
-            routeId: order.routeId ?? "",
-            routeName: order.routeName ?? "",
-            routeDay: order.routeDay ?? "",
-            storeId: order.storeId,
-            storeName: order.storeName,
-            salesRepId: order.salesRepId,
-            salesRepName: order.salesRepName,
-            deliveryZone: order.deliveryZone,
-            status: order.status,
-            createdAt: order.createdAt,
-            updatedAt: order.updatedAt,
-            items: order.items.map((item) => {
-                const relatedProduct = productsById.get(String(item.productId));
-                return {
-                    productId: String(item.productId),
-                    stockCurrent: item.stockCurrent === undefined || item.stockCurrent === null ? null : Number(item.stockCurrent),
-                    quantity: Number(item.quantity ?? 0),
-                    notes: item.notes ?? "",
-                    productName: relatedProduct?.name ?? "Producto eliminado",
-                    productSku: relatedProduct?.sku ?? "-",
-                };
-            }),
-        })));
+        response.json(await Promise.all(orders.map((order) => mapWarehouseOrderRecord(order))));
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
+apiRouter.put("/warehouse/orders/:id", async (request, response) => {
+    try {
+        const order = await Order.findById(request.params.id);
+        if (!order) {
+            response.status(404).json({ message: "El pedido no existe." });
+            return;
+        }
+        if (order.status === "delivered") {
+            response.status(400).json({ message: "No puedes modificar un pedido ya completado." });
+            return;
+        }
+        const payload = request.body;
+        const items = normalizeWarehouseOrderItems(payload.items, order.items);
+        const productIds = Array.from(new Set(items.map((item) => item.productId)));
+        const products = await Product.find({ _id: { $in: productIds }, active: { $ne: false } }).select({ _id: 1 }).lean();
+        const availableProductIds = new Set(products.map((product) => String(product._id)));
+        if (productIds.some((productId) => !availableProductIds.has(productId))) {
+            response.status(400).json({ message: "Uno o varios productos del pedido ya no estan disponibles." });
+            return;
+        }
+        const updatedOrder = await Order.findByIdAndUpdate(order._id, { items }, { new: true, runValidators: true }).lean();
+        if (!updatedOrder) {
+            response.status(404).json({ message: "El pedido no existe." });
+            return;
+        }
+        response.json({
+            message: "Pedido actualizado correctamente desde bodega.",
+            order: await mapWarehouseOrderRecord(updatedOrder),
+        });
     }
     catch (error) {
         sendCreationError(response, error);
@@ -1911,6 +1988,77 @@ async function buildProductPerformanceRankings() {
         },
     };
 }
+async function buildProductStorePerformanceRankings(productId) {
+    const normalizedProductId = String(productId ?? "").trim();
+    if (!normalizedProductId) {
+        throw new Error("Selecciona un producto valido.");
+    }
+    await syncDeliveredOrdersIntoLogisticsInvoices();
+    const product = await Product.findOne({
+        _id: normalizedProductId,
+        active: { $ne: false },
+        shareWithAruba: { $ne: false },
+    }).lean();
+    if (!product) {
+        throw new Error("El producto no existe o no esta disponible en Aruba.");
+    }
+    const [stores, billedInvoices] = await Promise.all([
+        Store.find({ active: { $ne: false } }).sort({ name: 1 }).lean(),
+        LogisticsInvoice.find({ active: { $ne: false } }).lean(),
+    ]);
+    const storeStats = new Map();
+    for (const store of stores) {
+        storeStats.set(String(store._id), {
+            storeId: String(store._id),
+            storeName: String(store.name ?? ""),
+            address: String(store.address ?? ""),
+            totalUnits: 0,
+            totalRevenueAwg: 0,
+            orderCount: 0,
+        });
+    }
+    const storeIdByName = new Map(stores.map((store) => [String(store.name ?? "").trim().toLowerCase(), String(store._id)]));
+    for (const invoice of billedInvoices) {
+        const storeName = String(invoice.storeName ?? "").trim();
+        const storeId = storeIdByName.get(storeName.toLowerCase()) ?? "";
+        if (!storeId || !storeStats.has(storeId)) {
+            continue;
+        }
+        const matchingItems = (invoice.items ?? []).filter((item) => String(item.productId ?? "").trim() === normalizedProductId);
+        if (matchingItems.length === 0) {
+            continue;
+        }
+        const current = storeStats.get(storeId);
+        current.totalUnits += matchingItems.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0);
+        current.totalRevenueAwg += matchingItems.reduce((sum, item) => sum + Number(item.lineTotalAwg ?? 0), 0);
+        current.orderCount += 1;
+    }
+    const rankedStores = Array.from(storeStats.values()).sort((left, right) => {
+        if (right.totalUnits !== left.totalUnits) {
+            return right.totalUnits - left.totalUnits;
+        }
+        if (right.totalRevenueAwg !== left.totalRevenueAwg) {
+            return right.totalRevenueAwg - left.totalRevenueAwg;
+        }
+        return left.storeName.localeCompare(right.storeName, "es");
+    });
+    return {
+        product: {
+            productId: normalizedProductId,
+            productName: String(product.name ?? ""),
+            productSku: String(product.sku ?? ""),
+            category: String(product.category ?? ""),
+        },
+        leaders: rankedStores.slice(0, 20),
+        lowPerformers: [...rankedStores].reverse().slice(0, 20),
+        summary: {
+            totalStores: rankedStores.length,
+            storesWithSales: rankedStores.filter((store) => store.totalUnits > 0).length,
+            totalUnits: rankedStores.reduce((sum, store) => sum + store.totalUnits, 0),
+            totalRevenueAwg: rankedStores.reduce((sum, store) => sum + store.totalRevenueAwg, 0),
+        },
+    };
+}
 async function enrichOrdersForPerformance(orders) {
     const productIds = Array.from(new Set(orders.flatMap((order) => (Array.isArray(order.items)
         ? order.items.map((item) => String(item.productId ?? "")).filter(Boolean)
@@ -2195,6 +2343,14 @@ apiRouter.get("/management/performance/store-rankings", async (_request, respons
 apiRouter.get("/management/performance/product-rankings", async (_request, response) => {
     try {
         response.json(await buildProductPerformanceRankings());
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
+apiRouter.get("/management/performance/products/:productId/store-rankings", async (request, response) => {
+    try {
+        response.json(await buildProductStorePerformanceRankings(request.params.productId));
     }
     catch (error) {
         sendCreationError(response, error);

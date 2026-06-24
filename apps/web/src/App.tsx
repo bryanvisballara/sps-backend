@@ -513,6 +513,15 @@ type ProductPerformanceRankingRow = {
   nearestExpiration?: string | null;
 };
 
+type ProductStorePerformanceRow = {
+  storeId: string;
+  storeName: string;
+  address: string;
+  totalUnits: number;
+  totalRevenueAwg: number;
+  orderCount: number;
+};
+
 type SalesRepPerformanceRecord = {
   salesRepId: string;
   salesRepName: string;
@@ -2748,6 +2757,25 @@ export default function App() {
   } | null>(null);
   const [productPerformanceError, setProductPerformanceError] = useState("");
   const [isLoadingProductPerformance, setIsLoadingProductPerformance] = useState(false);
+  const [selectedCampaignProductId, setSelectedCampaignProductId] = useState("");
+  const [productStorePerformanceRankings, setProductStorePerformanceRankings] = useState<{
+    product: {
+      productId: string;
+      productName: string;
+      productSku: string;
+      category: string;
+    };
+    leaders: ProductStorePerformanceRow[];
+    lowPerformers: ProductStorePerformanceRow[];
+    summary: {
+      totalStores: number;
+      storesWithSales: number;
+      totalUnits: number;
+      totalRevenueAwg: number;
+    };
+  } | null>(null);
+  const [productStorePerformanceError, setProductStorePerformanceError] = useState("");
+  const [isLoadingProductStorePerformance, setIsLoadingProductStorePerformance] = useState(false);
   const [routeForm, setRouteForm] = useState<RouteFormState>(() => createInitialRouteForm());
   const [sellerRoutes, setSellerRoutes] = useState<SalesRouteRecord[]>([]);
   const [isLoadingSellerRoutes, setIsLoadingSellerRoutes] = useState(false);
@@ -2790,6 +2818,9 @@ export default function App() {
   const [warehouseOrderChecklist, setWarehouseOrderChecklist] = useState<Record<string, boolean>>({});
   const [warehouseOrderCompletionStatus, setWarehouseOrderCompletionStatus] = useState<CreationStatus | null>(null);
   const [isCompletingWarehouseOrder, setIsCompletingWarehouseOrder] = useState(false);
+  const [warehouseOrderItemDraft, setWarehouseOrderItemDraft] = useState<Record<string, string>>({});
+  const [warehouseOrderEditStatus, setWarehouseOrderEditStatus] = useState<CreationStatus | null>(null);
+  const [isSavingWarehouseOrderEdit, setIsSavingWarehouseOrderEdit] = useState(false);
   const [sellerOrderDraft, setSellerOrderDraft] = useState<SellerOrderDraft>({});
   const [isSubmittingSellerOrder, setIsSubmittingSellerOrder] = useState(false);
   const [sellerOrderStatus, setSellerOrderStatus] = useState<CreationStatus | null>(null);
@@ -3153,16 +3184,29 @@ export default function App() {
     return map;
   }, new Map<string, InventorySummaryRow>());
   const productOptionsById = new Map(productOptions.map((product) => [product.value, product]));
+  const campaignProductOptions = productOptions.filter((product) => product.shareWithAruba !== false);
+  const warehouseOrderDraftProductIds = selectedWarehouseOrderDetail
+    ? Object.keys(warehouseOrderItemDraft)
+    : [];
+  const warehouseOrderEffectiveItems = selectedWarehouseOrderDetail
+    ? (selectedWarehouseOrderDetail.status === "delivered"
+      ? selectedWarehouseOrderDetail.items
+      : selectedWarehouseOrderDetail.items.filter((item) => warehouseOrderDraftProductIds.includes(item.productId)))
+    : [];
   const warehousePricedItems = selectedWarehouseOrderDetail
-    ? selectedWarehouseOrderDetail.items.map((item) => {
+    ? warehouseOrderEffectiveItems.map((item) => {
       const catalogItem = catalogPreviewItems.find((previewItem) => previewItem.productId === item.productId);
       const productOption = productOptionsById.get(item.productId);
       const resolvedSalePrice = roundCurrencyValue(Number(catalogItem?.salePrice ?? productOption?.salePrice ?? 0));
+      const quantity = selectedWarehouseOrderDetail.status === "delivered"
+        ? Number(item.quantity ?? 0)
+        : Number(warehouseOrderItemDraft[item.productId] ?? item.quantity ?? 0);
 
       return {
         ...item,
+        quantity,
         resolvedSalePrice,
-        lineTotal: roundCurrencyValue(resolvedSalePrice * Number(item.quantity ?? 0)),
+        lineTotal: roundCurrencyValue(resolvedSalePrice * quantity),
         priceSource: catalogItem
           ? "catalog"
           : productOption?.variableSalePrice
@@ -3177,6 +3221,16 @@ export default function App() {
   const warehouseCompletedOrders = warehouseOrders.filter((order) => order.status === "delivered");
   const warehouseAllItemsChecked = warehousePricedItems.length > 0
     && warehousePricedItems.every((item) => Boolean(warehouseOrderChecklist[item.productId]));
+  const warehouseOrderItemsDirty = Boolean(
+    selectedWarehouseOrderDetail
+    && selectedWarehouseOrderDetail.status !== "delivered"
+    && (
+      selectedWarehouseOrderDetail.items.length !== warehouseOrderDraftProductIds.length
+      || selectedWarehouseOrderDetail.items.some((item) => (
+        String(item.quantity) !== (warehouseOrderItemDraft[item.productId] ?? String(item.quantity))
+      ))
+    ),
+  );
   const warehouseOrderCompletionHints: string[] = [];
 
   if (selectedCatalogId && isLoadingCatalogPreview) {
@@ -3185,6 +3239,10 @@ export default function App() {
 
   if (warehousePricedItems.length > 0 && !warehouseAllItemsChecked) {
     warehouseOrderCompletionHints.push("Marca todos los productos como preparados en la tabla.");
+  }
+
+  if (warehouseOrderItemsDirty) {
+    warehouseOrderCompletionHints.push("Guarda los cambios del pedido antes de completarlo y generar la factura.");
   }
 
   if (selectedWarehouseOrderDetail?.status === "delivered") {
@@ -4064,6 +4122,23 @@ export default function App() {
   }, [activeSection, sessionUser]);
 
   useEffect(() => {
+    if (sessionUser?.role !== "management" || activeSection !== "product-performance") {
+      setSelectedCampaignProductId("");
+      setProductStorePerformanceRankings(null);
+      setProductStorePerformanceError("");
+      return;
+    }
+
+    if (!selectedCampaignProductId) {
+      setProductStorePerformanceRankings(null);
+      setProductStorePerformanceError("");
+      return;
+    }
+
+    void refreshProductStorePerformance(selectedCampaignProductId);
+  }, [activeSection, selectedCampaignProductId, sessionUser]);
+
+  useEffect(() => {
     if (activeSection !== "sales-rep-performance") {
       return;
     }
@@ -4400,15 +4475,23 @@ export default function App() {
   useEffect(() => {
     if (sessionUser?.role !== "warehouse-aruba" || !selectedWarehouseOrderDetail) {
       setWarehouseOrderChecklist({});
+      setWarehouseOrderItemDraft({});
+      setWarehouseOrderEditStatus(null);
       setWarehouseOrderCompletionStatus(null);
       return;
     }
 
+    setWarehouseOrderItemDraft(
+      Object.fromEntries(
+        selectedWarehouseOrderDetail.items.map((item) => [item.productId, String(item.quantity)]),
+      ),
+    );
     setWarehouseOrderChecklist(
       Object.fromEntries(
         selectedWarehouseOrderDetail.items.map((item) => [item.productId, selectedWarehouseOrderDetail.status === "delivered"]),
       ),
     );
+    setWarehouseOrderEditStatus(null);
     setWarehouseOrderCompletionStatus(null);
   }, [selectedWarehouseOrderDetail, sessionUser]);
 
@@ -5339,6 +5422,43 @@ export default function App() {
       setProductPerformanceError("No fue posible conectar con el backend.");
     } finally {
       setIsLoadingProductPerformance(false);
+    }
+  }
+
+  async function refreshProductStorePerformance(productId: string) {
+    try {
+      setIsLoadingProductStorePerformance(true);
+      setProductStorePerformanceError("");
+      const response = await fetch(`${apiBaseUrl}/management/performance/products/${encodeURIComponent(productId)}/store-rankings`);
+      const data = (await response.json()) as {
+        product: {
+          productId: string;
+          productName: string;
+          productSku: string;
+          category: string;
+        };
+        leaders: ProductStorePerformanceRow[];
+        lowPerformers: ProductStorePerformanceRow[];
+        summary: {
+          totalStores: number;
+          storesWithSales: number;
+          totalUnits: number;
+          totalRevenueAwg: number;
+        };
+      } | { message?: string };
+
+      if (!response.ok || !("product" in data)) {
+        setProductStorePerformanceRankings(null);
+        setProductStorePerformanceError("message" in data ? data.message ?? "No fue posible cargar el desempeno por tienda." : "No fue posible cargar el desempeno por tienda.");
+        return;
+      }
+
+      setProductStorePerformanceRankings(data);
+    } catch {
+      setProductStorePerformanceRankings(null);
+      setProductStorePerformanceError("No fue posible conectar con el backend.");
+    } finally {
+      setIsLoadingProductStorePerformance(false);
     }
   }
 
@@ -6538,6 +6658,103 @@ export default function App() {
     return { pdf, fileName };
   }
 
+  function removeWarehouseOrderItem(productId: string) {
+    if (!selectedWarehouseOrderDetail || selectedWarehouseOrderDetail.status === "delivered") {
+      return;
+    }
+
+    const remainingProductIds = Object.keys(warehouseOrderItemDraft).filter((currentProductId) => currentProductId !== productId);
+
+    if (remainingProductIds.length === 0) {
+      setWarehouseOrderEditStatus({ tone: "error", message: "El pedido debe conservar al menos un producto." });
+      return;
+    }
+
+    setWarehouseOrderItemDraft((current) => {
+      const next = { ...current };
+      delete next[productId];
+      return next;
+    });
+    setWarehouseOrderChecklist((current) => {
+      const next = { ...current };
+      delete next[productId];
+      return next;
+    });
+    setWarehouseOrderEditStatus(null);
+  }
+
+  async function handleWarehouseOrderEditSubmit() {
+    if (!selectedWarehouseOrderDetail || selectedWarehouseOrderDetail.status === "delivered") {
+      return;
+    }
+
+    const nextItems = selectedWarehouseOrderDetail.items
+      .filter((item) => item.productId in warehouseOrderItemDraft)
+      .map((item) => ({
+        productId: item.productId,
+        stockCurrent: item.stockCurrent,
+        quantity: Number(warehouseOrderItemDraft[item.productId] ?? item.quantity),
+        notes: item.notes,
+      }))
+      .filter((item) => Number.isFinite(item.quantity) && item.quantity > 0);
+
+    if (nextItems.length === 0) {
+      setWarehouseOrderEditStatus({ tone: "error", message: "El pedido debe conservar al menos un producto con cantidad mayor a cero." });
+      return;
+    }
+
+    if (nextItems.some((item) => !Number.isFinite(item.quantity) || item.quantity < 0)) {
+      setWarehouseOrderEditStatus({ tone: "error", message: "Todas las cantidades del pedido deben ser cero o mayores." });
+      return;
+    }
+
+    try {
+      setIsSavingWarehouseOrderEdit(true);
+      setWarehouseOrderEditStatus(null);
+      const response = await fetch(`${apiBaseUrl}/warehouse/orders/${selectedWarehouseOrderDetail._id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: nextItems.map((item) => ({
+            productId: item.productId,
+            stockCurrent: item.stockCurrent,
+            quantity: item.quantity,
+            notes: item.notes,
+          })),
+        }),
+      });
+      const data = (await response.json()) as { message?: string; order?: SellerOrderRecord };
+
+      if (!response.ok || !data.order) {
+        throw new Error(data.message ?? "No fue posible actualizar el pedido.");
+      }
+
+      const updatedOrder = {
+        ...data.order,
+        items: Array.isArray(data.order.items) ? data.order.items : [],
+      };
+
+      setWarehouseOrders((current) => current.map((order) => (
+        String(order._id) === String(updatedOrder._id) ? updatedOrder : order
+      )));
+      setSelectedWarehouseOrderDetail(updatedOrder);
+      setWarehouseOrderItemDraft(
+        Object.fromEntries(updatedOrder.items.map((item) => [item.productId, String(item.quantity)])),
+      );
+      setWarehouseOrderChecklist(
+        Object.fromEntries(updatedOrder.items.map((item) => [item.productId, false])),
+      );
+      setWarehouseOrderEditStatus({ tone: "success", message: data.message ?? "Pedido actualizado correctamente." });
+    } catch (error) {
+      setWarehouseOrderEditStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible actualizar el pedido.",
+      });
+    } finally {
+      setIsSavingWarehouseOrderEdit(false);
+    }
+  }
+
   async function handleWarehouseOrderComplete() {
     if (!selectedWarehouseOrderDetail) {
       return;
@@ -6550,6 +6767,11 @@ export default function App() {
 
     if (selectedCatalogId && isLoadingCatalogPreview) {
       setWarehouseOrderCompletionStatus({ tone: "error", message: "Espera a que carguen los precios del catalogo semanal." });
+      return;
+    }
+
+    if (warehouseOrderItemsDirty) {
+      setWarehouseOrderCompletionStatus({ tone: "error", message: "Guarda los cambios del pedido antes de completarlo." });
       return;
     }
 
@@ -10625,6 +10847,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
                     {catalogError ? <p className="form-feedback error">{catalogError}</p> : null}
                     {catalogPreviewError ? <p className="form-feedback error">{catalogPreviewError}</p> : null}
+                    {warehouseOrderEditStatus ? (
+                      <p className={`form-feedback ${warehouseOrderEditStatus.tone === "error" ? "error" : "success"}`}>
+                        {warehouseOrderEditStatus.message}
+                      </p>
+                    ) : null}
                     {warehouseOrderCompletionStatus ? (
                       <p className={`form-feedback ${warehouseOrderCompletionStatus.tone === "error" ? "error" : "success"}`}>
                         {warehouseOrderCompletionStatus.message}
@@ -10643,6 +10870,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             <th>Precio</th>
                             <th>Total</th>
                             <th className="warehouse-order-col-optional">Notas</th>
+                            {selectedWarehouseOrderDetail.status !== "delivered" ? <th>Quitar</th> : null}
                           </tr>
                         </thead>
                         <tbody>
@@ -10665,10 +10893,40 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               <td>{item.productSku}</td>
                               <td>{item.productName}</td>
                               <td className="warehouse-order-col-optional">{item.stockCurrent ?? "-"}</td>
-                              <td>{item.quantity}</td>
+                              <td>
+                                {selectedWarehouseOrderDetail.status === "delivered" ? (
+                                  item.quantity
+                                ) : (
+                                  <input
+                                    className="warehouse-order-qty-input"
+                                    type="number"
+                                    min="0"
+                                    step="1"
+                                    value={warehouseOrderItemDraft[item.productId] ?? String(item.quantity)}
+                                    onChange={(event) => {
+                                      setWarehouseOrderItemDraft((current) => ({
+                                        ...current,
+                                        [item.productId]: event.target.value,
+                                      }));
+                                      setWarehouseOrderEditStatus(null);
+                                    }}
+                                  />
+                                )}
+                              </td>
                               <td>{formatCurrency(item.resolvedSalePrice)}</td>
                               <td>{formatCurrency(item.lineTotal)}</td>
                               <td className="warehouse-order-col-optional">{item.notes || "-"}</td>
+                              {selectedWarehouseOrderDetail.status !== "delivered" ? (
+                                <td>
+                                  <button
+                                    className="ghost-button warehouse-order-remove-item"
+                                    type="button"
+                                    onClick={() => removeWarehouseOrderItem(item.productId)}
+                                  >
+                                    Quitar
+                                  </button>
+                                </td>
+                              ) : null}
                             </tr>
                           ))}
                         </tbody>
@@ -10679,6 +10937,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <p>
                         Estado actual: <strong>{formatSellerOrderStatus(selectedWarehouseOrderDetail.status)}</strong>
                       </p>
+                      {selectedWarehouseOrderDetail.status !== "delivered" ? (
+                        <p className="route-helper-text">
+                          Ajusta cantidades si hubo daño en bodega o quita productos que no se puedan despachar.
+                        </p>
+                      ) : null}
                       {warehouseOrderCompletionHints.length > 0 ? (
                         <ul className="warehouse-order-hints">
                           {warehouseOrderCompletionHints.map((hint) => (
@@ -10686,11 +10949,23 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           ))}
                         </ul>
                       ) : null}
+                      {selectedWarehouseOrderDetail.status !== "delivered" ? (
+                        <button
+                          className="ghost-button warehouse-order-save-button"
+                          type="button"
+                          disabled={!warehouseOrderItemsDirty || isSavingWarehouseOrderEdit || isCompletingWarehouseOrder}
+                          onClick={() => void handleWarehouseOrderEditSubmit()}
+                        >
+                          {isSavingWarehouseOrderEdit ? "Guardando cambios..." : "Guardar cambios al pedido"}
+                        </button>
+                      ) : null}
                       <button
                         className="submit-button seller-order-submit"
                         type="button"
                         disabled={
                           isCompletingWarehouseOrder
+                          || isSavingWarehouseOrderEdit
+                          || warehouseOrderItemsDirty
                           || (Boolean(selectedCatalogId) && isLoadingCatalogPreview)
                           || warehousePricedItems.length === 0
                           || !warehouseAllItemsChecked
@@ -15331,6 +15606,122 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </div>
                   </article>
                 </div>
+
+                <article className="database-card product-store-performance-card">
+                  <div className="management-table-header">
+                    <div>
+                      <h2>Desempeño por tienda del producto</h2>
+                      <p>Busca un producto en campaña y revisa qué tiendas lo compran más y cuáles menos.</p>
+                    </div>
+                  </div>
+
+                  <label className="field field-full product-store-performance-search">
+                    <span>Producto</span>
+                    <SearchableProductSelect
+                      products={campaignProductOptions}
+                      value={selectedCampaignProductId}
+                      onChange={setSelectedCampaignProductId}
+                      placeholder="Buscar producto por nombre o SKU..."
+                      disabled={campaignProductOptions.length === 0}
+                    />
+                  </label>
+
+                  {productStorePerformanceError ? <p className="form-feedback error">{productStorePerformanceError}</p> : null}
+
+                  {!selectedCampaignProductId ? (
+                    <p className="route-empty-state">Selecciona un producto para ver el ranking de tiendas.</p>
+                  ) : isLoadingProductStorePerformance ? (
+                    <p className="route-empty-state">Cargando desempeno por tienda...</p>
+                  ) : productStorePerformanceRankings ? (
+                    <>
+                      <p className="management-table-meta product-store-performance-summary">
+                        {`${productStorePerformanceRankings.product.productName} (${productStorePerformanceRankings.product.productSku}) · ${productStorePerformanceRankings.summary.storesWithSales} tienda${productStorePerformanceRankings.summary.storesWithSales === 1 ? "" : "s"} con compras de ${productStorePerformanceRankings.summary.totalStores} · ${productStorePerformanceRankings.summary.totalUnits} unidades · ${formatAwgCurrency(productStorePerformanceRankings.summary.totalRevenueAwg)} AWG`}
+                      </p>
+
+                      <div className="performance-rankings-grid">
+                        <article className="database-card performance-ranking-card performance-ranking-card-leaders">
+                          <div className="management-table-header">
+                            <div>
+                              <h2>Tiendas con mayor compra</h2>
+                              <p>Top 20 tiendas que más unidades compraron este producto.</p>
+                            </div>
+                          </div>
+                          <div className="table-wrap">
+                            <table className="data-table">
+                              <thead>
+                                <tr>
+                                  <th>#</th>
+                                  <th>Tienda</th>
+                                  <th>Unidades</th>
+                                  <th>Pedidos</th>
+                                  <th>Ventas AWG</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {productStorePerformanceRankings.leaders.length > 0 ? (
+                                  productStorePerformanceRankings.leaders.map((store, index) => (
+                                    <tr key={`product-store-leader-${store.storeId}`}>
+                                      <td>{index + 1}</td>
+                                      <td>{store.storeName}</td>
+                                      <td>{store.totalUnits}</td>
+                                      <td>{store.orderCount}</td>
+                                      <td>{formatAwgCurrency(store.totalRevenueAwg)}</td>
+                                    </tr>
+                                  ))
+                                ) : (
+                                  <tr>
+                                    <td colSpan={5} className="empty-table-cell">No hay tiendas con compras de este producto.</td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </article>
+
+                        <article className="database-card performance-ranking-card performance-ranking-card-low">
+                          <div className="management-table-header">
+                            <div>
+                              <h2>Tiendas con menor compra</h2>
+                              <p>Bottom 20 tiendas con menos unidades compradas de este producto.</p>
+                            </div>
+                          </div>
+                          <div className="table-wrap">
+                            <table className="data-table">
+                              <thead>
+                                <tr>
+                                  <th>#</th>
+                                  <th>Tienda</th>
+                                  <th>Unidades</th>
+                                  <th>Pedidos</th>
+                                  <th>Ventas AWG</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {productStorePerformanceRankings.lowPerformers.length > 0 ? (
+                                  productStorePerformanceRankings.lowPerformers.map((store, index) => (
+                                    <tr key={`product-store-low-${store.storeId}`}>
+                                      <td>{index + 1}</td>
+                                      <td>{store.storeName}</td>
+                                      <td>{store.totalUnits}</td>
+                                      <td>{store.orderCount}</td>
+                                      <td>{formatAwgCurrency(store.totalRevenueAwg)}</td>
+                                    </tr>
+                                  ))
+                                ) : (
+                                  <tr>
+                                    <td colSpan={5} className="empty-table-cell">No hay tiendas registradas.</td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </article>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="route-empty-state">No fue posible cargar el desempeno por tienda.</p>
+                  )}
+                </article>
 
                 <article className="database-card">
                   <div className="management-table-header">

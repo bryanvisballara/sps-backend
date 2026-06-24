@@ -1,0 +1,26 @@
+Sube todo el contenido de esta carpeta a Hostinger para servirlo desde spste.com.
+
+Variables a definir o actualizar en Render para el backend:
+
+CORS_ORIGIN=https://spste.com,https://www.spste.com,http://localhost:5173,http://127.0.0.1:5173
+
+Notas:
+- No existe hoy una variable FRONTEND_URL en el backend.
+- RENDER_BACKEND_URL puede quedarse apuntando a la URL actual del backend si no vas a mover la API fuera de Render.
+- El frontend ya apunta por defecto a https://sps-backend-jxms.onrender.com/api cuando no se define VITE_API_URL.
+- Si prefieres fijarlo explicitamente al volver a compilar el frontend, usa VITE_API_URL=https://sps-backend-jxms.onrender.com/api.
+
+WhatsApp (Twilio) en Render:
+- TWILIO_ACCOUNT_SID=(tu Account SID de Twilio)
+- TWILIO_API_KEY_SID=(tu API Key SID de Twilio)
+- TWILIO_API_KEY_SECRET=(tu API Key Secret)
+- TWILIO_WHATSAPP_FROM_NUMBER=(tu numero WhatsApp Twilio)
+
+Push (Firebase) en Render:
+- FIREBASE_PROJECT_ID=sps-push-3c894
+- FIREBASE_CLIENT_EMAIL=firebase-adminsdk-fbsvc@sps-push-3c894.iam.gserviceaccount.com
+- FIREBASE_MESSAGING_SENDER_ID=444142009095
+- FIREBASE_WEB_API_KEY=AIzaSyBL55BSvsHYhLFyaOvmYn8xtzWNnRe1Nvk
+- FIREBASE_WEB_APP_ID=1:444142009095:web:a7a73213eba1c95f2e23a2
+- FIREBASE_WEB_VAPID_KEY=BBFSduIPL9NXxZEHhi3S0sAciUxVcDNiF2-kntD4561Ma6M2GaegaivdryrNuAIWwHyB2sDIKi6CnHHVpmUJ5M8
+- FIREBASE_PRIVATE_KEY=(service account private key en una linea con \n)

@@ -2133,6 +2133,19 @@ h1 {
   gap: 18px;
 }
 
+.product-store-performance-card {
+  display: grid;
+  gap: 16px;
+}
+
+.product-store-performance-search {
+  max-width: 640px;
+}
+
+.product-store-performance-summary {
+  margin: 0;
+}
+
 .performance-ranking-card-leaders {
   border-top: 4px solid rgba(16, 185, 129, 0.55);
 }
@@ -2678,6 +2691,33 @@ h1 {
 .table-wrap--warehouse-items .warehouse-order-col-check {
   width: 44px;
   text-align: center;
+}
+
+.warehouse-order-qty-input {
+  width: 72px;
+  border: 1px solid rgba(17, 17, 17, 0.14);
+  border-radius: 10px;
+  background: #ffffff;
+  color: #111111;
+  font: inherit;
+  padding: 7px 8px;
+  text-align: center;
+}
+
+.warehouse-order-qty-input:focus {
+  outline: none;
+  border-color: rgba(0, 193, 214, 0.9);
+  box-shadow: 0 0 0 3px rgba(0, 193, 214, 0.16);
+}
+
+.warehouse-order-remove-item,
+.warehouse-order-save-button {
+  white-space: nowrap;
+}
+
+.warehouse-order-toolbar .warehouse-order-save-button {
+  width: 100%;
+  justify-content: center;
 }
 
 .warehouse-order-toolbar {
