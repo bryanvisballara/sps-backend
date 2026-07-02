@@ -841,6 +841,7 @@ function normalizeSalesOrderPayload(body) {
             notes,
         };
     });
+    const orderNotes = typeof payload.orderNotes === "string" ? payload.orderNotes.trim() : "";
     return {
         routeId,
         routeName,
@@ -848,6 +849,7 @@ function normalizeSalesOrderPayload(body) {
         storeId,
         salesRepId,
         deliveryDate: normalizeDeliveryDate(payload.deliveryDate),
+        orderNotes,
         items,
     };
 }
@@ -864,11 +866,11 @@ function normalizeWarehouseOrderItems(rawItems, existingItems) {
         const productId = typeof currentItem.productId === "string" ? currentItem.productId.trim() : "";
         const quantity = Number(currentItem.quantity ?? 0);
         const notes = typeof currentItem.notes === "string" ? currentItem.notes.trim() : undefined;
+        const stockCurrentValue = currentItem.stockCurrent;
+        const hasStockCurrent = stockCurrentValue !== undefined && stockCurrentValue !== null && String(stockCurrentValue).trim() !== "";
+        const stockCurrent = hasStockCurrent ? Number(stockCurrentValue) : null;
         if (!productId) {
             throw new Error(`El producto #${index + 1} no tiene identificador valido.`);
-        }
-        if (!existingByProductId.has(productId)) {
-            throw new Error("Solo puedes ajustar o quitar productos que ya venian en el pedido.");
         }
         if (!Number.isFinite(quantity) || quantity < 0) {
             throw new Error(`La cantidad del producto #${index + 1} debe ser cero o mayor.`);
@@ -877,6 +879,17 @@ function normalizeWarehouseOrderItems(rawItems, existingItems) {
             return [];
         }
         const existingItem = existingByProductId.get(productId);
+        if (!existingItem) {
+            if (hasStockCurrent && (!Number.isFinite(stockCurrent) || (stockCurrent ?? 0) < 0)) {
+                throw new Error(`El stock actual del producto #${index + 1} debe ser cero o mayor.`);
+            }
+            return [{
+                    productId,
+                    stockCurrent,
+                    quantity,
+                    notes: notes ?? "",
+                }];
+        }
         return [{
                 productId,
                 stockCurrent: existingItem.stockCurrent === undefined || existingItem.stockCurrent === null
@@ -910,6 +923,7 @@ async function mapWarehouseOrderRecord(order) {
         deliveryDate: serializeOrderDeliveryDate(order.deliveryDate, order.createdAt),
         deliveryOverdue: order.deliveryOverdue === true,
         status: order.status,
+        orderNotes: typeof order.orderNotes === "string" ? order.orderNotes : "",
         createdAt: order.createdAt,
         updatedAt: order.updatedAt,
         items: order.items.map((item) => {
@@ -976,23 +990,23 @@ async function assertSalesRepCanManageStore(salesRepId, storeId) {
     }
     return salesRep;
 }
-async function buildSalesProductCatalog(storeId) {
-    const [products, warehouseStocks, store] = await Promise.all([
-        Product.find({ active: { $ne: false }, shareWithAruba: { $ne: false } }).sort({ name: 1 }).lean(),
-        WarehouseStock.find({ availableUnits: { $gt: 0 } }).lean(),
-        storeId ? Store.findById(storeId).select({ assignedProductIds: 1 }).lean() : Promise.resolve(null),
-    ]);
-    const assignedProductIds = new Set(Array.isArray(store?.assignedProductIds)
-        ? store.assignedProductIds.map((entry) => String(entry)).filter(Boolean)
-        : []);
+async function aggregateWarehouseStockByProduct() {
+    const warehouseStocks = await WarehouseStock.find({})
+        .select({ productId: 1, availableUnits: 1, expirationDate: 1 })
+        .lean();
     const stockByProduct = new Map();
     const now = new Date();
-    const twoMonthsLater = new Date(now);
-    twoMonthsLater.setMonth(twoMonthsLater.getMonth() + 2);
     warehouseStocks.forEach((row) => {
-        const productId = String(row.productId);
+        const productId = String(row.productId ?? "").trim();
+        if (!productId) {
+            return;
+        }
+        const availableUnits = Number(row.availableUnits ?? 0);
+        if (!Number.isFinite(availableUnits) || availableUnits <= 0) {
+            return;
+        }
         const current = stockByProduct.get(productId) ?? { total: 0, nearestExpiration: null };
-        current.total += Number(row.availableUnits ?? 0);
+        current.total += availableUnits;
         const expirationDate = normalizeOptionalDateValue(row.expirationDate);
         if (expirationDate && expirationDate >= now) {
             if (!current.nearestExpiration || expirationDate < current.nearestExpiration) {
@@ -1001,6 +1015,20 @@ async function buildSalesProductCatalog(storeId) {
         }
         stockByProduct.set(productId, current);
     });
+    return stockByProduct;
+}
+async function buildSalesProductCatalog(storeId) {
+    const [products, stockByProduct, store] = await Promise.all([
+        Product.find({ active: { $ne: false }, shareWithAruba: { $ne: false } }).sort({ name: 1 }).lean(),
+        aggregateWarehouseStockByProduct(),
+        storeId ? Store.findById(storeId).select({ assignedProductIds: 1 }).lean() : Promise.resolve(null),
+    ]);
+    const assignedProductIds = new Set(Array.isArray(store?.assignedProductIds)
+        ? store.assignedProductIds.map((entry) => String(entry)).filter(Boolean)
+        : []);
+    const now = new Date();
+    const twoMonthsLater = new Date(now);
+    twoMonthsLater.setMonth(twoMonthsLater.getMonth() + 2);
     const rows = products.map((product) => {
         const productId = String(product._id);
         const stockInfo = stockByProduct.get(productId) ?? { total: 0, nearestExpiration: null };
@@ -1603,6 +1631,7 @@ apiRouter.get("/sales/stores/:id/products", async (request, response) => {
         const products = await Product.find({ _id: { $in: assignedProductIds }, active: { $ne: false }, shareWithAruba: { $ne: false } })
             .sort({ name: 1 })
             .lean();
+        const stockByProduct = await aggregateWarehouseStockByProduct();
         response.json({
             store: {
                 id: String(store._id),
@@ -1610,18 +1639,23 @@ apiRouter.get("/sales/stores/:id/products", async (request, response) => {
                 address: store.address ?? "",
                 managerName: store.managerName ?? "",
             },
-            products: products.map((product) => ({
-                productId: String(product._id),
-                sku: product.sku,
-                name: product.name,
-                category: product.category,
-                imageUrl: product.imageUrl ?? "",
-                salePrice: Number(product.salePrice ?? 0),
-                displaysPerBox: Number(product.displaysPerBox ?? 1) || 1,
-                unitsPerBox: Number(product.unitsPerBox ?? 0),
-                unitsPerBoxUnit: String(product.unitsPerBoxUnit ?? "unidad"),
-                productWeightKg: Number(product.productWeightKg ?? 0),
-            })),
+            products: products.map((product) => {
+                const productId = String(product._id);
+                const stockInfo = stockByProduct.get(productId);
+                return {
+                    productId,
+                    sku: product.sku,
+                    name: product.name,
+                    category: product.category,
+                    imageUrl: product.imageUrl ?? "",
+                    salePrice: Number(product.salePrice ?? 0),
+                    warehouseStock: Number(stockInfo?.total ?? 0),
+                    displaysPerBox: Number(product.displaysPerBox ?? 1) || 1,
+                    unitsPerBox: Number(product.unitsPerBox ?? 0),
+                    unitsPerBoxUnit: String(product.unitsPerBoxUnit ?? "unidad"),
+                    productWeightKg: Number(product.productWeightKg ?? 0),
+                };
+            }),
         });
     }
     catch (error) {
@@ -1702,6 +1736,7 @@ apiRouter.get("/sales/orders", async (request, response) => {
             deliveryDate: serializeOrderDeliveryDate(order.deliveryDate, order.createdAt),
             deliveryOverdue: order.deliveryOverdue === true,
             status: order.status,
+            orderNotes: typeof order.orderNotes === "string" ? order.orderNotes : "",
             createdAt: order.createdAt,
             updatedAt: order.updatedAt,
             items: order.items.map((item) => {
@@ -1756,6 +1791,7 @@ apiRouter.post("/sales/orders", async (request, response) => {
             deliveryZone: store.address?.trim() || store.name,
             deliveryDate: payload.deliveryDate,
             status: "submitted",
+            orderNotes: payload.orderNotes,
             items: payload.items,
         });
         response.status(201).json({
@@ -1806,6 +1842,7 @@ apiRouter.put("/sales/orders/:id", async (request, response) => {
         await Order.findByIdAndUpdate(order._id, {
             items: payload.items,
             deliveryDate: payload.deliveryDate,
+            orderNotes: payload.orderNotes,
         }, { runValidators: true });
         response.json({
             message: "Pedido actualizado correctamente.",

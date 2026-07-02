@@ -2524,6 +2524,28 @@ h1 {
   gap: 10px;
 }
 
+.seller-route-store-search-meta {
+  margin: 0 0 8px;
+  color: rgba(17, 17, 17, 0.58);
+  font-size: 0.92rem;
+}
+
+.seller-route-store-chip-content {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+}
+
+.seller-route-store-chip-content strong {
+  font-size: 0.95rem;
+}
+
+.seller-route-store-chip-content span {
+  color: rgba(17, 17, 17, 0.58);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
 .seller-route-store-chip {
   border: 1px solid rgba(17, 17, 17, 0.08);
   border-radius: 999px;
@@ -2651,6 +2673,44 @@ h1 {
 
 .warehouse-order-summary-card strong {
   font-size: 1.1rem;
+  color: #111111;
+}
+
+.warehouse-order-summary-card--notes {
+  grid-column: 1 / -1;
+}
+
+.warehouse-order-discount-field {
+  margin-top: 8px;
+}
+
+.warehouse-invoice-subtotal,
+.warehouse-invoice-discount {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.warehouse-order-add-product-button {
+  margin-right: auto;
+}
+
+.seller-order-notes-field textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.seller-order-estimated-total {
+  margin: 0;
+  color: rgba(17, 17, 17, 0.78);
+}
+
+.seller-product-catalog-field-total {
+  justify-content: center;
+  min-width: 120px;
+}
+
+.seller-product-catalog-field-total strong {
+  font-size: 0.95rem;
   color: #111111;
 }
 

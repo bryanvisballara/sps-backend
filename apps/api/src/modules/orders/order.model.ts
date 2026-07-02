@@ -28,6 +28,7 @@ const orderSchema = new Schema(
       default: "submitted",
     },
     items: { type: [orderItemSchema], default: [] },
+    orderNotes: { type: String, trim: true, default: "" },
   },
   { timestamps: true },
 );

@@ -531,6 +531,7 @@ type SellerClientProduct = {
   category: string;
   imageUrl: string;
   salePrice: number;
+  warehouseStock: number;
   displaysPerBox: number;
   unitsPerBox: number;
   unitsPerBoxUnit: string;
@@ -722,6 +723,7 @@ type SellerOrderRecord = {
   deliveryDate: string;
   deliveryOverdue?: boolean;
   status: "draft" | "submitted" | "picking" | "dispatched" | "delivered";
+  orderNotes?: string;
   createdAt: string;
   updatedAt: string;
   items: Array<{
@@ -3715,6 +3717,7 @@ export default function App() {
   const [selectedSellerRouteId, setSelectedSellerRouteId] = useState("");
   const [selectedSellerDayKey, setSelectedSellerDayKey] = useState<RouteDayKey | "">("");
   const [selectedSellerStoreId, setSelectedSellerStoreId] = useState("");
+  const [sellerRouteStoreSearch, setSellerRouteStoreSearch] = useState("");
   const [selectedSellerClientId, setSelectedSellerClientId] = useState("");
   const [sellerClientAssignmentDraft, setSellerClientAssignmentDraft] = useState<string[]>([]);
   const [sellerClientAssignmentStatus, setSellerClientAssignmentStatus] = useState<CreationStatus | null>(null);
@@ -3774,6 +3777,10 @@ export default function App() {
   const [isLoadingWarehousePendingCredit, setIsLoadingWarehousePendingCredit] = useState(false);
   const [warehousePendingCreditError, setWarehousePendingCreditError] = useState("");
   const [warehouseOrderItemDraft, setWarehouseOrderItemDraft] = useState<Record<string, string>>({});
+  const [warehouseOrderPriceDraft, setWarehouseOrderPriceDraft] = useState<Record<string, string>>({});
+  const [warehouseOrderDiscountDraft, setWarehouseOrderDiscountDraft] = useState("");
+  const [warehouseAddProductModalOpen, setWarehouseAddProductModalOpen] = useState(false);
+  const [warehouseAddProductDraft, setWarehouseAddProductDraft] = useState({ productId: "", quantity: "1" });
   const [warehouseOrderEditStatus, setWarehouseOrderEditStatus] = useState<CreationStatus | null>(null);
   const [isSavingWarehouseOrderEdit, setIsSavingWarehouseOrderEdit] = useState(false);
   const [invoiceChangeOrder, setInvoiceChangeOrder] = useState<SellerOrderRecord | null>(null);
@@ -3794,6 +3801,7 @@ export default function App() {
   const [invoiceChangeReviewNotesDraft, setInvoiceChangeReviewNotesDraft] = useState<Record<string, string>>({});
   const [orderDeleteReviewNotesDraft, setOrderDeleteReviewNotesDraft] = useState<Record<string, string>>({});
   const [sellerOrderDraft, setSellerOrderDraft] = useState<SellerOrderDraft>({});
+  const [sellerOrderNotesDraft, setSellerOrderNotesDraft] = useState("");
   const [sellerDeliveryDateDraft, setSellerDeliveryDateDraft] = useState(() => getBusinessDateKey());
   const [sellerOrderEditDeliveryDate, setSellerOrderEditDeliveryDate] = useState(() => getBusinessDateKey());
   const [isSubmittingSellerOrder, setIsSubmittingSellerOrder] = useState(false);
@@ -4092,7 +4100,34 @@ export default function App() {
       address: storeOption.address ?? store.address ?? "",
     }];
   });
-  const selectedSellerStore = selectedSellerStores.find((store) => store.storeId === selectedSellerStoreId) ?? null;
+  const allSelectedSellerRouteStores = (selectedSellerRoute?.days ?? []).flatMap((day) => (
+    day.stores.flatMap((store) => {
+      const storeOption = storeOptionsById.get(store.storeId);
+
+      if (!storeOption) {
+        return [];
+      }
+
+      return [{
+        storeId: store.storeId,
+        storeName: storeOption.label,
+        address: storeOption.address ?? store.address ?? "",
+        routeDay: day.day as RouteDayKey,
+      }];
+    })
+  ));
+  const normalizedSellerRouteStoreSearch = sellerRouteStoreSearch.trim().toLowerCase();
+  const sellerRouteStoresForPanel = normalizedSellerRouteStoreSearch
+    ? allSelectedSellerRouteStores.filter((store) => (
+      `${store.storeName} ${store.address} ${formatRouteDayLabel(store.routeDay)}`.toLowerCase().includes(normalizedSellerRouteStoreSearch)
+    ))
+    : selectedSellerStores.map((store) => ({
+      ...store,
+      routeDay: selectedSellerDayKey as RouteDayKey,
+    }));
+  const selectedSellerStore = allSelectedSellerRouteStores.find((store) => store.storeId === selectedSellerStoreId)
+    ?? selectedSellerStores.find((store) => store.storeId === selectedSellerStoreId)
+    ?? null;
   const sellerManagedClientOptions = Array.from(
     sellerRoutes.reduce((map, route) => {
       route.days.forEach((day) => {
@@ -4114,11 +4149,14 @@ export default function App() {
     .sort((left, right) => left.label.localeCompare(right.label));
   const selectedSellerClientForManagement = sellerManagedClientOptions.find((store) => store.value === selectedSellerClientId) ?? null;
   const selectedSellerRouteKey = selectedSellerRoute ? (selectedSellerRoute._id ?? selectedSellerRoute.code) : "";
-  const visitedSellerStoreIds = new Set(
-    sellerOrders
-      .filter((order) => order.routeId === selectedSellerRouteKey && order.routeDay === selectedSellerDayKey)
-      .map((order) => order.storeId),
-  );
+
+  function handleSelectSellerRouteStore(store: { storeId: string; routeDay: RouteDayKey | "" }) {
+    if (store.routeDay && store.routeDay !== selectedSellerDayKey) {
+      setSelectedSellerDayKey(store.routeDay);
+    }
+
+    setSelectedSellerStoreId(store.storeId);
+  }
   const sellerDraftedItems = sellerClientProducts
     .map((product) => {
       const draft = sellerOrderDraft[product.productId] ?? { stockCurrent: "", quantity: "", notes: "" };
@@ -4133,6 +4171,11 @@ export default function App() {
       };
     })
     .filter((item) => (item.stockCurrent !== null && Number.isFinite(item.stockCurrent) && item.stockCurrent >= 0) || (Number.isFinite(item.quantity) && item.quantity > 0));
+  const sellerOrderEstimatedTotal = sellerDraftedItems.reduce((sum, item) => {
+    const product = sellerClientProducts.find((entry) => entry.productId === item.productId);
+    const unitPrice = Number(product?.salePrice ?? 0);
+    return sum + roundCurrencyValue(unitPrice * item.quantity);
+  }, 0);
   const inventoryRowsByProductId = inventoryRows.reduce((map, row) => {
     const current = map.get(row.productId);
 
@@ -4180,14 +4223,20 @@ export default function App() {
     ? warehouseOrderEffectiveItems.map((item) => {
       const catalogItem = catalogPreviewItems.find((previewItem) => previewItem.productId === item.productId);
       const productOption = productOptionsById.get(item.productId);
-      const resolvedSalePrice = roundCurrencyValue(Number(catalogItem?.salePrice ?? productOption?.salePrice ?? 0));
+      const defaultSalePrice = roundCurrencyValue(Number(catalogItem?.salePrice ?? productOption?.salePrice ?? 0));
       const quantity = selectedWarehouseOrderDetail.status === "delivered"
         ? Number(item.quantity ?? 0)
         : Number(warehouseOrderItemDraft[item.productId] ?? item.quantity ?? 0);
+      const canEditDispatchPrice = selectedWarehouseOrderDetail.status === "dispatched";
+      const priceDraftValue = warehouseOrderPriceDraft[item.productId];
+      const resolvedSalePrice = canEditDispatchPrice && priceDraftValue !== undefined && priceDraftValue.trim() !== ""
+        ? roundCurrencyValue(Number(priceDraftValue))
+        : defaultSalePrice;
 
       return {
         ...item,
         quantity,
+        defaultSalePrice,
         resolvedSalePrice,
         lineTotal: roundCurrencyValue(resolvedSalePrice * quantity),
         priceSource: catalogItem
@@ -4198,7 +4247,11 @@ export default function App() {
       };
     })
     : [];
-  const warehouseInvoiceTotal = warehousePricedItems.reduce((sum, item) => sum + item.lineTotal, 0);
+  const warehouseOrderSubtotal = warehousePricedItems.reduce((sum, item) => sum + item.lineTotal, 0);
+  const warehouseOrderDiscountAmount = selectedWarehouseOrderDetail?.status === "dispatched"
+    ? roundCurrencyValue(Math.max(0, Number(warehouseOrderDiscountDraft || 0)))
+    : 0;
+  const warehouseInvoiceTotal = Math.max(0, roundCurrencyValue(warehouseOrderSubtotal - warehouseOrderDiscountAmount));
   const warehouseFallbackPriceCount = warehousePricedItems.filter((item) => item.priceSource !== "catalog").length;
   const invoiceChangeDraftProductIds = invoiceChangeOrder ? Object.keys(invoiceChangeItemDraft) : [];
   const invoiceChangePricedItems = invoiceChangeOrder
@@ -4240,15 +4293,35 @@ export default function App() {
   const warehouseCompletedOrders = warehouseOrders.filter((order) => order.status === "delivered");
   const warehouseAllItemsChecked = warehousePricedItems.length > 0
     && warehousePricedItems.every((item) => Boolean(warehouseOrderChecklist[item.productId]));
+  const warehouseSomeItemsChecked = warehousePricedItems.some((item) => Boolean(warehouseOrderChecklist[item.productId]));
   const warehouseOrderItemsDirty = Boolean(
     selectedWarehouseOrderDetail
     && selectedWarehouseOrderDetail.status !== "delivered"
-    && (
-      selectedWarehouseOrderDetail.items.length !== warehouseOrderDraftProductIds.length
-      || selectedWarehouseOrderDetail.items.some((item) => (
+    && (() => {
+      const savedOrder = warehouseOrders.find((order) => String(order._id) === String(selectedWarehouseOrderDetail._id));
+      const draftProductIds = Object.keys(warehouseOrderItemDraft);
+
+      if (!savedOrder) {
+        return draftProductIds.length > 0;
+      }
+
+      const savedProductIds = new Set(savedOrder.items.map((item) => item.productId));
+      const draftProductIdSet = new Set(draftProductIds);
+
+      if (savedProductIds.size !== draftProductIdSet.size) {
+        return true;
+      }
+
+      for (const productId of draftProductIdSet) {
+        if (!savedProductIds.has(productId)) {
+          return true;
+        }
+      }
+
+      return savedOrder.items.some((item) => (
         String(item.quantity) !== (warehouseOrderItemDraft[item.productId] ?? String(item.quantity))
-      ))
-    ),
+      ));
+    })(),
   );
   const warehouseOrderCompletionHints: string[] = [];
 
@@ -5638,6 +5711,8 @@ export default function App() {
     if ((sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "contabilidad") || !selectedWarehouseOrderDetail) {
       setWarehouseOrderChecklist({});
       setWarehouseOrderItemDraft({});
+      setWarehouseOrderPriceDraft({});
+      setWarehouseOrderDiscountDraft("");
       setWarehouseOrderEditStatus(null);
       setWarehouseOrderCompletionStatus(null);
       return;
@@ -5653,6 +5728,8 @@ export default function App() {
         selectedWarehouseOrderDetail.items.map((item) => [item.productId, selectedWarehouseOrderDetail.status === "delivered"]),
       ),
     );
+    setWarehouseOrderPriceDraft({});
+    setWarehouseOrderDiscountDraft("");
     setWarehouseOrderEditStatus(null);
     setWarehouseOrderCompletionStatus(null);
   }, [selectedWarehouseOrderDetail, sessionUser]);
@@ -5744,6 +5821,10 @@ export default function App() {
         : (selectedSellerRoute.days[0]?.day ?? "")
     ));
   }, [selectedSellerRoute]);
+
+  useEffect(() => {
+    setSellerRouteStoreSearch("");
+  }, [selectedSellerRouteId]);
 
   useEffect(() => {
     if (selectedSellerStores.length === 0) {
@@ -5897,6 +5978,7 @@ export default function App() {
         ...product,
         imageUrl: typeof product.imageUrl === "string" ? product.imageUrl : "",
         salePrice: Number(product.salePrice ?? 0),
+        warehouseStock: Number(product.warehouseStock ?? 0),
       })));
     } catch {
       setSellerAssignedStore(null);
@@ -6035,6 +6117,13 @@ export default function App() {
 
   function renderSellerAssignedProductRow(product: SellerClientProduct, showOrderFields: boolean) {
     const draft = sellerOrderDraft[product.productId] ?? { stockCurrent: "", quantity: "", notes: "" };
+    const quantityValue = Number(draft.quantity || 0);
+    const lineTotal = Number.isFinite(quantityValue) && quantityValue > 0
+      ? roundCurrencyValue(Number(product.salePrice ?? 0) * quantityValue)
+      : 0;
+    const catalogMatch = [...sellerProductCatalog.expiringSoon, ...sellerProductCatalog.products]
+      .find((entry) => entry.productId === product.productId);
+    const warehouseStock = Number(product.warehouseStock ?? catalogMatch?.warehouseStock ?? 0);
 
     return (
       <article className="seller-product-catalog-row seller-product-catalog-row-assigned" key={`seller-assigned-${product.productId}`}>
@@ -6051,6 +6140,7 @@ export default function App() {
         </div>
         <div className="seller-product-catalog-meta">
           <span>Precio: {formatAwgCurrency(product.salePrice)} AWG</span>
+          <strong>Stock bodega: {warehouseStock} uds.</strong>
           {formatProductDisplayInfo(product) ? (
             <small>{formatProductDisplayInfo(product)}</small>
           ) : null}
@@ -6058,14 +6148,14 @@ export default function App() {
         <div className="seller-product-catalog-order-fields">
           {showOrderFields ? (
             <label className="seller-product-catalog-field">
-              <span>Stock actual</span>
+              <span>Stock en tienda</span>
               <input
                 className="catalog-price-input seller-order-input"
                 type="number"
                 min="0"
-                step="1"
+                step="any"
                 value={draft.stockCurrent}
-                placeholder="0"
+                placeholder="Actual en cliente"
                 onChange={(event) => handleSellerOrderDraftChange(product.productId, "stockCurrent", event.target.value)}
               />
             </label>
@@ -6076,12 +6166,18 @@ export default function App() {
               className="catalog-price-input seller-order-input"
               type="number"
               min="0"
-              step="1"
+              step="any"
               value={draft.quantity}
               placeholder="0"
               onChange={(event) => handleSellerOrderDraftChange(product.productId, "quantity", event.target.value)}
             />
           </label>
+          {showOrderFields && Number.isFinite(quantityValue) && quantityValue > 0 ? (
+            <div className="seller-product-catalog-field seller-product-catalog-field-total">
+              <span>Subtotal</span>
+              <strong>{formatAwgCurrency(lineTotal)} AWG</strong>
+            </div>
+          ) : null}
           {showOrderFields ? (
             <label className="seller-product-catalog-field seller-product-catalog-field-notes">
               <span>Notas</span>
@@ -6165,7 +6261,21 @@ export default function App() {
                       onChange={(event) => setSellerDeliveryDateDraft(event.target.value)}
                     />
                   </label>
+                  <label className="field field-full seller-order-notes-field">
+                    <span>Nota u observación del pedido</span>
+                    <textarea
+                      rows={3}
+                      value={sellerOrderNotesDraft}
+                      placeholder="Ejemplo: cliente pidió media paca de sal, entregar antes del mediodía..."
+                      onChange={(event) => setSellerOrderNotesDraft(event.target.value)}
+                    />
+                  </label>
                   <p>{sellerDraftedItems.length > 0 ? `${sellerDraftedItems.length} producto${sellerDraftedItems.length === 1 ? "" : "s"} listos para registrar.` : "Agrega stock actual o cantidades antes de enviar el pedido a bodega."}</p>
+                  {sellerDraftedItems.length > 0 ? (
+                    <p className="seller-order-estimated-total">
+                      Total estimado: <strong>{formatAwgCurrency(sellerOrderEstimatedTotal)} AWG</strong>
+                    </p>
+                  ) : null}
                   <button
                     className="submit-button seller-order-submit"
                     type="button"
@@ -8038,6 +8148,71 @@ export default function App() {
     });
   }
 
+  function toggleAllWarehouseOrderChecks(checked: boolean) {
+    setWarehouseOrderChecklist(
+      Object.fromEntries(warehousePricedItems.map((item) => [item.productId, checked])),
+    );
+  }
+
+  function openWarehouseAddProductModal() {
+    setWarehouseAddProductDraft({ productId: "", quantity: "1" });
+    setWarehouseAddProductModalOpen(true);
+  }
+
+  function closeWarehouseAddProductModal() {
+    setWarehouseAddProductModalOpen(false);
+    setWarehouseAddProductDraft({ productId: "", quantity: "1" });
+  }
+
+  function addProductToWarehouseOrder() {
+    if (!selectedWarehouseOrderDetail || selectedWarehouseOrderDetail.status === "delivered") {
+      return;
+    }
+
+    const product = productOptions.find((entry) => entry.value === warehouseAddProductDraft.productId);
+
+    if (!product) {
+      setWarehouseOrderEditStatus({ tone: "error", message: "Selecciona un producto valido." });
+      return;
+    }
+
+    const quantity = Number(warehouseAddProductDraft.quantity);
+
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setWarehouseOrderEditStatus({ tone: "error", message: "La cantidad debe ser mayor a cero." });
+      return;
+    }
+
+    if (warehouseOrderItemDraft[product.value]) {
+      setWarehouseOrderEditStatus({ tone: "error", message: "Ese producto ya esta en el pedido. Ajusta la cantidad en la tabla." });
+      return;
+    }
+
+    const newItem = {
+      productId: product.value,
+      stockCurrent: null,
+      quantity,
+      notes: "",
+      productName: product.label,
+      productSku: product.sku,
+    };
+
+    setSelectedWarehouseOrderDetail({
+      ...selectedWarehouseOrderDetail,
+      items: [...selectedWarehouseOrderDetail.items, newItem],
+    });
+    setWarehouseOrderItemDraft((current) => ({
+      ...current,
+      [product.value]: String(quantity),
+    }));
+    setWarehouseOrderChecklist((current) => ({
+      ...current,
+      [product.value]: false,
+    }));
+    setWarehouseOrderEditStatus(null);
+    closeWarehouseAddProductModal();
+  }
+
   function removeWarehouseOrderItem(productId: string) {
     if (!selectedWarehouseOrderDetail || selectedWarehouseOrderDetail.status === "delivered") {
       return;
@@ -8060,6 +8235,19 @@ export default function App() {
       delete next[productId];
       return next;
     });
+    setWarehouseOrderPriceDraft((current) => {
+      const next = { ...current };
+      delete next[productId];
+      return next;
+    });
+    setSelectedWarehouseOrderDetail((current) => (
+      current
+        ? {
+          ...current,
+          items: current.items.filter((item) => item.productId !== productId),
+        }
+        : current
+    ));
     setWarehouseOrderEditStatus(null);
   }
 
@@ -10295,6 +10483,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           storeId: selectedSellerStore.storeId,
           salesRepId: sessionUser.id,
           deliveryDate: sellerDeliveryDateDraft,
+          orderNotes: sellerOrderNotesDraft.trim(),
           items: sellerDraftedItems,
         }),
       });
@@ -10306,6 +10495,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       }
 
       setSellerOrderDraft({});
+      setSellerOrderNotesDraft("");
       setSellerDeliveryDateDraft(getBusinessDateKey());
       setSellerOrderStatus({ tone: "success", message: data.message ?? "Pedido enviado a bodega correctamente." });
       await refreshSellerOrders(sessionUser.id);
@@ -11052,9 +11242,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
     if (config.key === "products") {
       payload.variableSalePrice = Boolean(editingRow?.variableSalePrice ?? false);
-      payload.salePrice = isEditing
-        ? Number(editingRow?.salePrice ?? 0)
-        : Number(formData.get("salePrice") ?? 0);
+      payload.salePrice = Number(formData.get("salePrice") ?? editingRow?.salePrice ?? 0);
       payload.description = String(formData.get("description") ?? "").trim();
       payload.cost = 0;
       payload.arubaPurchaseCostUsd = Number(editingRow?.arubaPurchaseCostUsd ?? 0);
@@ -12661,7 +12849,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                   className="catalog-price-input seller-order-input"
                                   type="number"
                                   min="0"
-                                  step="1"
+                                  step="any"
                                   value={sellerOrderEditDraft[item.productId] ?? String(item.quantity)}
                                   onChange={(event) => setSellerOrderEditDraft((current) => ({
                                     ...current,
@@ -12817,7 +13005,10 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         key={`${selectedSellerRoute._id ?? selectedSellerRoute.code}-${day.day}`}
                         className={`seller-route-day-button ${selectedSellerDayKey === day.day ? "is-active" : ""}`}
                         type="button"
-                        onClick={() => setSelectedSellerDayKey(day.day)}
+                        onClick={() => {
+                          setSelectedSellerDayKey(day.day);
+                          setSellerRouteStoreSearch("");
+                        }}
                       >
                         <strong>{formatRouteDayLabel(day.day)}</strong>
                         <span>{day.stores.length} clientes</span>
@@ -12828,24 +13019,50 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   {selectedSellerDay ? (
                     <>
                       <div className="seller-route-client-panel">
+                        <label className="field field-full">
+                          <span>Buscar tienda</span>
+                          <input
+                            type="search"
+                            placeholder="Buscar entre todas las tiendas de la ruta"
+                            value={sellerRouteStoreSearch}
+                            onChange={(event) => setSellerRouteStoreSearch(event.target.value)}
+                          />
+                        </label>
+
                         <div className="field field-full">
-                          <span>Cliente de la ruta</span>
+                          <span>{normalizedSellerRouteStoreSearch ? "Resultados en toda la ruta" : "Cliente de la ruta"}</span>
+                          <p className="seller-route-store-search-meta">
+                            {normalizedSellerRouteStoreSearch
+                              ? `${sellerRouteStoresForPanel.length} de ${allSelectedSellerRouteStores.length} tiendas`
+                              : `${sellerRouteStoresForPanel.length} tiendas`}
+                          </p>
                           <div className="seller-route-store-chips">
-                            {selectedSellerStores.map((store) => {
+                            {sellerRouteStoresForPanel.length > 0 ? sellerRouteStoresForPanel.map((store) => {
                               const isActive = selectedSellerStoreId === store.storeId;
-                              const isVisited = visitedSellerStoreIds.has(store.storeId);
+                              const isVisited = sellerOrders.some(
+                                (order) => order.routeId === selectedSellerRouteKey
+                                  && order.routeDay === store.routeDay
+                                  && order.storeId === store.storeId,
+                              );
 
                               return (
                                 <button
-                                  key={store.storeId}
+                                  key={`${store.routeDay}-${store.storeId}`}
                                   className={`seller-route-store-chip ${isActive ? "is-active" : ""} ${isVisited ? "is-visited" : ""}`}
                                   type="button"
-                                  onClick={() => setSelectedSellerStoreId(store.storeId)}
+                                  onClick={() => handleSelectSellerRouteStore(store)}
                                 >
-                                  {store.storeName}
+                                  {normalizedSellerRouteStoreSearch ? (
+                                    <span className="seller-route-store-chip-content">
+                                      <strong>{store.storeName}</strong>
+                                      <span>{formatRouteDayLabel(store.routeDay)}</span>
+                                    </span>
+                                  ) : store.storeName}
                                 </button>
                               );
-                            })}
+                            }) : (
+                              <p className="route-empty-state">No hay tiendas que coincidan con la búsqueda.</p>
+                            )}
                           </div>
                         </div>
 
@@ -13011,6 +13228,13 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </div>
 
                     <div className="warehouse-order-detail-grid">
+                      {selectedWarehouseOrderDetail.orderNotes ? (
+                        <div className="warehouse-order-summary-card warehouse-order-summary-card--notes">
+                          <p className="section-label">Observación del vendedor</p>
+                          <p>{selectedWarehouseOrderDetail.orderNotes}</p>
+                        </div>
+                      ) : null}
+
                       <div className="warehouse-order-summary-card">
                         <p className="section-label">Checklist</p>
                         <strong>{warehouseAllItemsChecked ? "Listo para facturar" : "Pendiente de revisión"}</strong>
@@ -13043,6 +13267,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
                       <div className="warehouse-order-summary-card">
                         <p className="section-label">Factura</p>
+                        {selectedWarehouseOrderDetail.status === "dispatched" && warehouseOrderDiscountAmount > 0 ? (
+                          <>
+                            <p className="warehouse-invoice-subtotal">Subtotal: {formatCurrency(warehouseOrderSubtotal)}</p>
+                            <p className="warehouse-invoice-discount">Descuento: -{formatCurrency(warehouseOrderDiscountAmount)}</p>
+                          </>
+                        ) : null}
                         <strong>{formatCurrency(warehouseInvoiceTotal)}</strong>
                         <p>
                           {!selectedCatalogId
@@ -13051,6 +13281,20 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             ? `${warehouseFallbackPriceCount} producto${warehouseFallbackPriceCount === 1 ? " usa" : "s usan"} precio base del producto fuera del catálogo.`
                             : "Todos los productos tienen precio resuelto desde el catálogo seleccionado."}
                         </p>
+                        {selectedWarehouseOrderDetail.status === "dispatched" ? (
+                          <label className="field warehouse-order-discount-field">
+                            <span>Descuento del pedido (AWG)</span>
+                            <input
+                              className="warehouse-order-qty-input"
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={warehouseOrderDiscountDraft}
+                              placeholder="0.00"
+                              onChange={(event) => setWarehouseOrderDiscountDraft(event.target.value)}
+                            />
+                          </label>
+                        ) : null}
                       </div>
                     </div>
 
@@ -13071,7 +13315,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <table className="data-table data-table--warehouse-order-items">
                         <thead>
                           <tr>
-                            <th className="warehouse-order-col-check">Listo</th>
+                            <th className="warehouse-order-col-check">
+                              <input
+                                className="warehouse-order-check"
+                                type="checkbox"
+                                aria-label="Marcar todos los productos"
+                                checked={warehouseAllItemsChecked}
+                                disabled={selectedWarehouseOrderDetail.status === "delivered"}
+                                onChange={(event) => toggleAllWarehouseOrderChecks(event.target.checked)}
+                              />
+                            </th>
                             <th>SKU</th>
                             <th>Producto</th>
                             <th className="warehouse-order-col-optional">Stock</th>
@@ -13110,7 +13363,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                     className="warehouse-order-qty-input"
                                     type="number"
                                     min="0"
-                                    step="1"
+                                    step="any"
                                     value={warehouseOrderItemDraft[item.productId] ?? String(item.quantity)}
                                     onChange={(event) => {
                                       setWarehouseOrderItemDraft((current) => ({
@@ -13122,7 +13375,25 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                   />
                                 )}
                               </td>
-                              <td>{formatCurrency(item.resolvedSalePrice)}</td>
+                              <td>
+                                {selectedWarehouseOrderDetail.status === "dispatched" ? (
+                                  <input
+                                    className="warehouse-order-qty-input"
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={warehouseOrderPriceDraft[item.productId] ?? String(item.resolvedSalePrice)}
+                                    onChange={(event) => {
+                                      setWarehouseOrderPriceDraft((current) => ({
+                                        ...current,
+                                        [item.productId]: event.target.value,
+                                      }));
+                                    }}
+                                  />
+                                ) : (
+                                  formatCurrency(item.resolvedSalePrice)
+                                )}
+                              </td>
                               <td>{formatCurrency(item.lineTotal)}</td>
                               <td className="warehouse-order-col-optional">{item.notes || "-"}</td>
                               {selectedWarehouseOrderDetail.status !== "delivered" ? (
@@ -13168,6 +13439,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           onClick={() => void handleWarehouseOrderEditSubmit()}
                         >
                           {isSavingWarehouseOrderEdit ? "Guardando cambios..." : "Guardar cambios al pedido"}
+                        </button>
+                      ) : null}
+                      {selectedWarehouseOrderDetail.status === "submitted" ? (
+                        <button
+                          className="ghost-button warehouse-order-add-product-button"
+                          type="button"
+                          disabled={isSavingWarehouseOrderEdit || isCompletingWarehouseOrder || isDispatchingWarehouseOrder}
+                          onClick={openWarehouseAddProductModal}
+                        >
+                          Añadir producto
                         </button>
                       ) : null}
                       {selectedWarehouseOrderDetail.status === "submitted" ? (
@@ -13575,6 +13856,45 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               ) : null}
             </section>
           )}
+
+          {warehouseAddProductModalOpen ? (
+            <div className="modal-overlay" role="presentation" onClick={closeWarehouseAddProductModal}>
+              <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                <div className="modal-header">
+                  <div>
+                    <p className="section-label">Pedido</p>
+                    <h2>Añadir producto</h2>
+                    <p>Busca un producto y agregalo al pedido con la cantidad solicitada.</p>
+                  </div>
+                  <button className="modal-close-button" type="button" onClick={closeWarehouseAddProductModal}>Cerrar</button>
+                </div>
+
+                <label className="field field-full">
+                  <span>Producto</span>
+                  <SearchableProductSelect
+                    products={productOptions.filter((entry) => !warehouseOrderItemDraft[entry.value])}
+                    value={warehouseAddProductDraft.productId}
+                    onChange={(productId) => setWarehouseAddProductDraft((current) => ({ ...current, productId }))}
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Cantidad</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={warehouseAddProductDraft.quantity}
+                    onChange={(event) => setWarehouseAddProductDraft((current) => ({ ...current, quantity: event.target.value }))}
+                  />
+                </label>
+
+                <button className="submit-button" type="button" onClick={addProductToWarehouseOrder}>
+                  Agregar al pedido
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           {warehousePaymentModalOpen ? (
             <div
