@@ -29,7 +29,7 @@ import { User } from "../modules/users/user.model.js";
 import { SalesRepGoal } from "../modules/users/sales-rep-goal.model.js";
 import { Warehouse } from "../modules/warehouses/warehouse.model.js";
 import { isFirebasePushConfigured } from "../services/firebase-admin.service.js";
-import { notifyNewSalesOrder, notifyRouteAssigned, registerPushToken, unregisterPushToken, } from "../services/push-notification.service.js";
+import { notifyNewSalesOrder, notifyContabilidadOrderDispatched, notifyRouteAssigned, registerPushToken, unregisterPushToken, } from "../services/push-notification.service.js";
 export const apiRouter = Router();
 const cloudinaryProductFolder = "spste/products";
 const cloudinaryImportDocumentsFolder = "spste/import-documents";
@@ -1942,6 +1942,13 @@ apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
                 status: updatedOrder.status,
                 updatedAt: updatedOrder.updatedAt,
             },
+            invoiceNumber,
+        });
+        void notifyContabilidadOrderDispatched({
+            _id: updatedOrder._id,
+            storeName: updatedOrder.storeName,
+            salesRepName: updatedOrder.salesRepName,
+            routeName: updatedOrder.routeName,
             invoiceNumber,
         });
     }

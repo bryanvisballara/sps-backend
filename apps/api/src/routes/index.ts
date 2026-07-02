@@ -40,6 +40,7 @@ import { Warehouse } from "../modules/warehouses/warehouse.model.js";
 import { isFirebasePushConfigured } from "../services/firebase-admin.service.js";
 import {
   notifyNewSalesOrder,
+  notifyContabilidadOrderDispatched,
   notifyRouteAssigned,
   registerPushToken,
   unregisterPushToken,
@@ -2561,6 +2562,14 @@ apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
         status: updatedOrder.status,
         updatedAt: updatedOrder.updatedAt,
       },
+      invoiceNumber,
+    });
+
+    void notifyContabilidadOrderDispatched({
+      _id: updatedOrder._id,
+      storeName: updatedOrder.storeName,
+      salesRepName: updatedOrder.salesRepName,
+      routeName: updatedOrder.routeName,
       invoiceNumber,
     });
   } catch (error) {

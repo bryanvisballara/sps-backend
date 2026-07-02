@@ -1,6 +1,7 @@
 import { PushNotificationLog } from "../modules/notifications/push-notification-log.model.js";
 import { PushToken } from "../modules/notifications/push-token.model.js";
 import { User } from "../modules/users/user.model.js";
+import { sendEmailToRoles } from "./email-notification.service.js";
 import { getFirebaseMessaging, isFirebasePushConfigured } from "./firebase-admin.service.js";
 
 const TEN_YEARS_MS = 10 * 365.25 * 24 * 60 * 60 * 1000;
@@ -173,6 +174,36 @@ export async function notifyNewSalesOrder(order: {
     body: `${salesRepName} envio un pedido para ${storeName}.`,
     url: "/",
   });
+}
+
+export async function notifyContabilidadOrderDispatched(order: {
+  storeName?: string;
+  salesRepName?: string;
+  routeName?: string;
+  invoiceNumber?: number | null;
+  _id?: unknown;
+}) {
+  const storeName = String(order.storeName ?? "cliente");
+  const salesRepName = String(order.salesRepName ?? "vendedor");
+  const routeName = String(order.routeName ?? "").trim();
+  const invoiceNumber = Number(order.invoiceNumber ?? 0) || null;
+  const invoiceLabel = invoiceNumber ? `Factura ${invoiceNumber}` : "Pedido en despacho";
+  const routeSuffix = routeName ? ` · Ruta ${routeName}` : "";
+  const body = `El pedido de ${storeName} (${invoiceLabel}) salio a despacho${routeSuffix}. Enviado por bodega para ${salesRepName}.`;
+  const emailText = `${body}\n\nRevisa el portal de Contabilidad en la seccion Despacho para facturarlo al confirmar la entrega.`;
+
+  await Promise.all([
+    sendPushToRoles(["contabilidad"], {
+      title: "Pedido en despacho",
+      body,
+      url: "/",
+    }),
+    sendEmailToRoles(["contabilidad"], {
+      subject: `Pedido en despacho · ${storeName}`,
+      text: emailText,
+      html: `<p>${body}</p><p>Revisa el portal de <strong>Contabilidad</strong> en la seccion <strong>Despacho</strong> para facturarlo al confirmar la entrega.</p>`,
+    }),
+  ]);
 }
 
 export async function notifyRouteAssigned(route: {

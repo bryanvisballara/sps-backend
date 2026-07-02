@@ -20,5 +20,7 @@ export declare const env: {
     FIREBASE_WEB_API_KEY?: string | undefined;
     FIREBASE_WEB_APP_ID?: string | undefined;
     FIREBASE_WEB_VAPID_KEY?: string | undefined;
+    RESEND_API_KEY?: string | undefined;
+    EMAIL_FROM?: string | undefined;
 };
 //# sourceMappingURL=env.d.ts.map

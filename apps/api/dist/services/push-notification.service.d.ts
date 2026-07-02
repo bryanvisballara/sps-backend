@@ -20,6 +20,13 @@ export declare function notifyNewSalesOrder(order: {
     salesRepName?: string;
     _id?: unknown;
 }): Promise<void>;
+export declare function notifyContabilidadOrderDispatched(order: {
+    storeName?: string;
+    salesRepName?: string;
+    routeName?: string;
+    invoiceNumber?: number | null;
+    _id?: unknown;
+}): Promise<void>;
 export declare function notifyRouteAssigned(route: {
     salesRepId?: string;
     salesRepName?: string;

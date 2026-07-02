@@ -36,6 +36,8 @@ const envSchema = z.object({
   FIREBASE_WEB_API_KEY: z.string().optional(),
   FIREBASE_WEB_APP_ID: z.string().optional(),
   FIREBASE_WEB_VAPID_KEY: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  EMAIL_FROM: z.string().optional(),
 });
 
 const parsedEnv = envSchema.parse(envSource);
