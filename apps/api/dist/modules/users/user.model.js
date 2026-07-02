@@ -5,7 +5,7 @@ const userSchema = new Schema({
     password: { type: String, required: true },
     role: {
         type: String,
-        enum: ["sales-rep-aruba", "warehouse-aruba", "colombia-ops", "management"],
+        enum: ["sales-rep-aruba", "warehouse-aruba", "colombia-ops", "contabilidad", "management"],
         required: true,
     },
     active: { type: Boolean, default: true },

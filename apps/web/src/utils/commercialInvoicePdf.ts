@@ -106,9 +106,11 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
     pdf.text(COMPANY.phone, companyX, 96);
     pdf.text(COMPANY.email, companyX, 108);
 
-    pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(28);
-    pdf.text(isDispatch ? "DELIVERY NOTE" : "INVOICE", pageWidth - margin, 88, { align: "right" });
+    if (!isDispatch) {
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(28);
+      pdf.text("INVOICE", pageWidth - margin, 88, { align: "right" });
+    }
 
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(10);
@@ -116,18 +118,19 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(11);
     pdf.text(input.billToName.toUpperCase(), margin, 146);
-    pdf.text(input.billToLocation.toUpperCase(), margin, 160);
 
-    const documentLabel = isDispatch
-      ? "GUIA"
-      : "FACTURA";
-    const documentNumber = isDispatch
-      ? "PENDIENTE"
-      : String(input.invoiceNumber ?? "—");
+    const normalizedBillToName = input.billToName.trim().toUpperCase();
+    const normalizedBillToLocation = input.billToLocation.trim().toUpperCase();
+
+    if (normalizedBillToLocation && normalizedBillToLocation !== normalizedBillToName) {
+      pdf.text(normalizedBillToLocation, margin, 160);
+    }
+
+    const documentNumber = input.invoiceNumber ? String(input.invoiceNumber) : "—";
 
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(10);
-    pdf.text(`${documentLabel} ${documentNumber}`, pageWidth - margin, 132, { align: "right" });
+    pdf.text(`FACTURA ${documentNumber}`, pageWidth - margin, 132, { align: "right" });
     pdf.text(`DATE ${formatInvoiceDate(input.invoiceDate)}`, pageWidth - margin, 146, { align: "right" });
   };
 
@@ -174,7 +177,7 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
 
   const finalY = (pdf as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 178;
   const footerY = Math.min(finalY + 28, pageHeight - 48);
-  const footerLabel = isDispatch ? "TOTAL REFERENCIAL AWG" : "BALANCE DUE AWG";
+  const footerLabel = input.invoiceNumber ? "BALANCE DUE AWG" : "TOTAL REFERENCIAL AWG";
 
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(10);
@@ -184,12 +187,12 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
 
   const dateLabel = formatInvoiceDate(input.invoiceDate).replace(/\//g, "-");
   const fileName = sanitizePdfFileName(
-    isDispatch
-      ? `guia-${input.billToName}-${dateLabel}`
-      : input.invoiceNumber
-        ? `factura-${input.invoiceNumber}-${input.billToName}`
+    input.invoiceNumber
+      ? `factura-${input.invoiceNumber}-${input.billToName}`
+      : isDispatch
+        ? `guia-${input.billToName}-${dateLabel}`
         : `factura-${input.billToName}-${dateLabel}`,
-  ) || (isDispatch ? "guia-despacho" : "factura");
+  ) || (input.invoiceNumber ? "factura" : "guia-despacho");
 
   return { pdf, fileName };
 }

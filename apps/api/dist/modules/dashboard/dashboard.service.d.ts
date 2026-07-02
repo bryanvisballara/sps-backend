@@ -11,6 +11,10 @@ export declare const roleSummary: readonly [{
     readonly name: "Operaciones Colombia";
     readonly responsibility: "Repone inventario para exportacion segun niveles minimos.";
 }, {
+    readonly code: "contabilidad";
+    readonly name: "Contabilidad";
+    readonly responsibility: "Gestiona ventas, cartera, despachos e inventario de bodega.";
+}, {
     readonly code: "management";
     readonly name: "Gerencia";
     readonly responsibility: "Monitorea ventas, inventario, exportaciones y cumplimiento.";

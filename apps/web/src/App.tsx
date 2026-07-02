@@ -37,7 +37,9 @@ type ActiveSection =
   | "import-billing"
   | "accounting"
   | "logistics-accounting"
-  | "cartera";
+  | "cartera"
+  | "warehouse-dispatch"
+  | "warehouse-inventory";
 
 type KpiCard = {
   label: string;
@@ -1163,6 +1165,34 @@ const colombiaOpsSidebarSections = [
   },
 ] as const;
 
+const contabilidadSidebarSections = [
+  {
+    key: "ventas",
+    label: "Ventas",
+    items: [
+      { key: "orders", label: "Pedidos" },
+      { key: "catalog", label: "Catálogo" },
+      { key: "cartera", label: "Cartera" },
+    ],
+  },
+  {
+    key: "bodega",
+    label: "Bodega",
+    items: [
+      { key: "warehouse-dispatch", label: "Despacho" },
+      { key: "warehouse-inventory", label: "Inventario" },
+    ],
+  },
+] as const;
+
+const contabilidadAllowedSections = new Set<ActiveSection>([
+  "orders",
+  "catalog",
+  "cartera",
+  "warehouse-dispatch",
+  "warehouse-inventory",
+]);
+
 const carteraPaymentMethodOptions: Array<{ value: CarteraPaymentMethod; label: string }> = [
   { value: "credito", label: "Crédito" },
   { value: "datafono", label: "Datáfono" },
@@ -1179,6 +1209,7 @@ const carteraCollectionPaymentMethodOptions: Array<{ value: CarteraCollectionPay
 const roleOptions = [
   { value: "sales-rep-aruba", label: "Vendedor Aruba" },
   { value: "warehouse-aruba", label: "Bodega Aruba" },
+  { value: "contabilidad", label: "Contabilidad" },
   { value: "colombia-ops", label: "Operaciones Colombia" },
   { value: "management", label: "Gerencia" },
 ];
@@ -1638,7 +1669,15 @@ function isOptionalProductField(field: FieldConfig) {
 }
 
 function isArubaRole(role: string | undefined) {
-  return role === "management" || role === "sales-rep-aruba" || role === "warehouse-aruba";
+  return role === "management" || role === "sales-rep-aruba" || role === "warehouse-aruba" || role === "contabilidad";
+}
+
+function isContabilidadWarehouseSection(section: ActiveSection) {
+  return section === "warehouse-dispatch" || section === "warehouse-inventory";
+}
+
+function canAccessWarehousePortal(role: string | undefined, section: ActiveSection) {
+  return role === "warehouse-aruba" || (role === "contabilidad" && isContabilidadWarehouseSection(section));
 }
 
 function isProductVisibleForSession(product: Record<string, unknown>, sessionUser: SessionUser | null) {
@@ -1720,6 +1759,7 @@ function buildCreationKpis(
         { label: "Usuarios activos", value: rows.filter((row) => row.active !== false).length, tone: "amber" },
         { label: "Vendedores Aruba", value: rows.filter((row) => row.role === "sales-rep-aruba").length, tone: "slate" },
         { label: "Equipo de bodega", value: rows.filter((row) => row.role === "warehouse-aruba").length, tone: "cyan" },
+        { label: "Contabilidad", value: rows.filter((row) => row.role === "contabilidad").length, tone: "amber" },
       ] satisfies KpiCard[];
     case "clients":
       return [
@@ -3076,6 +3116,8 @@ function getRoleLabel(role: string) {
       return "Vendedor Aruba";
     case "warehouse-aruba":
       return "Bodega Aruba";
+    case "contabilidad":
+      return "Contabilidad";
     case "colombia-ops":
       return "Operaciones Colombia";
     default:
@@ -4612,7 +4654,7 @@ export default function App() {
   }, [sessionUser]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "management" && sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "colombia-ops" && sessionUser?.role !== "sales-rep-aruba") {
+    if (sessionUser?.role !== "management" && sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "colombia-ops" && sessionUser?.role !== "contabilidad" && sessionUser?.role !== "sales-rep-aruba") {
       return;
     }
 
@@ -4620,12 +4662,27 @@ export default function App() {
   }, [sessionUser]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "warehouse-aruba") {
+    if (sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "contabilidad") {
       return;
     }
 
     void refreshCatalogs();
-  }, [sessionUser, warehouseActiveSection]);
+  }, [sessionUser, warehouseActiveSection, activeSection]);
+
+  useEffect(() => {
+    if (sessionUser?.role !== "contabilidad") {
+      return;
+    }
+
+    if (activeSection === "warehouse-dispatch") {
+      setWarehouseActiveSection("dispatch");
+      return;
+    }
+
+    if (activeSection === "warehouse-inventory") {
+      setWarehouseActiveSection("inventory");
+    }
+  }, [activeSection, sessionUser]);
 
   useEffect(() => {
     const canManageCreationSection = sessionUser?.role === "management"
@@ -4854,7 +4911,7 @@ export default function App() {
   }, [activeSection, sessionUser]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "management") {
+    if (sessionUser?.role !== "management" && sessionUser?.role !== "contabilidad") {
       return;
     }
 
@@ -4940,6 +4997,16 @@ export default function App() {
   }, [activeSection, sessionUser]);
 
   useEffect(() => {
+    if (sessionUser?.role !== "contabilidad") {
+      return;
+    }
+
+    if (!contabilidadAllowedSections.has(activeSection)) {
+      setActiveSection("orders");
+    }
+  }, [activeSection, sessionUser]);
+
+  useEffect(() => {
     const persistedClientId = String(selectedBillingRows.find((row) => row.invoiceClientId)?.invoiceClientId ?? "").trim();
 
     if (persistedClientId && operationsClientOptions.some((client) => client.value === persistedClientId)) {
@@ -4978,7 +5045,11 @@ export default function App() {
   }, [monthlyImportBatchRows, selectedAccountingMonthlyBatchKey]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "management" || activeSection !== "catalog") {
+    if (sessionUser?.role !== "management" && sessionUser?.role !== "contabilidad") {
+      return;
+    }
+
+    if (activeSection !== "catalog") {
       return;
     }
 
@@ -4986,7 +5057,11 @@ export default function App() {
   }, [activeSection, sessionUser]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "management" || activeSection !== "catalog") {
+    if (sessionUser?.role !== "management" && sessionUser?.role !== "contabilidad") {
+      return;
+    }
+
+    if (activeSection !== "catalog") {
       return;
     }
 
@@ -5029,7 +5104,11 @@ export default function App() {
   }, [salesRepOptions]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "management" || (activeSection !== "inventory" && activeSection !== "catalog" && activeSection !== "dashboard" && activeSection !== "imports")) {
+    if (sessionUser?.role !== "management" && sessionUser?.role !== "contabilidad") {
+      return;
+    }
+
+    if (activeSection !== "inventory" && activeSection !== "catalog" && activeSection !== "dashboard" && activeSection !== "imports" && activeSection !== "orders") {
       return;
     }
 
@@ -5037,7 +5116,11 @@ export default function App() {
   }, [activeSection, sessionUser]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "management" || (activeSection !== "orders" && activeSection !== "dashboard" && activeSection !== "store-performance" && activeSection !== "sales-rep-performance")) {
+    if (sessionUser?.role !== "management" && sessionUser?.role !== "contabilidad") {
+      return;
+    }
+
+    if (activeSection !== "orders") {
       return;
     }
 
@@ -5124,7 +5207,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    if (sessionUser?.role !== "warehouse-aruba") {
+    if (sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "contabilidad") {
       setWarehouseActiveSection("inventory");
       setWarehouseOrders([]);
       setWarehouseOrdersError("");
@@ -5140,7 +5223,7 @@ export default function App() {
   }, [sessionUser, warehouseActiveSection]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "warehouse-aruba" || !selectedWarehouseOrderDetail) {
+    if ((sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "contabilidad") || !selectedWarehouseOrderDetail) {
       setWarehouseOrderChecklist({});
       setWarehouseOrderItemDraft({});
       setWarehouseOrderEditStatus(null);
@@ -5163,7 +5246,7 @@ export default function App() {
   }, [selectedWarehouseOrderDetail, sessionUser]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "warehouse-aruba" || warehouseActiveSection !== "orders" || !selectedWarehouseOrderDetail) {
+    if ((sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "contabilidad") || warehouseActiveSection !== "orders" || !selectedWarehouseOrderDetail) {
       return;
     }
 
@@ -6390,7 +6473,7 @@ export default function App() {
     try {
       setIsLoadingInventory(true);
       setInventoryError("");
-      const arubaInventoryRoles = new Set(["warehouse-aruba", "sales-rep-aruba", "management"]);
+      const arubaInventoryRoles = new Set(["warehouse-aruba", "sales-rep-aruba", "management", "contabilidad"]);
       const businessUnit = arubaInventoryRoles.has(String(sessionUser?.role ?? "")) ? "aruba" : "colombia";
       const response = await fetch(`${apiBaseUrl}/management/inventory-summary?businessUnit=${businessUnit}`);
       const data = (await response.json()) as InventorySummaryResponse | { message?: string };
@@ -7260,7 +7343,7 @@ export default function App() {
       return;
     }
 
-    const isWarehouseInventoryEntry = sessionUser?.role === "warehouse-aruba";
+    const isWarehouseInventoryEntry = sessionUser?.role === "warehouse-aruba" || sessionUser?.role === "contabilidad";
     let usdToAwgRate = Number(inventoryUsdToAwgRate || 0);
     let normalizedItems: Array<{
       productId: string;
@@ -7525,10 +7608,10 @@ export default function App() {
 
     return buildCommercialInvoicePdf({
       documentKind,
-      invoiceNumber: documentKind === "invoice" ? invoiceNumber ?? null : null,
+      invoiceNumber: invoiceNumber ?? null,
       invoiceDate: new Date(),
       billToName: order.storeName,
-      billToLocation: order.deliveryZone || order.routeName,
+      billToLocation: order.deliveryZone || order.routeName || "",
       lineItems,
       totalAmount: warehouseInvoiceTotal,
     });
@@ -7678,11 +7761,16 @@ export default function App() {
 
       const response = await fetch(`${apiBaseUrl}/warehouse/orders/${selectedWarehouseOrderDetail._id}/dispatch`, {
         method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invoiceAmountAwg: warehouseInvoiceTotal,
+        }),
       });
       const responseText = await response.text();
       const data = readApiResponse<{
         message?: string;
         order?: { _id: string; status: SellerOrderRecord["status"]; updatedAt: string };
+        invoiceNumber?: number | null;
       }>(response, responseText);
 
       if (!response.ok || !data.order) {
@@ -7703,7 +7791,11 @@ export default function App() {
 
       await refreshWarehouseOrders();
 
-      const { pdf, fileName } = await buildWarehouseInvoicePdfDocument(dispatchedOrder, "dispatch");
+      const { pdf, fileName } = await buildWarehouseInvoicePdfDocument(
+        dispatchedOrder,
+        "dispatch",
+        data.invoiceNumber ?? null,
+      );
       openPdfInNewTab(pdf, fileName);
 
       setSelectedWarehouseOrderDetail(null);
@@ -11969,7 +12061,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
     );
   }
 
-  if (sessionUser.role === "warehouse-aruba") {
+  if (canAccessWarehousePortal(sessionUser.role, activeSection)) {
+    const isContabilidadUser = sessionUser.role === "contabilidad";
+
     return (
       <main className="portal-shell portal-shell--field">
         <aside className="sidebar">
@@ -11982,39 +12076,63 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           </div>
 
           <nav className="sidebar-nav">
-            <button
-              className={`sidebar-link ${warehouseActiveSection === "inventory" ? "active" : ""}`}
-              type="button"
-              onClick={() => {
-                setWarehouseActiveSection("inventory");
-                setSelectedWarehouseOrderDetail(null);
-                setWarehouseOrderCompletionStatus(null);
-              }}
-            >
-              Inventario
-            </button>
-            <button
-              className={`sidebar-link ${warehouseActiveSection === "orders" ? "active" : ""}`}
-              type="button"
-              onClick={() => {
-                setWarehouseActiveSection("orders");
-                setSelectedWarehouseOrderDetail(null);
-                setWarehouseOrderCompletionStatus(null);
-              }}
-            >
-              Pedidos
-            </button>
-            <button
-              className={`sidebar-link ${warehouseActiveSection === "dispatch" ? "active" : ""}`}
-              type="button"
-              onClick={() => {
-                setWarehouseActiveSection("dispatch");
-                setSelectedWarehouseOrderDetail(null);
-                setWarehouseOrderCompletionStatus(null);
-              }}
-            >
-              Despacho
-            </button>
+            {isContabilidadUser ? (
+              contabilidadSidebarSections.map((section) => (
+                <div key={section.key}>
+                  <p className="section-label">{section.label}</p>
+                  {section.items.map((item) => (
+                    <button
+                      key={item.key}
+                      className={`sidebar-link ${activeSection === item.key ? "active" : ""}`}
+                      type="button"
+                      onClick={() => {
+                        setActiveSection(item.key as ActiveSection);
+                        setSelectedWarehouseOrderDetail(null);
+                        setWarehouseOrderCompletionStatus(null);
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              ))
+            ) : (
+              <>
+                <button
+                  className={`sidebar-link ${warehouseActiveSection === "inventory" ? "active" : ""}`}
+                  type="button"
+                  onClick={() => {
+                    setWarehouseActiveSection("inventory");
+                    setSelectedWarehouseOrderDetail(null);
+                    setWarehouseOrderCompletionStatus(null);
+                  }}
+                >
+                  Inventario
+                </button>
+                <button
+                  className={`sidebar-link ${warehouseActiveSection === "orders" ? "active" : ""}`}
+                  type="button"
+                  onClick={() => {
+                    setWarehouseActiveSection("orders");
+                    setSelectedWarehouseOrderDetail(null);
+                    setWarehouseOrderCompletionStatus(null);
+                  }}
+                >
+                  Pedidos
+                </button>
+                <button
+                  className={`sidebar-link ${warehouseActiveSection === "dispatch" ? "active" : ""}`}
+                  type="button"
+                  onClick={() => {
+                    setWarehouseActiveSection("dispatch");
+                    setSelectedWarehouseOrderDetail(null);
+                    setWarehouseOrderCompletionStatus(null);
+                  }}
+                >
+                  Despacho
+                </button>
+              </>
+            )}
           </nav>
 
           <button className="ghost-button" type="button" onClick={handleLogout}>
@@ -12026,7 +12144,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           <header className="portal-header portal-header--field">
             <div className="portal-header-top">
               <div>
-                <p className="section-label">Portal Bodega · {sessionUser.name}</p>
+                <p className="section-label">{`${isContabilidadUser ? "Portal Contabilidad" : "Portal Bodega"} · ${sessionUser.name}`}</p>
                 <h1>{
                   warehouseActiveSection === "orders"
                     ? "Pedidos recibidos"
@@ -12782,194 +12900,194 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   </div>
                 </div>
               ) : null}
-
-              {warehousePaymentModalOpen ? (
-                <div
-                  className="modal-overlay"
-                  role="presentation"
-                  onClick={() => {
-                    if (!isCompletingWarehouseOrder) {
-                      setWarehousePaymentModalOpen(false);
-                      setWarehousePaymentModalStatus(null);
-                    }
-                  }}
-                >
-                  <div className="modal-card modal-card--wide" role="dialog" onClick={(event) => event.stopPropagation()}>
-                    <p className="section-label">Facturacion y recaudo</p>
-                    <h2>Facturar y terminar pedido</h2>
-                    <p className="route-helper-text">
-                      La facturacion registra el pedido en cartera. El recaudo solo ocurre con datáfono, transferencia o efectivo, o al cobrar facturas en credito pendientes.
-                    </p>
-
-                    <div className="import-summary-grid">
-                      <div className="import-summary-card">
-                        <p>Cliente</p>
-                        <strong>{selectedWarehouseOrderDetail?.storeName ?? "-"}</strong>
-                      </div>
-                      <div className="import-summary-card">
-                        <p>Facturacion del pedido</p>
-                        <strong>{formatCurrency(warehouseInvoiceTotal)}</strong>
-                      </div>
-                      <div className="import-summary-card">
-                        <p>Recaudo estimado ahora</p>
-                        <strong>{formatCurrency(warehouseTotalRecaudoPreview)}</strong>
-                      </div>
-                    </div>
-
-                    <label className="field">
-                      <span>Metodo de pago del pedido actual</span>
-                      <select
-                        value={warehousePaymentMethodDraft}
-                        onChange={(event) => {
-                          setWarehousePaymentMethodDraft(event.target.value as CarteraPaymentMethod | "");
-                          setWarehousePaymentModalStatus(null);
-                        }}
-                        disabled={isCompletingWarehouseOrder}
-                      >
-                        <option value="">Selecciona una opcion</option>
-                        {carteraPaymentMethodOptions.map((option) => (
-                          <option key={option.value} value={option.value}>{option.label}</option>
-                        ))}
-                      </select>
-                    </label>
-
-                    {warehousePaymentMethodDraft === "credito" ? (
-                      <p className="route-helper-text">
-                        Este pedido entrara a cartera como credito pendiente. No generara recaudo hasta que se cobre.
-                      </p>
-                    ) : warehousePaymentMethodDraft ? (
-                      <p className="route-helper-text">
-                        Este pedido se factura y se recauda de inmediato por {formatPaymentMethodLabel(warehousePaymentMethodDraft)}.
-                      </p>
-                    ) : null}
-
-                    <article className="database-card warehouse-credit-collection-card">
-                      <div className="management-table-header">
-                        <div>
-                          <h3>Recaudar credito pendiente</h3>
-                          <p>Si el cliente paga facturas anteriores en esta entrega, registralas aqui.</p>
-                        </div>
-                        <p className="management-table-meta">
-                          {isLoadingWarehousePendingCredit
-                            ? "Cargando..."
-                            : `${warehousePendingCreditEntries.length} factura${warehousePendingCreditEntries.length === 1 ? "" : "s"} pendiente${warehousePendingCreditEntries.length === 1 ? "" : "s"}`}
-                        </p>
-                      </div>
-
-                      {warehousePendingCreditError ? (
-                        <p className="form-feedback error">{warehousePendingCreditError}</p>
-                      ) : null}
-
-                      {warehousePendingCreditEntries.length > 0 ? (
-                        <div className="table-wrap table-wrap--warehouse-items">
-                          <table className="data-table data-table--warehouse-orders">
-                            <thead>
-                              <tr>
-                                <th></th>
-                                <th>Factura</th>
-                                <th>Fecha</th>
-                                <th>Pendiente</th>
-                                <th>Recaudar</th>
-                                <th>Metodo</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {warehousePendingCreditEntries.map((entry) => {
-                                const draft = entry._id ? warehouseCreditCollectionDrafts[entry._id] : undefined;
-
-                                if (!draft) {
-                                  return null;
-                                }
-
-                                return (
-                                  <tr key={entry._id}>
-                                    <td>
-                                      <input
-                                        type="checkbox"
-                                        checked={draft.selected}
-                                        disabled={isCompletingWarehouseOrder}
-                                        onChange={(event) => updateWarehouseCreditCollectionDraft(entry._id!, {
-                                          selected: event.target.checked,
-                                          paymentMethod: event.target.checked ? draft.paymentMethod : "",
-                                        })}
-                                      />
-                                    </td>
-                                    <td>{entry.storeName}</td>
-                                    <td>{String(entry.invoicedAt).slice(0, 10)}</td>
-                                    <td>{formatCurrency(entry.outstandingAmountAwg)}</td>
-                                    <td>
-                                      <input
-                                        className="import-table-input"
-                                        type="number"
-                                        min="0"
-                                        step="any"
-                                        max={entry.outstandingAmountAwg}
-                                        value={draft.amountAwg}
-                                        disabled={!draft.selected || isCompletingWarehouseOrder}
-                                        onChange={(event) => updateWarehouseCreditCollectionDraft(entry._id!, {
-                                          amountAwg: event.target.value,
-                                        })}
-                                      />
-                                    </td>
-                                    <td>
-                                      <select
-                                        value={draft.paymentMethod}
-                                        disabled={!draft.selected || isCompletingWarehouseOrder}
-                                        onChange={(event) => updateWarehouseCreditCollectionDraft(entry._id!, {
-                                          paymentMethod: event.target.value as CarteraCollectionPaymentMethod | "",
-                                        })}
-                                      >
-                                        <option value="">Metodo</option>
-                                        {carteraCollectionPaymentMethodOptions.map((option) => (
-                                          <option key={option.value} value={option.value}>{option.label}</option>
-                                        ))}
-                                      </select>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : !isLoadingWarehousePendingCredit ? (
-                        <p className="warehouse-empty-state">Este cliente no tiene facturas en credito pendientes.</p>
-                      ) : null}
-                    </article>
-
-                    {warehousePaymentModalStatus ? (
-                      <p className={`form-feedback ${warehousePaymentModalStatus.tone === "error" ? "error" : "success"}`}>
-                        {warehousePaymentModalStatus.message}
-                      </p>
-                    ) : null}
-
-                    <div className="catalog-form-actions inventory-adjustment-actions">
-                      <button
-                        className="ghost-button"
-                        type="button"
-                        disabled={isCompletingWarehouseOrder}
-                        onClick={() => {
-                          setWarehousePaymentModalOpen(false);
-                          setWarehousePaymentModalStatus(null);
-                          setWarehousePendingCreditEntries([]);
-                          setWarehouseCreditCollectionDrafts({});
-                        }}
-                      >
-                        Cancelar
-                      </button>
-                      <button
-                        className="submit-button"
-                        type="button"
-                        disabled={isCompletingWarehouseOrder || !warehousePaymentMethodDraft}
-                        onClick={() => void handleWarehouseOrderComplete()}
-                      >
-                        {isCompletingWarehouseOrder ? "Facturando..." : "Facturar y terminar pedido"}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
             </section>
           )}
+
+          {warehousePaymentModalOpen ? (
+            <div
+              className="modal-overlay"
+              role="presentation"
+              onClick={() => {
+                if (!isCompletingWarehouseOrder) {
+                  setWarehousePaymentModalOpen(false);
+                  setWarehousePaymentModalStatus(null);
+                }
+              }}
+            >
+              <div className="modal-card modal-card--wide" role="dialog" onClick={(event) => event.stopPropagation()}>
+                <p className="section-label">Facturacion y recaudo</p>
+                <h2>Facturar y terminar pedido</h2>
+                <p className="route-helper-text">
+                  La facturacion registra el pedido en cartera. El recaudo solo ocurre con datáfono, transferencia o efectivo, o al cobrar facturas en credito pendientes.
+                </p>
+
+                <div className="import-summary-grid">
+                  <div className="import-summary-card">
+                    <p>Cliente</p>
+                    <strong>{selectedWarehouseOrderDetail?.storeName ?? "-"}</strong>
+                  </div>
+                  <div className="import-summary-card">
+                    <p>Facturacion del pedido</p>
+                    <strong>{formatCurrency(warehouseInvoiceTotal)}</strong>
+                  </div>
+                  <div className="import-summary-card">
+                    <p>Recaudo estimado ahora</p>
+                    <strong>{formatCurrency(warehouseTotalRecaudoPreview)}</strong>
+                  </div>
+                </div>
+
+                <label className="field">
+                  <span>Metodo de pago del pedido actual</span>
+                  <select
+                    value={warehousePaymentMethodDraft}
+                    onChange={(event) => {
+                      setWarehousePaymentMethodDraft(event.target.value as CarteraPaymentMethod | "");
+                      setWarehousePaymentModalStatus(null);
+                    }}
+                    disabled={isCompletingWarehouseOrder}
+                  >
+                    <option value="">Selecciona una opcion</option>
+                    {carteraPaymentMethodOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                {warehousePaymentMethodDraft === "credito" ? (
+                  <p className="route-helper-text">
+                    Este pedido entrara a cartera como credito pendiente. No generara recaudo hasta que se cobre.
+                  </p>
+                ) : warehousePaymentMethodDraft ? (
+                  <p className="route-helper-text">
+                    Este pedido se factura y se recauda de inmediato por {formatPaymentMethodLabel(warehousePaymentMethodDraft)}.
+                  </p>
+                ) : null}
+
+                <article className="database-card warehouse-credit-collection-card">
+                  <div className="management-table-header">
+                    <div>
+                      <h3>Recaudar credito pendiente</h3>
+                      <p>Si el cliente paga facturas anteriores en esta entrega, registralas aqui.</p>
+                    </div>
+                    <p className="management-table-meta">
+                      {isLoadingWarehousePendingCredit
+                        ? "Cargando..."
+                        : `${warehousePendingCreditEntries.length} factura${warehousePendingCreditEntries.length === 1 ? "" : "s"} pendiente${warehousePendingCreditEntries.length === 1 ? "" : "s"}`}
+                    </p>
+                  </div>
+
+                  {warehousePendingCreditError ? (
+                    <p className="form-feedback error">{warehousePendingCreditError}</p>
+                  ) : null}
+
+                  {warehousePendingCreditEntries.length > 0 ? (
+                    <div className="table-wrap table-wrap--warehouse-items">
+                      <table className="data-table data-table--warehouse-orders">
+                        <thead>
+                          <tr>
+                            <th></th>
+                            <th>Factura</th>
+                            <th>Fecha</th>
+                            <th>Pendiente</th>
+                            <th>Recaudar</th>
+                            <th>Metodo</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {warehousePendingCreditEntries.map((entry) => {
+                            const draft = entry._id ? warehouseCreditCollectionDrafts[entry._id] : undefined;
+
+                            if (!draft) {
+                              return null;
+                            }
+
+                            return (
+                              <tr key={entry._id}>
+                                <td>
+                                  <input
+                                    type="checkbox"
+                                    checked={draft.selected}
+                                    disabled={isCompletingWarehouseOrder}
+                                    onChange={(event) => updateWarehouseCreditCollectionDraft(entry._id!, {
+                                      selected: event.target.checked,
+                                      paymentMethod: event.target.checked ? draft.paymentMethod : "",
+                                    })}
+                                  />
+                                </td>
+                                <td>{entry.storeName}</td>
+                                <td>{String(entry.invoicedAt).slice(0, 10)}</td>
+                                <td>{formatCurrency(entry.outstandingAmountAwg)}</td>
+                                <td>
+                                  <input
+                                    className="import-table-input"
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    max={entry.outstandingAmountAwg}
+                                    value={draft.amountAwg}
+                                    disabled={!draft.selected || isCompletingWarehouseOrder}
+                                    onChange={(event) => updateWarehouseCreditCollectionDraft(entry._id!, {
+                                      amountAwg: event.target.value,
+                                    })}
+                                  />
+                                </td>
+                                <td>
+                                  <select
+                                    value={draft.paymentMethod}
+                                    disabled={!draft.selected || isCompletingWarehouseOrder}
+                                    onChange={(event) => updateWarehouseCreditCollectionDraft(entry._id!, {
+                                      paymentMethod: event.target.value as CarteraCollectionPaymentMethod | "",
+                                    })}
+                                  >
+                                    <option value="">Metodo</option>
+                                    {carteraCollectionPaymentMethodOptions.map((option) => (
+                                      <option key={option.value} value={option.value}>{option.label}</option>
+                                    ))}
+                                  </select>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : !isLoadingWarehousePendingCredit ? (
+                    <p className="warehouse-empty-state">Este cliente no tiene facturas en credito pendientes.</p>
+                  ) : null}
+                </article>
+
+                {warehousePaymentModalStatus ? (
+                  <p className={`form-feedback ${warehousePaymentModalStatus.tone === "error" ? "error" : "success"}`}>
+                    {warehousePaymentModalStatus.message}
+                  </p>
+                ) : null}
+
+                <div className="catalog-form-actions inventory-adjustment-actions">
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    disabled={isCompletingWarehouseOrder}
+                    onClick={() => {
+                      setWarehousePaymentModalOpen(false);
+                      setWarehousePaymentModalStatus(null);
+                      setWarehousePendingCreditEntries([]);
+                      setWarehouseCreditCollectionDrafts({});
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    className="submit-button"
+                    type="button"
+                    disabled={isCompletingWarehouseOrder || !warehousePaymentMethodDraft}
+                    onClick={() => void handleWarehouseOrderComplete()}
+                  >
+                    {isCompletingWarehouseOrder ? "Facturando..." : "Facturar y terminar pedido"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </section>
       </main>
     );
@@ -13042,6 +13160,28 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </div>
                     ))}
                   </>
+                )
+            : sessionUser.role === "contabilidad"
+              ? (
+                  contabilidadSidebarSections.map((section) => (
+                    <div key={section.key}>
+                      <p className="section-label">{section.label}</p>
+                      {section.items.map((item) => (
+                        <button
+                          key={item.key}
+                          className={`sidebar-link ${activeSection === item.key ? "active" : ""}`}
+                          type="button"
+                          onClick={() => {
+                            setActiveSection(item.key as ActiveSection);
+                            setSelectedWarehouseOrderDetail(null);
+                            setWarehouseOrderCompletionStatus(null);
+                          }}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  ))
                 )
             : visibleSidebarItems.map((item) => (
                 <button

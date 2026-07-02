@@ -4,13 +4,13 @@ export declare const User: import("mongoose").Model<{
     active: boolean;
     email: string;
     password: string;
-    role: "sales-rep-aruba" | "warehouse-aruba" | "colombia-ops" | "management";
+    role: "sales-rep-aruba" | "warehouse-aruba" | "colombia-ops" | "contabilidad" | "management";
 } & import("mongoose").DefaultTimestampProps, {}, {}, {}, import("mongoose").Document<unknown, {}, {
     name: string;
     active: boolean;
     email: string;
     password: string;
-    role: "sales-rep-aruba" | "warehouse-aruba" | "colombia-ops" | "management";
+    role: "sales-rep-aruba" | "warehouse-aruba" | "colombia-ops" | "contabilidad" | "management";
 } & import("mongoose").DefaultTimestampProps, {}, {
     timestamps: true;
 }> & {
@@ -18,7 +18,7 @@ export declare const User: import("mongoose").Model<{
     active: boolean;
     email: string;
     password: string;
-    role: "sales-rep-aruba" | "warehouse-aruba" | "colombia-ops" | "management";
+    role: "sales-rep-aruba" | "warehouse-aruba" | "colombia-ops" | "contabilidad" | "management";
 } & import("mongoose").DefaultTimestampProps & {
     _id: import("mongoose").Types.ObjectId;
 } & {
@@ -30,13 +30,13 @@ export declare const User: import("mongoose").Model<{
     active: boolean;
     email: string;
     password: string;
-    role: "sales-rep-aruba" | "warehouse-aruba" | "colombia-ops" | "management";
+    role: "sales-rep-aruba" | "warehouse-aruba" | "colombia-ops" | "contabilidad" | "management";
 } & import("mongoose").DefaultTimestampProps, import("mongoose").Document<unknown, {}, import("mongoose").FlatRecord<{
     name: string;
     active: boolean;
     email: string;
     password: string;
-    role: "sales-rep-aruba" | "warehouse-aruba" | "colombia-ops" | "management";
+    role: "sales-rep-aruba" | "warehouse-aruba" | "colombia-ops" | "contabilidad" | "management";
 } & import("mongoose").DefaultTimestampProps>, {}, import("mongoose").MergeType<import("mongoose").DefaultSchemaOptions, {
     timestamps: true;
 }>> & import("mongoose").FlatRecord<{
@@ -44,7 +44,7 @@ export declare const User: import("mongoose").Model<{
     active: boolean;
     email: string;
     password: string;
-    role: "sales-rep-aruba" | "warehouse-aruba" | "colombia-ops" | "management";
+    role: "sales-rep-aruba" | "warehouse-aruba" | "colombia-ops" | "contabilidad" | "management";
 } & import("mongoose").DefaultTimestampProps> & {
     _id: import("mongoose").Types.ObjectId;
 } & {

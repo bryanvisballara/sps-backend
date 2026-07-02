@@ -2497,6 +2497,8 @@ apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
     }
 
     if (order.status === "dispatched") {
+      const existingEntry = await CarteraEntry.findOne({ orderId: String(order._id), active: { $ne: false } }).lean();
+
       response.json({
         message: "El pedido ya estaba en despacho.",
         order: {
@@ -2504,6 +2506,7 @@ apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
           status: order.status,
           updatedAt: order.updatedAt,
         },
+        invoiceNumber: Number(existingEntry?.invoiceNumber ?? 0) || null,
       });
       return;
     }
@@ -2512,6 +2515,10 @@ apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
       response.status(400).json({ message: "Solo puedes enviar a despacho pedidos recibidos en bodega." });
       return;
     }
+
+    const invoiceAmountAwg = normalizeCarteraInvoiceAmount(request.body?.invoiceAmountAwg);
+    const invoiceNumber = await getNextInvoiceNumber();
+    const invoicedAt = new Date();
 
     const updatedOrder = await Order.findByIdAndUpdate(
       request.params.id,
@@ -2524,6 +2531,29 @@ apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
       return;
     }
 
+    await CarteraEntry.findOneAndUpdate(
+      { orderId: String(updatedOrder._id) },
+      {
+        orderId: String(updatedOrder._id),
+        storeId: String(updatedOrder.storeId ?? ""),
+        storeName: String(updatedOrder.storeName ?? ""),
+        salesRepId: String(updatedOrder.salesRepId ?? ""),
+        salesRepName: String(updatedOrder.salesRepName ?? ""),
+        routeId: String(updatedOrder.routeId ?? ""),
+        routeName: String(updatedOrder.routeName ?? ""),
+        routeDay: String(updatedOrder.routeDay ?? ""),
+        deliveryZone: String(updatedOrder.deliveryZone ?? ""),
+        paymentMethod: "credito",
+        invoiceAmountAwg,
+        invoiceNumber,
+        collectedAmountAwg: 0,
+        outstandingAmountAwg: invoiceAmountAwg,
+        invoicedAt,
+        active: true,
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true },
+    );
+
     response.json({
       message: "Pedido enviado a despacho correctamente.",
       order: {
@@ -2531,6 +2561,7 @@ apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
         status: updatedOrder.status,
         updatedAt: updatedOrder.updatedAt,
       },
+      invoiceNumber,
     });
   } catch (error) {
     sendCreationError(response, error);
@@ -2571,7 +2602,8 @@ apiRouter.put("/warehouse/orders/:id/complete", async (request, response) => {
     const isCreditInvoice = paymentMethod === "credito";
     const initialCollectedAmountAwg = isCreditInvoice ? 0 : invoiceAmountAwg;
     const initialOutstandingAmountAwg = isCreditInvoice ? invoiceAmountAwg : 0;
-    const invoiceNumber = await getNextInvoiceNumber();
+    const existingCarteraEntry = await CarteraEntry.findOne({ orderId: String(order._id), active: { $ne: false } }).lean();
+    const invoiceNumber = Number(existingCarteraEntry?.invoiceNumber ?? 0) || await getNextInvoiceNumber();
 
     await applyOrderInventoryDeduction({
       _id: order._id,

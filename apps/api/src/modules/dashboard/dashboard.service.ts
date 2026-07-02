@@ -15,6 +15,11 @@ export const roleSummary = [
     responsibility: "Repone inventario para exportacion segun niveles minimos.",
   },
   {
+    code: "contabilidad",
+    name: "Contabilidad",
+    responsibility: "Gestiona ventas, cartera, despachos e inventario de bodega.",
+  },
+  {
     code: "management",
     name: "Gerencia",
     responsibility: "Monitorea ventas, inventario, exportaciones y cumplimiento.",
