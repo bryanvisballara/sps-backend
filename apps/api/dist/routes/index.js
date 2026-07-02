@@ -2199,13 +2199,22 @@ async function applyCreditCollections(collections, context) {
     }
     return createdCollections;
 }
+const MIN_INVOICE_NUMBER = 12020;
 async function getNextInvoiceNumber() {
-    const lastEntry = await CarteraEntry.findOne({ invoiceNumber: { $exists: true, $ne: null } })
-        .sort({ invoiceNumber: -1 })
+    const activeEntries = await CarteraEntry.find({
+        active: { $ne: false },
+        invoiceNumber: { $exists: true, $ne: null, $gte: MIN_INVOICE_NUMBER },
+    })
         .select({ invoiceNumber: 1 })
         .lean();
-    const lastNumber = Number(lastEntry?.invoiceNumber ?? 0);
-    return Math.max(lastNumber + 1, 12020);
+    const usedNumbers = new Set(activeEntries
+        .map((entry) => Number(entry.invoiceNumber))
+        .filter((number) => Number.isFinite(number) && number >= MIN_INVOICE_NUMBER));
+    let candidate = MIN_INVOICE_NUMBER;
+    while (usedNumbers.has(candidate)) {
+        candidate += 1;
+    }
+    return candidate;
 }
 async function buildWarehouseInvoiceDocumentLines(order) {
     const orderItems = Array.isArray(order.items) ? order.items : [];
