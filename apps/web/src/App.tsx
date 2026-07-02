@@ -1253,6 +1253,7 @@ const contabilidadSidebarSections = [
     label: "Parametrización",
     items: [
       { key: "products", label: "Productos" },
+      { key: "clients", label: "Clientes" },
     ],
   },
 ] as const;
@@ -1266,6 +1267,7 @@ const contabilidadAllowedSections = new Set<ActiveSection>([
   "products",
   "products-create",
   "products-import",
+  "clients",
 ]);
 
 const carteraPaymentMethodOptions: Array<{ value: CarteraPaymentMethod; label: string }> = [
@@ -2052,14 +2054,9 @@ function getCollectionConfigs(
       tableColumns: [
         { key: "sku", label: "SKU" },
         { key: "name", label: "Producto" },
-        { key: "containerType", label: "Contenedor" },
-        { key: "shareWithAruba", label: "Aruba" },
         { key: "category", label: "Categoría" },
-        { key: "supplier", label: "Proveedor" },
-        { key: "productWeightKg", label: "Peso export. (kg)" },
-        { key: "exportVolumeCubicFeet", label: "Vol. export. (pie3)" },
-        { key: "displaysPerBox", label: "Displays" },
-        { key: "unitsPerBox", label: "Und/display" },
+        { key: "warehouseStock", label: "Stock" },
+        { key: "packDescription", label: "Descripción" },
         { key: "salePrice", label: "Venta" },
       ],
     },
@@ -2939,6 +2936,27 @@ async function loadImageForPdf(imageUrl: string) {
 
 function formatUnitsPerBoxUnitLabel(unit: string) {
   return unitsPerBoxUnitOptions.find((option) => option.value === unit)?.label ?? "UNIDAD";
+}
+
+function formatProductPackDescription(row: {
+  displaysPerBox?: unknown;
+  unitsPerBox?: unknown;
+  unitsPerBoxUnit?: unknown;
+}) {
+  const displaysPerBox = Number(row.displaysPerBox ?? 1) || 1;
+  const unitsPerBox = Number(row.unitsPerBox ?? 0);
+  const unitValue = String(row.unitsPerBoxUnit ?? "unidad").trim().toLowerCase();
+  const displayLabel = `${displaysPerBox} display${displaysPerBox === 1 ? "" : "s"}`;
+
+  if (!Number.isFinite(unitsPerBox) || unitsPerBox <= 0) {
+    return displayLabel;
+  }
+
+  const unitLabel = unitValue === "unidad"
+    ? (unitsPerBox === 1 ? "unidad" : "unidades")
+    : formatUnitsPerBoxUnitLabel(unitValue).toLowerCase();
+
+  return `${displayLabel} x ${unitsPerBox} ${unitLabel}`;
 }
 
 function normalizeMonthlyAmount(amount: number, frequency: string) {
@@ -5173,7 +5191,10 @@ export default function App() {
         || selectedCollection.endpoint === "/management/suppliers"
         || selectedCollection.endpoint === "/management/products"
       ))
-      || (sessionUser?.role === "contabilidad" && selectedCollection.endpoint === "/management/products");
+      || (sessionUser?.role === "contabilidad" && (
+        selectedCollection.endpoint === "/management/products"
+        || selectedCollection.endpoint === "/management/clients"
+      ));
 
     if (!canManageCreationSection || !isCreationSection) {
       return;
@@ -5590,7 +5611,7 @@ export default function App() {
       return;
     }
 
-    if (activeSection !== "inventory" && activeSection !== "catalog" && activeSection !== "dashboard" && activeSection !== "imports" && activeSection !== "orders") {
+    if (activeSection !== "inventory" && activeSection !== "catalog" && activeSection !== "dashboard" && activeSection !== "imports" && activeSection !== "orders" && activeSection !== "products") {
       return;
     }
 
@@ -11504,6 +11525,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
     if (key === "salePrice") {
       const value = Number(row.salePrice ?? 0);
       return value > 0 ? formatCurrency(value) : "-";
+    }
+
+    if (key === "warehouseStock") {
+      const productId = String(row._id ?? "");
+      const stockQuantity = Number(inventoryRowsByProductId.get(productId)?.quantity ?? 0);
+      return String(stockQuantity);
+    }
+
+    if (key === "packDescription") {
+      return formatProductPackDescription(row);
     }
 
     if (key === "productWeightKg" || key === "exportVolumeCubicFeet" || key === "displaysPerBox" || key === "unitsPerBox") {
