@@ -3784,10 +3784,10 @@ apiRouter.get("/management/inventory-summary", async (request, response) => {
                     isExpiringSoon,
                 }];
         }
-        return [...productStockRows]
-            .filter((stockRow) => Number(stockRow.availableUnits ?? 0) > 0)
-            .sort(compareWarehouseStockLotsByConsumptionPriority)
-            .map((stockRow) => {
+        const sortedStockRows = [...productStockRows].sort(compareWarehouseStockLotsByConsumptionPriority);
+        const positiveStockRows = sortedStockRows.filter((stockRow) => Number(stockRow.availableUnits ?? 0) > 0);
+        const stockRowsToRender = positiveStockRows.length > 0 ? positiveStockRows : sortedStockRows.slice(0, 1);
+        return stockRowsToRender.map((stockRow) => {
             const quantity = Number(stockRow.availableUnits ?? 0);
             const expirationDate = normalizeOptionalDateValue(stockRow.expirationDate ?? product.expirationDate);
             const isExpiringSoon = Boolean(expirationDate &&
