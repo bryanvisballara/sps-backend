@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
@@ -718,6 +718,8 @@ type SellerOrderRecord = {
   salesRepId: string;
   salesRepName: string;
   deliveryZone: string;
+  deliveryDate: string;
+  deliveryOverdue?: boolean;
   status: "draft" | "submitted" | "picking" | "dispatched" | "delivered";
   createdAt: string;
   updatedAt: string;
@@ -2368,6 +2370,264 @@ function formatPaymentMethodLabel(paymentMethod: string) {
   return match?.label ?? paymentMethod;
 }
 
+function getBusinessMonthKey(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Aruba",
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value ?? "0000";
+  const month = parts.find((part) => part.type === "month")?.value ?? "01";
+  return `${year}-${month}`;
+}
+
+function getBusinessDateKey(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Aruba",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value ?? "0000";
+  const month = parts.find((part) => part.type === "month")?.value ?? "01";
+  const day = parts.find((part) => part.type === "day")?.value ?? "01";
+  return `${year}-${month}-${day}`;
+}
+
+function addDaysToBusinessDateKey(dateKey: string, days: number) {
+  const parsed = new Date(`${dateKey}T12:00:00`);
+  parsed.setDate(parsed.getDate() + days);
+  return getBusinessDateKey(parsed);
+}
+
+function getOrderDeliveryDateKey(order: SellerOrderRecord) {
+  return order.deliveryDate || order.createdAt.slice(0, 10);
+}
+
+function formatDeliveryDateLabel(dateKey: string) {
+  const parsed = new Date(`${dateKey}T12:00:00`);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return dateKey;
+  }
+
+  return new Intl.DateTimeFormat("es-CO", {
+    timeZone: "America/Aruba",
+    weekday: "long",
+    day: "numeric",
+    month: "short",
+  }).format(parsed);
+}
+
+function formatDeliveryDateHeading(dateKey: string, hasOverdue = false) {
+  const todayKey = getBusinessDateKey();
+  const tomorrowKey = addDaysToBusinessDateKey(todayKey, 1);
+
+  if (dateKey === todayKey) {
+    return hasOverdue ? "Para hoy · Atrasados" : "Para hoy";
+  }
+
+  if (dateKey === tomorrowKey) {
+    return hasOverdue ? "Para manana · Atrasados" : "Para manana";
+  }
+
+  return hasOverdue ? "Programado · Atrasados" : "Programado";
+}
+
+function compareOrdersByDeliveryDate(left: SellerOrderRecord, right: SellerOrderRecord) {
+  const dateCompare = getOrderDeliveryDateKey(left).localeCompare(getOrderDeliveryDateKey(right));
+
+  if (dateCompare !== 0) {
+    return dateCompare;
+  }
+
+  return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+}
+
+function sortOrdersByDeliveryDate(orders: SellerOrderRecord[]) {
+  return [...orders].sort(compareOrdersByDeliveryDate);
+}
+
+function groupOrdersByDeliveryDate(orders: SellerOrderRecord[]) {
+  const groups = new Map<string, SellerOrderRecord[]>();
+
+  sortOrdersByDeliveryDate(orders).forEach((order) => {
+    const dateKey = getOrderDeliveryDateKey(order);
+    const current = groups.get(dateKey) ?? [];
+    current.push(order);
+    groups.set(dateKey, current);
+  });
+
+  return Array.from(groups.entries()).map(([dateKey, groupedOrders]) => ({
+    dateKey,
+    heading: formatDeliveryDateHeading(dateKey, groupedOrders.some((order) => order.deliveryOverdue)),
+    subtitle: formatDeliveryDateLabel(dateKey),
+    orders: groupedOrders,
+  }));
+}
+
+type WarehouseOrderListProps = {
+  orders: SellerOrderRecord[];
+  isLoading: boolean;
+  emptyMessage: string;
+  loadingMessage: string;
+  groupByDeliveryDate?: boolean;
+  onSelectOrder: (order: SellerOrderRecord) => void;
+  renderActions?: (order: SellerOrderRecord) => ReactNode;
+  showStatus?: boolean;
+};
+
+function WarehouseOrderList({
+  orders,
+  isLoading,
+  emptyMessage,
+  loadingMessage,
+  groupByDeliveryDate = true,
+  onSelectOrder,
+  renderActions,
+  showStatus = true,
+}: WarehouseOrderListProps) {
+  if (isLoading) {
+    return (
+      <div className="table-wrap table-wrap--warehouse-items">
+        <table className="data-table data-table--warehouse-orders">
+          <thead>
+            <tr>
+              <th>Entrega</th>
+              <th className="warehouse-order-col-optional">Vendedor</th>
+              <th>Cliente</th>
+              <th className="warehouse-order-col-optional">Ruta</th>
+              {showStatus ? <th>Estado</th> : null}
+              <th>Und.</th>
+              <th>Ver</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td colSpan={showStatus ? 7 : 6} className="empty-table-cell">{loadingMessage}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  if (orders.length === 0) {
+    return (
+      <div className="table-wrap table-wrap--warehouse-items">
+        <table className="data-table data-table--warehouse-orders">
+          <thead>
+            <tr>
+              <th>Entrega</th>
+              <th className="warehouse-order-col-optional">Vendedor</th>
+              <th>Cliente</th>
+              <th className="warehouse-order-col-optional">Ruta</th>
+              {showStatus ? <th>Estado</th> : null}
+              <th>Und.</th>
+              <th>Ver</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td colSpan={showStatus ? 7 : 6} className="empty-table-cell">{emptyMessage}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  const groups = groupByDeliveryDate
+    ? groupOrdersByDeliveryDate(orders)
+    : [{
+        dateKey: "all",
+        heading: "",
+        subtitle: "",
+        orders: sortOrdersByDeliveryDate(orders),
+      }];
+
+  return (
+    <div className="warehouse-order-groups">
+      {groups.map((group) => (
+        <section className="warehouse-order-date-group" key={group.dateKey}>
+          {groupByDeliveryDate ? (
+            <div className="warehouse-order-date-group-header">
+              <div>
+                <h3>{group.heading}</h3>
+                <p>{group.subtitle}</p>
+              </div>
+              <span>{group.orders.length} pedido{group.orders.length === 1 ? "" : "s"}</span>
+            </div>
+          ) : null}
+
+          <div className="table-wrap table-wrap--warehouse-items">
+            <table className="data-table data-table--warehouse-orders">
+              <thead>
+                <tr>
+                  <th>Entrega</th>
+                  <th className="warehouse-order-col-optional">Vendedor</th>
+                  <th>Cliente</th>
+                  <th className="warehouse-order-col-optional">Ruta</th>
+                  {showStatus ? <th>Estado</th> : null}
+                  <th>Und.</th>
+                  <th>{renderActions ? "Acciones" : "Ver"}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {group.orders.map((order) => {
+                  const totalUnits = order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+
+                  return (
+                    <tr key={order._id} className={order.deliveryOverdue ? "is-overdue" : undefined}>
+                      <td>
+                        <div className="warehouse-order-delivery-cell">
+                          <span>{formatDeliveryDateLabel(getOrderDeliveryDateKey(order))}</span>
+                          {order.deliveryOverdue ? (
+                            <span className="warehouse-order-overdue-badge">Atrasado</span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="warehouse-order-col-optional">{order.salesRepName}</td>
+                      <td>{order.storeName}</td>
+                      <td className="warehouse-order-col-optional">{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
+                      {showStatus ? <td>{formatSellerOrderStatus(order.status)}</td> : null}
+                      <td>{`${order.items.length} prod. / ${totalUnits} und`}</td>
+                      <td className={renderActions ? "table-actions-cell" : undefined}>
+                        {order.items.length > 0 ? (
+                          renderActions ? (
+                            <>
+                              <button
+                                className="seller-order-detail-trigger"
+                                type="button"
+                                onClick={() => onSelectOrder(order)}
+                              >
+                                Ver
+                              </button>
+                              {renderActions(order)}
+                            </>
+                          ) : (
+                            <button
+                              className="seller-order-detail-trigger"
+                              type="button"
+                              onClick={() => onSelectOrder(order)}
+                            >
+                              Ver
+                            </button>
+                          )
+                        ) : "-"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 function getCarteraEntryPaymentStatus(entry: CarteraEntryRecord): CarteraEntryPaymentStatus {
   const outstandingAmountAwg = Number(entry.outstandingAmountAwg ?? 0);
   const collectedAmountAwg = Number(entry.collectedAmountAwg ?? 0);
@@ -3463,7 +3723,7 @@ export default function App() {
   const [carteraRows, setCarteraRows] = useState<CarteraEntryRecord[]>([]);
   const [carteraCollections, setCarteraCollections] = useState<CarteraCollectionRecord[]>([]);
   const [carteraSummary, setCarteraSummary] = useState<CarteraSummary>(() => createInitialCarteraSummary());
-  const [carteraMonthFilter, setCarteraMonthFilter] = useState(() => new Date().toISOString().slice(0, 7));
+  const [carteraMonthFilter, setCarteraMonthFilter] = useState(() => getBusinessMonthKey());
   const [isLoadingCartera, setIsLoadingCartera] = useState(false);
   const [carteraError, setCarteraError] = useState("");
   const [selectedCarteraStoreId, setSelectedCarteraStoreId] = useState("");
@@ -3494,6 +3754,8 @@ export default function App() {
   const [isReviewingInvoiceChangeRequest, setIsReviewingInvoiceChangeRequest] = useState(false);
   const [invoiceChangeReviewNotesDraft, setInvoiceChangeReviewNotesDraft] = useState<Record<string, string>>({});
   const [sellerOrderDraft, setSellerOrderDraft] = useState<SellerOrderDraft>({});
+  const [sellerDeliveryDateDraft, setSellerDeliveryDateDraft] = useState(() => getBusinessDateKey());
+  const [sellerOrderEditDeliveryDate, setSellerOrderEditDeliveryDate] = useState(() => getBusinessDateKey());
   const [isSubmittingSellerOrder, setIsSubmittingSellerOrder] = useState(false);
   const [sellerOrderStatus, setSellerOrderStatus] = useState<CreationStatus | null>(null);
   const [productImage, setProductImage] = useState<ProductImageState>({
@@ -4439,10 +4701,10 @@ export default function App() {
   const normalizedCarteraMonthFilter = carteraMonthFilter.trim();
   const selectedCarteraStore = storeOptionsById.get(selectedCarteraStoreId) ?? null;
   const filteredCarteraRows = selectedCarteraStoreId
-    ? carteraRows.filter((row) => row.storeId === selectedCarteraStoreId)
-    : [];
+    ? carteraRows.filter((row) => String(row.storeId).trim() === String(selectedCarteraStoreId).trim())
+    : carteraRows;
   const filteredCarteraCollections = selectedCarteraStoreId
-    ? carteraCollections.filter((row) => row.storeId === selectedCarteraStoreId)
+    ? carteraCollections.filter((row) => String(row.storeId).trim() === String(selectedCarteraStoreId).trim())
     : carteraCollections;
   const carteraMonthlyFacturacionTotal = filteredCarteraRows.reduce((sum, row) => sum + Number(row.invoiceAmountAwg ?? 0), 0);
   const carteraMonthlyRecaudoTotal = filteredCarteraCollections.reduce((sum, row) => sum + Number(row.amountAwg ?? 0), 0);
@@ -5836,6 +6098,15 @@ export default function App() {
               </div>
               {showOrderFields ? (
                 <div className="seller-order-footer seller-order-footer-inline">
+                  <label className="field seller-order-delivery-date">
+                    <span>Fecha de entrega</span>
+                    <input
+                      type="date"
+                      min={getBusinessDateKey()}
+                      value={sellerDeliveryDateDraft}
+                      onChange={(event) => setSellerDeliveryDateDraft(event.target.value)}
+                    />
+                  </label>
                   <p>{sellerDraftedItems.length > 0 ? `${sellerDraftedItems.length} producto${sellerDraftedItems.length === 1 ? "" : "s"} listos para registrar.` : "Agrega stock actual o cantidades antes de enviar el pedido a bodega."}</p>
                   <button
                     className="submit-button seller-order-submit"
@@ -8029,6 +8300,10 @@ export default function App() {
       await refreshWarehouseOrders();
       await refreshInventorySummary();
 
+      if (sessionUser?.role === "management" || sessionUser?.role === "contabilidad") {
+        await refreshCarteraData(carteraMonthFilter);
+      }
+
       const { pdf, fileName } = await buildWarehouseInvoicePdfDocument(completedOrder, "invoice", data.invoiceNumber ?? null);
       openPdfInNewTab(pdf, fileName);
 
@@ -9615,6 +9890,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
     setSellerOrderEditStatus(null);
     setSellerOrderEditDraft(Object.fromEntries(order.items.map((item) => [item.productId, String(item.quantity)])));
+    setSellerOrderEditDeliveryDate(order.deliveryDate || order.createdAt.slice(0, 10));
     setSelectedSellerOrderEdit(order);
   }
 
@@ -9645,6 +9921,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           routeDay: selectedSellerOrderEdit.routeDay,
           storeId: selectedSellerOrderEdit.storeId,
           salesRepId: sessionUser.id,
+          deliveryDate: sellerOrderEditDeliveryDate,
           items: nextItems.map((item) => ({
             productId: item.productId,
             stockCurrent: item.stockCurrent,
@@ -9821,6 +10098,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           routeDay: selectedSellerDayKey,
           storeId: selectedSellerStore.storeId,
           salesRepId: sessionUser.id,
+          deliveryDate: sellerDeliveryDateDraft,
           items: sellerDraftedItems,
         }),
       });
@@ -9832,6 +10110,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       }
 
       setSellerOrderDraft({});
+      setSellerDeliveryDateDraft(getBusinessDateKey());
       setSellerOrderStatus({ tone: "success", message: data.message ?? "Pedido enviado a bodega correctamente." });
       await refreshSellerOrders(sessionUser.id);
     } catch {
@@ -10874,6 +11153,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
   const carteraExportColumns: DataExportColumn[] = [
     { key: "invoicedAt", label: "Fecha" },
+    ...(selectedCarteraStoreId ? [] : [{ key: "storeName", label: "Cliente" }]),
     { key: "invoiceNumber", label: "Factura" },
     { key: "salesRepName", label: "Vendedor" },
     { key: "paymentMethod", label: "Metodo factura" },
@@ -10917,13 +11197,13 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
   }
 
   function downloadCarteraPdf() {
-    if (!selectedCarteraStoreId || filteredCarteraRows.length === 0) {
+    if (filteredCarteraRows.length === 0) {
       return;
     }
 
-    const storeLabel = selectedCarteraStore?.label ?? "Tienda";
+    const storeLabel = selectedCarteraStore?.label ?? "todas-las-tiendas";
     downloadDataTablePdf({
-      title: `Cartera · ${storeLabel}`,
+      title: selectedCarteraStore ? `Cartera · ${selectedCarteraStore.label}` : "Cartera · Facturas del mes",
       fileName: `cartera-${storeLabel.toLowerCase().replace(/\s+/g, "-")}-${carteraMonthFilter}`,
       subtitleLines: [
         `Mes: ${carteraMonthFilter}`,
@@ -10938,13 +11218,13 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
   }
 
   function downloadCarteraExcel() {
-    if (!selectedCarteraStoreId || filteredCarteraRows.length === 0) {
+    if (filteredCarteraRows.length === 0) {
       return;
     }
 
-    const storeLabel = selectedCarteraStore?.label ?? "Tienda";
+    const storeLabel = selectedCarteraStore?.label ?? "todas-las-tiendas";
     downloadDataTableExcel({
-      title: `Cartera · ${storeLabel}`,
+      title: selectedCarteraStore ? `Cartera · ${selectedCarteraStore.label}` : "Cartera · Facturas del mes",
       fileName: `cartera-${storeLabel.toLowerCase().replace(/\s+/g, "-")}-${carteraMonthFilter}`,
       columns: carteraExportColumns,
       rows: filteredCarteraRows as Array<Record<string, unknown>>,
@@ -11975,7 +12255,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <table className="data-table data-table--seller-orders">
                     <thead>
                       <tr>
-                        <th>Fecha</th>
+                        <th>Entrega</th>
+                        <th>Registro</th>
                         <th>Cliente</th>
                         <th>Zona</th>
                         <th>Estado</th>
@@ -11987,7 +12268,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <tbody>
                       {isLoadingSellerOrders ? (
                         <tr>
-                          <td colSpan={7} className="empty-table-cell">Cargando pedidos realizados...</td>
+                          <td colSpan={8} className="empty-table-cell">Cargando pedidos realizados...</td>
                         </tr>
                       ) : sellerOrders.length > 0 ? (
                         sellerOrders.map((order) => {
@@ -11995,7 +12276,15 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           const isDeletingOrder = deletingSellerOrderId === order._id;
 
                           return (
-                            <tr key={order._id}>
+                            <tr key={order._id} className={order.deliveryOverdue ? "is-overdue" : undefined}>
+                              <td>
+                                <div className="warehouse-order-delivery-cell">
+                                  <span>{formatDeliveryDateLabel(getOrderDeliveryDateKey(order))}</span>
+                                  {order.deliveryOverdue ? (
+                                    <span className="warehouse-order-overdue-badge">Atrasado</span>
+                                  ) : null}
+                                </div>
+                              </td>
                               <td>{formatSellerOrderDate(order.createdAt)}</td>
                               <td>{order.storeName}</td>
                               <td>{order.deliveryZone}</td>
@@ -12043,7 +12332,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         })
                       ) : (
                         <tr>
-                          <td colSpan={7} className="empty-table-cell">Todavía no has realizado pedidos desde tu portal.</td>
+                          <td colSpan={8} className="empty-table-cell">Todavía no has realizado pedidos desde tu portal.</td>
                         </tr>
                       )}
                     </tbody>
@@ -12058,7 +12347,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <div>
                         <p className="section-label">Pedido enviado</p>
                         <h2>{selectedSellerOrderDetail.storeName}</h2>
-                        <p>{formatSellerOrderDate(selectedSellerOrderDetail.createdAt)} · {formatSellerOrderStatus(selectedSellerOrderDetail.status)}</p>
+                        <p>Entrega {formatDeliveryDateLabel(getOrderDeliveryDateKey(selectedSellerOrderDetail))} · {formatSellerOrderDate(selectedSellerOrderDetail.createdAt)} · {formatSellerOrderStatus(selectedSellerOrderDetail.status)}</p>
                       </div>
                       <button className="modal-close-button" type="button" onClick={() => setSelectedSellerOrderDetail(null)}>Cerrar</button>
                     </div>
@@ -12104,6 +12393,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </div>
 
                     {sellerOrderEditStatus ? <p className={`form-feedback ${sellerOrderEditStatus.tone}`}>{sellerOrderEditStatus.message}</p> : null}
+
+                    <label className="field seller-order-delivery-date">
+                      <span>Fecha de entrega</span>
+                      <input
+                        type="date"
+                        min={getBusinessDateKey()}
+                        value={sellerOrderEditDeliveryDate}
+                        onChange={(event) => setSellerOrderEditDeliveryDate(event.target.value)}
+                      />
+                    </label>
 
                     <div className="table-wrap table-wrap--cards">
                       <table className="data-table data-table--order-items">
@@ -12455,7 +12754,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </p>
                     <h2>{selectedWarehouseOrderDetail.storeName}</h2>
                     <p className="route-helper-text">
-                      {selectedWarehouseOrderDetail.salesRepName} · {formatSellerOrderDate(selectedWarehouseOrderDetail.createdAt)}
+                      {selectedWarehouseOrderDetail.salesRepName} · Entrega {formatDeliveryDateLabel(getOrderDeliveryDateKey(selectedWarehouseOrderDetail))} · {formatSellerOrderDate(selectedWarehouseOrderDetail.createdAt)}
                     </p>
                     <button className="ghost-button" type="button" onClick={() => {
                       setSelectedWarehouseOrderDetail(null);
@@ -12693,65 +12992,20 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <div className="management-table-header">
                       <div>
                         <h2>Pedidos en despacho</h2>
-                        <p>Consulta vendedor, cliente, ruta, fecha y detalle de productos por pedido.</p>
+                        <p>Pedidos agrupados por fecha de entrega programada.</p>
                       </div>
                       <p className="management-table-meta">{warehouseDispatchOrders.length} pedidos</p>
                     </div>
 
                     {warehouseOrdersError ? <p className="form-feedback error">{warehouseOrdersError}</p> : null}
 
-                    <div className="table-wrap table-wrap--warehouse-items">
-                      <table className="data-table data-table--warehouse-orders">
-                        <thead>
-                          <tr>
-                            <th>Fecha</th>
-                            <th className="warehouse-order-col-optional">Vendedor</th>
-                            <th>Cliente</th>
-                            <th className="warehouse-order-col-optional">Ruta</th>
-                            <th>Estado</th>
-                            <th>Und.</th>
-                            <th>Ver</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {isLoadingWarehouseOrders ? (
-                            <tr>
-                              <td colSpan={7} className="empty-table-cell">Cargando pedidos en despacho...</td>
-                            </tr>
-                          ) : warehouseDispatchOrders.length > 0 ? (
-                            warehouseDispatchOrders.map((order) => {
-                              const totalUnits = order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-
-                              return (
-                                <tr key={order._id}>
-                                  <td>{formatSellerOrderDate(order.updatedAt)}</td>
-                                  <td className="warehouse-order-col-optional">{order.salesRepName}</td>
-                                  <td>{order.storeName}</td>
-                                  <td className="warehouse-order-col-optional">{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
-                                  <td>{formatSellerOrderStatus(order.status)}</td>
-                                  <td>{`${order.items.length} prod. / ${totalUnits} und`}</td>
-                                  <td>
-                                    {order.items.length > 0 ? (
-                                      <button
-                                        className="seller-order-detail-trigger"
-                                        type="button"
-                                        onClick={() => setSelectedWarehouseOrderDetail(order)}
-                                      >
-                                        Ver
-                                      </button>
-                                    ) : "-"}
-                                  </td>
-                                </tr>
-                              );
-                            })
-                          ) : (
-                            <tr>
-                              <td colSpan={7} className="empty-table-cell">No hay pedidos en despacho.</td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
+                    <WarehouseOrderList
+                      orders={warehouseDispatchOrders}
+                      isLoading={isLoadingWarehouseOrders}
+                      emptyMessage="No hay pedidos en despacho."
+                      loadingMessage="Cargando pedidos en despacho..."
+                      onSelectOrder={setSelectedWarehouseOrderDetail}
+                    />
                   </article>
                 </>
               ) : (
@@ -12772,65 +13026,20 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <div className="management-table-header">
                       <div>
                         <h2>Pedidos recibidos</h2>
-                        <p>Consulta vendedor, cliente, ruta, fecha y detalle de productos por pedido.</p>
+                        <p>Pedidos agrupados por fecha de entrega programada por el vendedor.</p>
                       </div>
                       <p className="management-table-meta">{warehouseIncomingOrders.length} pedidos</p>
                     </div>
 
                     {warehouseOrdersError ? <p className="form-feedback error">{warehouseOrdersError}</p> : null}
 
-                    <div className="table-wrap table-wrap--warehouse-items">
-                      <table className="data-table data-table--warehouse-orders">
-                        <thead>
-                          <tr>
-                            <th>Fecha</th>
-                            <th className="warehouse-order-col-optional">Vendedor</th>
-                            <th>Cliente</th>
-                            <th className="warehouse-order-col-optional">Ruta</th>
-                            <th>Estado</th>
-                            <th>Und.</th>
-                            <th>Ver</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {isLoadingWarehouseOrders ? (
-                            <tr>
-                              <td colSpan={7} className="empty-table-cell">Cargando pedidos recibidos...</td>
-                            </tr>
-                          ) : warehouseIncomingOrders.length > 0 ? (
-                            warehouseIncomingOrders.map((order) => {
-                              const totalUnits = order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-
-                              return (
-                                <tr key={order._id}>
-                                  <td>{formatSellerOrderDate(order.createdAt)}</td>
-                                  <td className="warehouse-order-col-optional">{order.salesRepName}</td>
-                                  <td>{order.storeName}</td>
-                                  <td className="warehouse-order-col-optional">{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
-                                  <td>{formatSellerOrderStatus(order.status)}</td>
-                                  <td>{`${order.items.length} prod. / ${totalUnits} und`}</td>
-                                  <td>
-                                    {order.items.length > 0 ? (
-                                      <button
-                                        className="seller-order-detail-trigger"
-                                        type="button"
-                                        onClick={() => setSelectedWarehouseOrderDetail(order)}
-                                      >
-                                        Ver
-                                      </button>
-                                    ) : "-"}
-                                  </td>
-                                </tr>
-                              );
-                            })
-                          ) : (
-                            <tr>
-                              <td colSpan={7} className="empty-table-cell">No hay pedidos pendientes por procesar.</td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
+                    <WarehouseOrderList
+                      orders={warehouseIncomingOrders}
+                      isLoading={isLoadingWarehouseOrders}
+                      emptyMessage="No hay pedidos pendientes por procesar."
+                      loadingMessage="Cargando pedidos recibidos..."
+                      onSelectOrder={setSelectedWarehouseOrderDetail}
+                    />
                   </article>
 
                   <article className="database-card">
@@ -12842,58 +13051,14 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <p className="management-table-meta">{warehouseCompletedOrders.length} pedidos</p>
                     </div>
 
-                    <div className="table-wrap table-wrap--warehouse-items">
-                      <table className="data-table data-table--warehouse-orders">
-                        <thead>
-                          <tr>
-                            <th>Fecha</th>
-                            <th className="warehouse-order-col-optional">Vendedor</th>
-                            <th>Cliente</th>
-                            <th className="warehouse-order-col-optional">Ruta</th>
-                            <th>Estado</th>
-                            <th>Und.</th>
-                            <th>Ver</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {isLoadingWarehouseOrders ? (
-                            <tr>
-                              <td colSpan={7} className="empty-table-cell">Cargando pedidos completados...</td>
-                            </tr>
-                          ) : warehouseCompletedOrders.length > 0 ? (
-                            warehouseCompletedOrders.map((order) => {
-                              const totalUnits = order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-
-                              return (
-                                <tr key={order._id}>
-                                  <td>{formatSellerOrderDate(order.createdAt)}</td>
-                                  <td className="warehouse-order-col-optional">{order.salesRepName}</td>
-                                  <td>{order.storeName}</td>
-                                  <td className="warehouse-order-col-optional">{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
-                                  <td>{formatSellerOrderStatus(order.status)}</td>
-                                  <td>{`${order.items.length} prod. / ${totalUnits} und`}</td>
-                                  <td>
-                                    {order.items.length > 0 ? (
-                                      <button
-                                        className="seller-order-detail-trigger"
-                                        type="button"
-                                        onClick={() => setSelectedWarehouseOrderDetail(order)}
-                                      >
-                                        Ver
-                                      </button>
-                                    ) : "-"}
-                                  </td>
-                                </tr>
-                              );
-                            })
-                          ) : (
-                            <tr>
-                              <td colSpan={7} className="empty-table-cell">Todavía no hay pedidos completados.</td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
+                    <WarehouseOrderList
+                      orders={warehouseCompletedOrders}
+                      isLoading={isLoadingWarehouseOrders}
+                      emptyMessage="Todavia no hay pedidos completados."
+                      loadingMessage="Cargando pedidos completados..."
+                      groupByDeliveryDate={false}
+                      onSelectOrder={setSelectedWarehouseOrderDetail}
+                    />
                   </article>
                 </>
               )}
@@ -16066,7 +16231,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 <div className="cartera-store-panel-header">
                   <div>
                     <h3>Consultar tienda</h3>
-                    <p>Escribe para filtrar clientes y selecciona una tienda para ver sus facturas y registrar recaudos.</p>
+                    <p>Opcional: filtra por tienda para ver KPIs del cliente y registrar recaudos puntuales.</p>
                   </div>
                   {selectedCarteraStoreId ? (
                     <button
@@ -16128,12 +16293,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <h3>Facturas del mes</h3>
                   <p>
                     {selectedCarteraStore
-                      ? `Exporta las facturas de ${selectedCarteraStore.label} del mes seleccionado.`
-                      : "Selecciona una tienda para consultar y exportar sus facturas."}
+                      ? `Facturas de ${selectedCarteraStore.label} en el mes seleccionado.`
+                      : "Todas las facturas facturadas en bodega durante el mes seleccionado."}
                   </p>
                 </div>
                 <InventoryExportButtons
-                  disabled={isLoadingCartera || !selectedCarteraStoreId || filteredCarteraRows.length === 0}
+                  disabled={isLoadingCartera || filteredCarteraRows.length === 0}
                   onDownloadPdf={() => downloadCarteraPdf()}
                   onDownloadExcel={() => downloadCarteraExcel()}
                 />
@@ -16144,6 +16309,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <thead>
                     <tr>
                       <th>Fecha</th>
+                      {!selectedCarteraStoreId ? <th>Cliente</th> : null}
                       <th>Factura</th>
                       <th>Vendedor</th>
                       <th>Metodo factura</th>
@@ -16157,11 +16323,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <tbody>
                     {isLoadingCartera ? (
                       <tr>
-                        <td colSpan={9} className="empty-table-cell">Cargando cartera...</td>
-                      </tr>
-                    ) : !selectedCarteraStoreId ? (
-                      <tr>
-                        <td colSpan={9} className="empty-table-cell">Selecciona una tienda para ver sus facturas del mes.</td>
+                        <td colSpan={selectedCarteraStoreId ? 9 : 10} className="empty-table-cell">Cargando cartera...</td>
                       </tr>
                     ) : filteredCarteraRows.length > 0 ? (
                       filteredCarteraRows.flatMap((row) => {
@@ -16172,6 +16334,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         const mainRow = (
                           <tr key={row._id ?? row.orderId}>
                             <td>{String(row.invoicedAt).slice(0, 10)}</td>
+                            {!selectedCarteraStoreId ? <td>{row.storeName || "-"}</td> : null}
                             <td>{row.invoiceNumber ? `#${row.invoiceNumber}` : "-"}</td>
                             <td>{row.salesRepName || "-"}</td>
                             <td>{formatPaymentMethodLabel(row.paymentMethod)}</td>
@@ -16214,7 +16377,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         return [
                           mainRow,
                           <tr key={`${row._id}-collect`} className="cartera-collect-row">
-                            <td colSpan={9}>
+                            <td colSpan={selectedCarteraStoreId ? 9 : 10}>
                               <div className="cartera-collect-form">
                                 <p>Registrar recaudo de factura {row.invoiceNumber ? `#${row.invoiceNumber}` : ""} · pendiente {formatCurrency(row.outstandingAmountAwg)}</p>
                                 <div className="filter-grid">
@@ -16273,7 +16436,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       })
                     ) : (
                       <tr>
-                        <td colSpan={9} className="empty-table-cell">
+                        <td colSpan={selectedCarteraStoreId ? 9 : 10} className="empty-table-cell">
                           {selectedCarteraStore
                             ? `No hay facturas registradas para ${selectedCarteraStore.label} en este mes.`
                             : "No hay facturas registradas en cartera para este mes."}
@@ -19591,7 +19754,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               <div className="management-table-header">
                 <div>
                   <h2>Pedidos recibidos</h2>
-                  <p>Consulta vendedor, cliente, ruta, fecha y detalle de productos por pedido.</p>
+                  <p>Pedidos activos agrupados por fecha de entrega programada.</p>
                 </div>
                 <p className="management-table-meta">{warehouseActiveOrders.length} pedidos</p>
               </div>
@@ -19603,72 +19766,29 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 </p>
               ) : null}
 
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Fecha</th>
-                      <th>Vendedor</th>
-                      <th>Cliente</th>
-                      <th>Ruta</th>
-                      <th>Estado</th>
-                      <th>Productos</th>
-                      <th>Detalle</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {isLoadingWarehouseOrders ? (
-                      <tr>
-                        <td colSpan={7} className="empty-table-cell">Cargando pedidos recibidos...</td>
-                      </tr>
-                    ) : warehouseActiveOrders.length > 0 ? (
-                      warehouseActiveOrders.map((order) => {
-                        const totalUnits = order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-                        const isDeletingOrder = deletingWarehouseOrderId === order._id;
+              <WarehouseOrderList
+                orders={warehouseActiveOrders}
+                isLoading={isLoadingWarehouseOrders}
+                emptyMessage="Todavia no han llegado pedidos desde el portal de vendedores."
+                loadingMessage="Cargando pedidos recibidos..."
+                onSelectOrder={setSelectedWarehouseOrderDetail}
+                renderActions={(order) => {
+                  const isDeletingOrder = deletingWarehouseOrderId === order._id;
 
-                        return (
-                          <tr key={order._id}>
-                            <td>{formatSellerOrderDate(order.createdAt)}</td>
-                            <td>{order.salesRepName}</td>
-                            <td>{order.storeName}</td>
-                            <td>{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
-                            <td>{formatSellerOrderStatus(order.status)}</td>
-                            <td>{`${order.items.length} producto${order.items.length === 1 ? "" : "s"} / ${totalUnits} und`}</td>
-                            <td className="table-actions-cell">
-                              {order.items.length > 0 ? (
-                                <>
-                                  <button
-                                    className="seller-order-detail-trigger"
-                                    type="button"
-                                    disabled={isDeletingOrder}
-                                    onClick={() => setSelectedWarehouseOrderDetail(order)}
-                                  >
-                                    Ver mas
-                                  </button>
-                                  <button
-                                    className="table-action-icon is-danger"
-                                    type="button"
-                                    aria-label="Borrar pedido recibido"
-                                    title="Borrar pedido"
-                                    disabled={isDeletingOrder}
-                                    onClick={() => void handleDeleteWarehouseOrder(order)}
-                                  >
-                                    x
-                                  </button>
-                                </>
-                              ) : "-"}
-                            </td>
-                          </tr>
-                        );
-                      })
-                    ) : (
-                      <tr>
-                        <td colSpan={7} className="empty-table-cell">Todavia no han llegado pedidos desde el portal de vendedores.</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                  return (
+                    <button
+                      className="table-action-icon is-danger"
+                      type="button"
+                      aria-label="Borrar pedido recibido"
+                      title="Borrar pedido"
+                      disabled={isDeletingOrder}
+                      onClick={() => void handleDeleteWarehouseOrder(order)}
+                    >
+                      x
+                    </button>
+                  );
+                }}
+              />
             </article>
 
             <article className="database-card">
@@ -19779,7 +19899,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <div>
                       <p className="section-label">Pedido recibido</p>
                       <h2>{selectedWarehouseOrderDetail.storeName}</h2>
-                      <p>{selectedWarehouseOrderDetail.salesRepName} · {formatSellerOrderDate(selectedWarehouseOrderDetail.createdAt)}</p>
+                      <p>{selectedWarehouseOrderDetail.salesRepName} · Entrega {formatDeliveryDateLabel(getOrderDeliveryDateKey(selectedWarehouseOrderDetail))} · {formatSellerOrderDate(selectedWarehouseOrderDetail.createdAt)}</p>
                     </div>
                     <div className="table-action-group">
                       <button

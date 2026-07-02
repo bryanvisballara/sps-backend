@@ -14,6 +14,8 @@ const orderSchema = new Schema({
     salesRepId: { type: String, required: true, trim: true },
     salesRepName: { type: String, required: true, trim: true },
     deliveryZone: { type: String, required: true, trim: true },
+    deliveryDate: { type: Date, required: true },
+    deliveryOverdue: { type: Boolean, default: false },
     status: {
         type: String,
         enum: ["draft", "submitted", "picking", "dispatched", "delivered"],

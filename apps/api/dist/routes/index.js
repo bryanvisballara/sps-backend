@@ -716,6 +716,84 @@ function normalizeOperationalExpensePayload(body) {
     }
     return { name, category, amount, expenseDate, notes };
 }
+const BUSINESS_TIMEZONE = "America/Aruba";
+function getBusinessDateKeyFromDate(referenceDate = new Date()) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: BUSINESS_TIMEZONE,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).formatToParts(referenceDate);
+    const year = parts.find((part) => part.type === "year")?.value ?? "0000";
+    const month = parts.find((part) => part.type === "month")?.value ?? "01";
+    const day = parts.find((part) => part.type === "day")?.value ?? "01";
+    return `${year}-${month}-${day}`;
+}
+function normalizeDeliveryDate(value) {
+    const dateKey = typeof value === "string" ? value.trim() : "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+        const parsed = new Date(`${dateKey}T12:00:00`);
+        if (!Number.isNaN(parsed.getTime())) {
+            const todayKey = getBusinessDateKeyFromDate();
+            if (dateKey < todayKey) {
+                throw new Error("La fecha de entrega no puede ser anterior a hoy.");
+            }
+            return parsed;
+        }
+    }
+    return new Date(`${getBusinessDateKeyFromDate()}T12:00:00`);
+}
+function serializeOrderDeliveryDate(value, fallback) {
+    const source = value ?? fallback ?? new Date();
+    const date = source instanceof Date ? source : new Date(source);
+    return getBusinessDateKeyFromDate(Number.isNaN(date.getTime()) ? new Date() : date);
+}
+async function ensureOrderDeliveryDates() {
+    await Order.updateMany({ $or: [{ deliveryDate: { $exists: false } }, { deliveryDate: null }] }, [{ $set: { deliveryDate: "$createdAt" } }]);
+}
+const WAREHOUSE_DELIVERY_CUTOFF_HOUR = 18;
+function addDaysToBusinessDateKey(dateKey, days) {
+    const parsed = new Date(`${dateKey}T12:00:00`);
+    parsed.setDate(parsed.getDate() + days);
+    return getBusinessDateKeyFromDate(parsed);
+}
+function parseBusinessDateKey(dateKey) {
+    return new Date(`${dateKey}T12:00:00`);
+}
+function getArubaHour(referenceDate = new Date()) {
+    const hourPart = new Intl.DateTimeFormat("en-US", {
+        timeZone: BUSINESS_TIMEZONE,
+        hour: "2-digit",
+        hour12: false,
+    }).formatToParts(referenceDate);
+    return Number(hourPart.find((part) => part.type === "hour")?.value ?? 0);
+}
+async function syncOverdueDeliveryDates() {
+    const now = new Date();
+    const todayKey = getBusinessDateKeyFromDate(now);
+    const tomorrowKey = addDaysToBusinessDateKey(todayKey, 1);
+    const arubaHour = getArubaHour(now);
+    const pendingOrders = await Order.find({ status: "submitted" })
+        .select({ _id: 1, deliveryDate: 1 })
+        .lean();
+    await Promise.all(pendingOrders.map(async (order) => {
+        const deliveryKey = serializeOrderDeliveryDate(order.deliveryDate);
+        let nextDeliveryKey = null;
+        if (deliveryKey < todayKey) {
+            nextDeliveryKey = todayKey;
+        }
+        else if (deliveryKey === todayKey && arubaHour >= WAREHOUSE_DELIVERY_CUTOFF_HOUR) {
+            nextDeliveryKey = tomorrowKey;
+        }
+        if (!nextDeliveryKey) {
+            return;
+        }
+        await Order.findByIdAndUpdate(order._id, {
+            deliveryDate: parseBusinessDateKey(nextDeliveryKey),
+            deliveryOverdue: true,
+        });
+    }));
+}
 function normalizeSalesOrderPayload(body) {
     if (typeof body !== "object" || body === null) {
         throw new Error("El pedido enviado no es valido.");
@@ -768,6 +846,7 @@ function normalizeSalesOrderPayload(body) {
         routeDay,
         storeId,
         salesRepId,
+        deliveryDate: normalizeDeliveryDate(payload.deliveryDate),
         items,
     };
 }
@@ -827,6 +906,8 @@ async function mapWarehouseOrderRecord(order) {
         salesRepId: order.salesRepId,
         salesRepName: order.salesRepName,
         deliveryZone: order.deliveryZone,
+        deliveryDate: serializeOrderDeliveryDate(order.deliveryDate, order.createdAt),
+        deliveryOverdue: order.deliveryOverdue === true,
         status: order.status,
         createdAt: order.createdAt,
         updatedAt: order.updatedAt,
@@ -1597,8 +1678,10 @@ apiRouter.get("/sales/orders", async (request, response) => {
         return;
     }
     try {
+        await ensureOrderDeliveryDates();
+        await syncOverdueDeliveryDates();
         const orders = await Order.find({ salesRepId })
-            .sort({ createdAt: -1, updatedAt: -1 })
+            .sort({ deliveryDate: 1, createdAt: 1 })
             .lean();
         const productIds = Array.from(new Set(orders.flatMap((order) => order.items.map((item) => String(item.productId)).filter(Boolean))));
         const products = productIds.length > 0
@@ -1615,6 +1698,8 @@ apiRouter.get("/sales/orders", async (request, response) => {
             salesRepId: order.salesRepId,
             salesRepName: order.salesRepName,
             deliveryZone: order.deliveryZone,
+            deliveryDate: serializeOrderDeliveryDate(order.deliveryDate, order.createdAt),
+            deliveryOverdue: order.deliveryOverdue === true,
             status: order.status,
             createdAt: order.createdAt,
             updatedAt: order.updatedAt,
@@ -1668,6 +1753,7 @@ apiRouter.post("/sales/orders", async (request, response) => {
             salesRepId: String(salesRep._id),
             salesRepName: salesRep.name,
             deliveryZone: store.address?.trim() || store.name,
+            deliveryDate: payload.deliveryDate,
             status: "submitted",
             items: payload.items,
         });
@@ -1716,12 +1802,16 @@ apiRouter.put("/sales/orders/:id", async (request, response) => {
         if (invalidItem) {
             throw new Error("Uno o varios productos del pedido ya no estan asignados a este cliente.");
         }
-        await Order.findByIdAndUpdate(order._id, { items: payload.items }, { runValidators: true });
+        await Order.findByIdAndUpdate(order._id, {
+            items: payload.items,
+            deliveryDate: payload.deliveryDate,
+        }, { runValidators: true });
         response.json({
             message: "Pedido actualizado correctamente.",
             order: {
                 ...order.toObject(),
                 items: payload.items,
+                deliveryDate: payload.deliveryDate,
             },
         });
     }
@@ -1758,8 +1848,10 @@ apiRouter.delete("/sales/orders/:id", async (request, response) => {
 });
 apiRouter.get("/warehouse/orders", async (_request, response) => {
     try {
+        await ensureOrderDeliveryDates();
+        await syncOverdueDeliveryDates();
         const orders = await Order.find()
-            .sort({ createdAt: -1, updatedAt: -1 })
+            .sort({ deliveryDate: 1, createdAt: 1 })
             .lean();
         response.json(await Promise.all(orders.map((order) => mapWarehouseOrderRecord(order))));
     }
@@ -1841,6 +1933,68 @@ function normalizeCreditCollectionsPayload(value) {
         }
         return { carteraEntryId, amountAwg, paymentMethod };
     });
+}
+function buildBusinessMonthMongoFilter(dateField, monthFilter) {
+    if (!/^\d{4}-\d{2}$/.test(monthFilter)) {
+        return null;
+    }
+    return {
+        $expr: {
+            $eq: [
+                { $dateToString: { format: "%Y-%m", date: `$${dateField}`, timezone: BUSINESS_TIMEZONE } },
+                monthFilter,
+            ],
+        },
+    };
+}
+async function syncDeliveredOrdersIntoCartera() {
+    const [deliveredOrders, existingEntries] = await Promise.all([
+        Order.find({ status: "delivered" })
+            .select({
+            _id: 1,
+            storeId: 1,
+            storeName: 1,
+            salesRepId: 1,
+            salesRepName: 1,
+            routeId: 1,
+            routeName: 1,
+            routeDay: 1,
+            deliveryZone: 1,
+            items: 1,
+            updatedAt: 1,
+        })
+            .lean(),
+        CarteraEntry.find({ active: { $ne: false } }).select({ orderId: 1 }).lean(),
+    ]);
+    const existingOrderIds = new Set(existingEntries.map((entry) => String(entry.orderId ?? "")));
+    const missingOrders = deliveredOrders.filter((order) => !existingOrderIds.has(String(order._id)));
+    for (const order of missingOrders) {
+        const items = Array.isArray(order.items) ? order.items : [];
+        const invoiceAmountAwg = await calculateInvoiceAmountFromItems(items.map((item) => ({
+            productId: String(item.productId ?? ""),
+            quantity: Number(item.quantity ?? 0),
+        })));
+        const invoicedAt = order.updatedAt instanceof Date ? order.updatedAt : new Date(order.updatedAt ?? Date.now());
+        const invoiceNumber = await getNextInvoiceNumber();
+        await CarteraEntry.create({
+            orderId: String(order._id),
+            storeId: String(order.storeId ?? ""),
+            storeName: String(order.storeName ?? ""),
+            salesRepId: String(order.salesRepId ?? ""),
+            salesRepName: String(order.salesRepName ?? ""),
+            routeId: String(order.routeId ?? ""),
+            routeName: String(order.routeName ?? ""),
+            routeDay: String(order.routeDay ?? ""),
+            deliveryZone: String(order.deliveryZone ?? ""),
+            paymentMethod: "credito",
+            invoiceAmountAwg,
+            invoiceNumber,
+            collectedAmountAwg: 0,
+            outstandingAmountAwg: invoiceAmountAwg,
+            invoicedAt,
+            active: true,
+        });
+    }
 }
 function getCarteraPeriodBounds(referenceDate = new Date()) {
     const now = new Date(referenceDate);
@@ -5128,16 +5282,18 @@ apiRouter.get("/management/cartera", async (request, response) => {
     const storeIdFilter = typeof request.query.storeId === "string" ? request.query.storeId.trim() : "";
     const filters = { active: { $ne: false } };
     const collectionFilters = { active: { $ne: false } };
+    await syncDeliveredOrdersIntoCartera();
     if (storeIdFilter) {
         filters.storeId = storeIdFilter;
         collectionFilters.storeId = storeIdFilter;
     }
-    if (/^\d{4}-\d{2}$/.test(monthFilter)) {
-        const [year, month] = monthFilter.split("-").map(Number);
-        const startDate = new Date(year, month - 1, 1);
-        const endDate = new Date(year, month, 1);
-        filters.invoicedAt = { $gte: startDate, $lt: endDate };
-        collectionFilters.collectedAt = { $gte: startDate, $lt: endDate };
+    const invoicedAtMonthFilter = buildBusinessMonthMongoFilter("invoicedAt", monthFilter);
+    const collectedAtMonthFilter = buildBusinessMonthMongoFilter("collectedAt", monthFilter);
+    if (invoicedAtMonthFilter) {
+        Object.assign(filters, invoicedAtMonthFilter);
+    }
+    if (collectedAtMonthFilter) {
+        Object.assign(collectionFilters, collectedAtMonthFilter);
     }
     const [entries, collections, summary] = await Promise.all([
         CarteraEntry.find(filters).sort({ invoicedAt: -1, createdAt: -1 }).lean(),
