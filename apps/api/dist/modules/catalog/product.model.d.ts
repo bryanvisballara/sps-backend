@@ -14,6 +14,8 @@ export declare const Product: import("mongoose").Model<{
     presentation: "kg" | "lb" | "unidad" | "paquete" | "caja";
     shareWithAruba: boolean;
     productWeightKg: number;
+    exportVolumeCubicFeet: number;
+    displaysPerBox: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
     inventoryAlert: number;
@@ -38,6 +40,8 @@ export declare const Product: import("mongoose").Model<{
     presentation: "kg" | "lb" | "unidad" | "paquete" | "caja";
     shareWithAruba: boolean;
     productWeightKg: number;
+    exportVolumeCubicFeet: number;
+    displaysPerBox: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
     inventoryAlert: number;
@@ -64,6 +68,8 @@ export declare const Product: import("mongoose").Model<{
     presentation: "kg" | "lb" | "unidad" | "paquete" | "caja";
     shareWithAruba: boolean;
     productWeightKg: number;
+    exportVolumeCubicFeet: number;
+    displaysPerBox: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
     inventoryAlert: number;
@@ -94,6 +100,8 @@ export declare const Product: import("mongoose").Model<{
     presentation: "kg" | "lb" | "unidad" | "paquete" | "caja";
     shareWithAruba: boolean;
     productWeightKg: number;
+    exportVolumeCubicFeet: number;
+    displaysPerBox: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
     inventoryAlert: number;
@@ -118,6 +126,8 @@ export declare const Product: import("mongoose").Model<{
     presentation: "kg" | "lb" | "unidad" | "paquete" | "caja";
     shareWithAruba: boolean;
     productWeightKg: number;
+    exportVolumeCubicFeet: number;
+    displaysPerBox: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
     inventoryAlert: number;
@@ -144,6 +154,8 @@ export declare const Product: import("mongoose").Model<{
     presentation: "kg" | "lb" | "unidad" | "paquete" | "caja";
     shareWithAruba: boolean;
     productWeightKg: number;
+    exportVolumeCubicFeet: number;
+    displaysPerBox: number;
     unitsPerBox: number;
     unitsPerBoxUnit: "kg" | "lb" | "unidad" | "paquete";
     inventoryAlert: number;

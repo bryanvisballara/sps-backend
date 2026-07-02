@@ -21,6 +21,7 @@ const logisticsInvoiceSchema = new Schema({
     totalCostAwg: { type: Number, default: 0, min: 0 },
     totalUtilityAwg: { type: Number, default: 0 },
     active: { type: Boolean, default: true },
+    syncExcluded: { type: Boolean, default: false },
 }, { timestamps: true });
 export const LogisticsInvoice = model("LogisticsInvoice", logisticsInvoiceSchema);
 //# sourceMappingURL=logistics-invoice.model.js.map

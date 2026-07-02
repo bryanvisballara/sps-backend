@@ -1,0 +1,195 @@
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
+
+const COMPANY = {
+  legalName: "SPS TRADING ENTERPRISE VBA",
+  addressLine1: "OOSTRAT 4",
+  addressLine2: "Oranjestad, Aruba  0000",
+  phone: "+297 6993103",
+  email: "comercial@spsenterprise.com",
+  bankLine: "SPS TRADING ENTERPRISE  -  ACCOUNT NUMBER: 7700000100370846 BUSS - ROYAL BANK",
+} as const;
+
+export type CommercialInvoiceLineItem = {
+  productLabel: string;
+  description: string;
+  quantity: number;
+  rate: number;
+  amount: number;
+};
+
+export type CommercialInvoiceDocumentInput = {
+  documentKind: "invoice" | "dispatch";
+  invoiceNumber?: number | null;
+  invoiceDate: Date;
+  billToName: string;
+  billToLocation: string;
+  lineItems: CommercialInvoiceLineItem[];
+  totalAmount: number;
+};
+
+function formatInvoiceDate(value: Date) {
+  const day = String(value.getDate()).padStart(2, "0");
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const year = value.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
+function formatInvoiceAmount(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number.isFinite(value) ? value : 0);
+}
+
+function sanitizePdfFileName(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9-_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 120);
+}
+
+async function loadImageForPdf(imageUrl: string) {
+  try {
+    const response = await fetch(imageUrl);
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const blob = await response.blob();
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ""));
+      reader.onerror = () => reject(new Error("No fue posible leer la imagen."));
+      reader.readAsDataURL(blob);
+    });
+    const format = blob.type.includes("png") ? "PNG" : "JPEG";
+
+    return { dataUrl, format: format as "PNG" | "JPEG" };
+  } catch {
+    return null;
+  }
+}
+
+export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocumentInput) {
+  const pdf = new jsPDF({ unit: "pt", format: "letter" });
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const margin = 40;
+  const isDispatch = input.documentKind === "dispatch";
+  const logoImage = await loadImageForPdf("/company-logo.jpeg");
+
+  const drawPage = (pageNumber: number, totalPages: number) => {
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    pdf.setTextColor(60, 60, 60);
+    pdf.text(COMPANY.bankLine, pageWidth - margin, 28, { align: "right" });
+    pdf.text(`Page ${pageNumber} of ${totalPages}`, pageWidth - margin, 40, { align: "right" });
+
+    if (logoImage) {
+      pdf.addImage(logoImage.dataUrl, logoImage.format, margin, 48, 54, 42);
+    }
+
+    pdf.setTextColor(17, 17, 17);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(11);
+    pdf.text(COMPANY.legalName, margin + (logoImage ? 64 : 0), 58);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(10);
+    const companyX = margin + (logoImage ? 64 : 0);
+    pdf.text(COMPANY.addressLine1, companyX, 72);
+    pdf.text(COMPANY.addressLine2, companyX, 84);
+    pdf.text(COMPANY.phone, companyX, 96);
+    pdf.text(COMPANY.email, companyX, 108);
+
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(28);
+    pdf.text(isDispatch ? "DELIVERY NOTE" : "INVOICE", pageWidth - margin, 88, { align: "right" });
+
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(10);
+    pdf.text("BILL TO", margin, 132);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(11);
+    pdf.text(input.billToName.toUpperCase(), margin, 146);
+    pdf.text(input.billToLocation.toUpperCase(), margin, 160);
+
+    const documentLabel = isDispatch
+      ? "GUIA"
+      : "FACTURA";
+    const documentNumber = isDispatch
+      ? "PENDIENTE"
+      : String(input.invoiceNumber ?? "—");
+
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(10);
+    pdf.text(`${documentLabel} ${documentNumber}`, pageWidth - margin, 132, { align: "right" });
+    pdf.text(`DATE ${formatInvoiceDate(input.invoiceDate)}`, pageWidth - margin, 146, { align: "right" });
+  };
+
+  const tableBody = input.lineItems.map((item) => [
+    item.productLabel.toUpperCase(),
+    item.description.toUpperCase(),
+    String(item.quantity),
+    formatInvoiceAmount(item.rate),
+    formatInvoiceAmount(item.amount),
+  ]);
+
+  autoTable(pdf, {
+    startY: 178,
+    margin: { top: 178, left: margin, right: margin, bottom: 56 },
+    head: [["PRODUCTO", "DESCRIPTION", "QTY", "RATE", "AMOUNT"]],
+    body: tableBody,
+    showHead: "everyPage",
+    styles: {
+      font: "helvetica",
+      fontSize: 9,
+      cellPadding: 4,
+      overflow: "linebreak",
+      valign: "top",
+    },
+    headStyles: {
+      fillColor: [255, 255, 255],
+      textColor: [17, 17, 17],
+      fontStyle: "bold",
+      lineWidth: 0.2,
+      lineColor: [17, 17, 17],
+    },
+    columnStyles: {
+      0: { cellWidth: 70 },
+      1: { cellWidth: 250 },
+      2: { cellWidth: 42, halign: "right" },
+      3: { cellWidth: 52, halign: "right" },
+      4: { cellWidth: 62, halign: "right" },
+    },
+    theme: "plain",
+    didDrawPage: () => {
+      drawPage(pdf.getCurrentPageInfo().pageNumber, pdf.getNumberOfPages());
+    },
+  });
+
+  const finalY = (pdf as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 178;
+  const footerY = Math.min(finalY + 28, pageHeight - 48);
+  const footerLabel = isDispatch ? "TOTAL REFERENCIAL AWG" : "BALANCE DUE AWG";
+
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(10);
+  pdf.text("Thank you for choosing us", margin, footerY);
+  pdf.setFont("helvetica", "bold");
+  pdf.text(`${footerLabel} ${formatInvoiceAmount(input.totalAmount)}`, pageWidth - margin, footerY, { align: "right" });
+
+  const dateLabel = formatInvoiceDate(input.invoiceDate).replace(/\//g, "-");
+  const fileName = sanitizePdfFileName(
+    isDispatch
+      ? `guia-${input.billToName}-${dateLabel}`
+      : input.invoiceNumber
+        ? `factura-${input.invoiceNumber}-${input.billToName}`
+        : `factura-${input.billToName}-${dateLabel}`,
+  ) || (isDispatch ? "guia-despacho" : "factura");
+
+  return { pdf, fileName };
+}

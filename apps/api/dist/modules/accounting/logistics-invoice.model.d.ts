@@ -1,8 +1,8 @@
 import { Schema } from "mongoose";
 export declare const LogisticsInvoice: import("mongoose").Model<{
     active: boolean;
-    invoiceDate: NativeDate;
     storeName: string;
+    invoiceDate: NativeDate;
     items: import("mongoose").Types.DocumentArray<{
         productId: string;
         productName: string;
@@ -34,14 +34,15 @@ export declare const LogisticsInvoice: import("mongoose").Model<{
     totalRevenueAwg: number;
     totalCostAwg: number;
     totalUtilityAwg: number;
+    syncExcluded: boolean;
     notes?: string | null | undefined;
-    orderId?: string | null | undefined;
     salesRepName?: string | null | undefined;
+    orderId?: string | null | undefined;
     routeName?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps, {}, {}, {}, import("mongoose").Document<unknown, {}, {
     active: boolean;
-    invoiceDate: NativeDate;
     storeName: string;
+    invoiceDate: NativeDate;
     items: import("mongoose").Types.DocumentArray<{
         productId: string;
         productName: string;
@@ -73,16 +74,17 @@ export declare const LogisticsInvoice: import("mongoose").Model<{
     totalRevenueAwg: number;
     totalCostAwg: number;
     totalUtilityAwg: number;
+    syncExcluded: boolean;
     notes?: string | null | undefined;
-    orderId?: string | null | undefined;
     salesRepName?: string | null | undefined;
+    orderId?: string | null | undefined;
     routeName?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps, {}, {
     timestamps: true;
 }> & {
     active: boolean;
-    invoiceDate: NativeDate;
     storeName: string;
+    invoiceDate: NativeDate;
     items: import("mongoose").Types.DocumentArray<{
         productId: string;
         productName: string;
@@ -114,9 +116,10 @@ export declare const LogisticsInvoice: import("mongoose").Model<{
     totalRevenueAwg: number;
     totalCostAwg: number;
     totalUtilityAwg: number;
+    syncExcluded: boolean;
     notes?: string | null | undefined;
-    orderId?: string | null | undefined;
     salesRepName?: string | null | undefined;
+    orderId?: string | null | undefined;
     routeName?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps & {
     _id: import("mongoose").Types.ObjectId;
@@ -126,8 +129,8 @@ export declare const LogisticsInvoice: import("mongoose").Model<{
     timestamps: true;
 }, {
     active: boolean;
-    invoiceDate: NativeDate;
     storeName: string;
+    invoiceDate: NativeDate;
     items: import("mongoose").Types.DocumentArray<{
         productId: string;
         productName: string;
@@ -159,14 +162,15 @@ export declare const LogisticsInvoice: import("mongoose").Model<{
     totalRevenueAwg: number;
     totalCostAwg: number;
     totalUtilityAwg: number;
+    syncExcluded: boolean;
     notes?: string | null | undefined;
-    orderId?: string | null | undefined;
     salesRepName?: string | null | undefined;
+    orderId?: string | null | undefined;
     routeName?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps, import("mongoose").Document<unknown, {}, import("mongoose").FlatRecord<{
     active: boolean;
-    invoiceDate: NativeDate;
     storeName: string;
+    invoiceDate: NativeDate;
     items: import("mongoose").Types.DocumentArray<{
         productId: string;
         productName: string;
@@ -198,16 +202,17 @@ export declare const LogisticsInvoice: import("mongoose").Model<{
     totalRevenueAwg: number;
     totalCostAwg: number;
     totalUtilityAwg: number;
+    syncExcluded: boolean;
     notes?: string | null | undefined;
-    orderId?: string | null | undefined;
     salesRepName?: string | null | undefined;
+    orderId?: string | null | undefined;
     routeName?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps>, {}, import("mongoose").MergeType<import("mongoose").DefaultSchemaOptions, {
     timestamps: true;
 }>> & import("mongoose").FlatRecord<{
     active: boolean;
-    invoiceDate: NativeDate;
     storeName: string;
+    invoiceDate: NativeDate;
     items: import("mongoose").Types.DocumentArray<{
         productId: string;
         productName: string;
@@ -239,9 +244,10 @@ export declare const LogisticsInvoice: import("mongoose").Model<{
     totalRevenueAwg: number;
     totalCostAwg: number;
     totalUtilityAwg: number;
+    syncExcluded: boolean;
     notes?: string | null | undefined;
-    orderId?: string | null | undefined;
     salesRepName?: string | null | undefined;
+    orderId?: string | null | undefined;
     routeName?: string | null | undefined;
 } & import("mongoose").DefaultTimestampProps> & {
     _id: import("mongoose").Types.ObjectId;

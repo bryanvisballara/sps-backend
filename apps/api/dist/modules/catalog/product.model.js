@@ -40,6 +40,8 @@ const productSchema = new Schema({
     },
     shareWithAruba: { type: Boolean, default: true },
     productWeightKg: { type: Number, default: 0, min: 0 },
+    exportVolumeCubicFeet: { type: Number, default: 0, min: 0 },
+    displaysPerBox: { type: Number, default: 1, min: 0 },
     expirationDate: { type: Date, default: null },
     unitsPerBox: { type: Number, default: 0, min: 0 },
     unitsPerBoxUnit: {

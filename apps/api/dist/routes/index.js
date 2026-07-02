@@ -7,6 +7,8 @@ import { FixedCost } from "../modules/accounting/fixed-cost.model.js";
 import { ImportCost } from "../modules/accounting/import-cost.model.js";
 import { LogisticsExpense } from "../modules/accounting/logistics-expense.model.js";
 import { LogisticsFixedCost } from "../modules/accounting/logistics-fixed-cost.model.js";
+import { CarteraCollection } from "../modules/accounting/cartera-collection.model.js";
+import { CarteraEntry } from "../modules/accounting/cartera-entry.model.js";
 import { LogisticsInvoice } from "../modules/accounting/logistics-invoice.model.js";
 import { OperationalExpense } from "../modules/accounting/operational-expense.model.js";
 import { Category } from "../modules/categories/category.model.js";
@@ -940,6 +942,10 @@ async function buildSalesProductCatalog(storeId) {
             isExpiringSoon,
             nearestExpirationDate: nearestExpiration ? nearestExpiration.toISOString() : null,
             isAssigned: assignedProductIds.has(productId),
+            displaysPerBox: Number(product.displaysPerBox ?? 1) || 1,
+            unitsPerBox: Number(product.unitsPerBox ?? 0),
+            unitsPerBoxUnit: String(product.unitsPerBoxUnit ?? "unidad"),
+            productWeightKg: Number(product.productWeightKg ?? 0),
         };
     });
     const expiringSoon = rows
@@ -1027,6 +1033,44 @@ function compareWarehouseStockLotsByConsumptionPriority(left, right) {
 }
 function buildInventoryLotKey(productId, expirationDateValue) {
     return `${productId.trim()}::${expirationDateValue.trim() || "no-expiration"}`;
+}
+async function applyInventoryRowStockUpdate(params) {
+    const stockRow = await WarehouseStock.findOne({ _id: params.stockRowId, productId: params.productId });
+    if (!stockRow) {
+        throw new Error("El lote de inventario no existe.");
+    }
+    const warehouseCode = stockRow.warehouseCode;
+    const minUnits = Number(stockRow.minUnits ?? 0);
+    const currentExpiration = normalizeOptionalDateValue(stockRow.expirationDate);
+    const sameLot = params.nextProductId === params.productId
+        && String(currentExpiration ?? "") === String(params.expirationDate ?? "");
+    if (sameLot) {
+        await WarehouseStock.findByIdAndUpdate(stockRow._id, {
+            availableUnits: params.quantity,
+            status: resolveWarehouseStockStatus(params.quantity, minUnits),
+        }, { runValidators: true });
+        return;
+    }
+    const existingTarget = await WarehouseStock.findOne({
+        productId: params.nextProductId,
+        warehouseCode,
+        expirationDate: params.expirationDate,
+    });
+    if (existingTarget && String(existingTarget._id) !== String(stockRow._id)) {
+        const nextAvailable = Number(existingTarget.availableUnits ?? 0) + params.quantity;
+        await WarehouseStock.findByIdAndUpdate(existingTarget._id, {
+            availableUnits: nextAvailable,
+            status: resolveWarehouseStockStatus(nextAvailable, Number(existingTarget.minUnits ?? minUnits)),
+        }, { runValidators: true });
+        await WarehouseStock.findByIdAndDelete(stockRow._id);
+        return;
+    }
+    await WarehouseStock.findByIdAndUpdate(stockRow._id, {
+        productId: params.nextProductId,
+        expirationDate: params.expirationDate,
+        availableUnits: params.quantity,
+        status: resolveWarehouseStockStatus(params.quantity, minUnits),
+    }, { runValidators: true });
 }
 async function applyOrderInventoryDeduction(order) {
     const quantitiesByProductId = order.items.reduce((map, item) => {
@@ -1313,6 +1357,10 @@ apiRouter.get("/sales/stores/:id/products", async (request, response) => {
                 category: product.category,
                 imageUrl: product.imageUrl ?? "",
                 salePrice: Number(product.salePrice ?? 0),
+                displaysPerBox: Number(product.displaysPerBox ?? 1) || 1,
+                unitsPerBox: Number(product.unitsPerBox ?? 0),
+                unitsPerBoxUnit: String(product.unitsPerBoxUnit ?? "unidad"),
+                productWeightKg: Number(product.productWeightKg ?? 0),
             })),
         });
     }
@@ -1575,20 +1623,278 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
         sendCreationError(response, error);
     }
 });
-apiRouter.put("/warehouse/orders/:id/complete", async (request, response) => {
+const carteraPaymentMethods = new Set(["credito", "datafono", "transferencia", "efectivo"]);
+const carteraCollectionPaymentMethods = new Set(["datafono", "transferencia", "efectivo"]);
+function normalizeCarteraPaymentMethod(value) {
+    const paymentMethod = typeof value === "string" ? value.trim().toLowerCase() : "";
+    if (!carteraPaymentMethods.has(paymentMethod)) {
+        throw new Error("Selecciona un metodo de pago valido: credito, datafono, transferencia o efectivo.");
+    }
+    return paymentMethod;
+}
+function normalizeCarteraCollectionPaymentMethod(value) {
+    const paymentMethod = typeof value === "string" ? value.trim().toLowerCase() : "";
+    if (!carteraCollectionPaymentMethods.has(paymentMethod)) {
+        throw new Error("Selecciona un metodo de recaudo valido: datafono, transferencia o efectivo.");
+    }
+    return paymentMethod;
+}
+function normalizeCarteraInvoiceAmount(value) {
+    const invoiceAmountAwg = Number(value ?? 0);
+    if (!Number.isFinite(invoiceAmountAwg) || invoiceAmountAwg < 0) {
+        throw new Error("El monto de la factura no es valido.");
+    }
+    return Math.round(invoiceAmountAwg * 100) / 100;
+}
+function normalizeCreditCollectionsPayload(value) {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return value.map((entry, index) => {
+        if (typeof entry !== "object" || entry === null) {
+            throw new Error(`El recaudo de credito #${index + 1} no es valido.`);
+        }
+        const payload = entry;
+        const carteraEntryId = typeof payload.carteraEntryId === "string" ? payload.carteraEntryId.trim() : "";
+        const amountAwg = normalizeCarteraInvoiceAmount(payload.amountAwg);
+        const paymentMethod = normalizeCarteraCollectionPaymentMethod(payload.paymentMethod);
+        if (!carteraEntryId || amountAwg <= 0) {
+            throw new Error(`El recaudo de credito #${index + 1} debe incluir factura y monto valido.`);
+        }
+        return { carteraEntryId, amountAwg, paymentMethod };
+    });
+}
+function getCarteraPeriodBounds(referenceDate = new Date()) {
+    const now = new Date(referenceDate);
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const weekStart = new Date(dayStart);
+    const dayOfWeek = weekStart.getDay();
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    weekStart.setDate(weekStart.getDate() + mondayOffset);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    return { dayStart, weekStart, monthStart, now };
+}
+function sumAmountInPeriod(rows, getDate, getAmount, periodStart, periodEnd) {
+    return rows.reduce((sum, row) => {
+        const rawDate = getDate(row);
+        const date = rawDate ? new Date(rawDate) : null;
+        if (!date || Number.isNaN(date.getTime()) || date < periodStart || date > periodEnd) {
+            return sum;
+        }
+        return sum + getAmount(row);
+    }, 0);
+}
+async function buildCarteraSummary(referenceDate = new Date()) {
+    const { dayStart, weekStart, monthStart, now } = getCarteraPeriodBounds(referenceDate);
+    const [entries, collections] = await Promise.all([
+        CarteraEntry.find({ active: { $ne: false } }).lean(),
+        CarteraCollection.find({ active: { $ne: false } }).lean(),
+    ]);
+    const facturacion = {
+        day: sumAmountInPeriod(entries, (entry) => entry.invoicedAt, (entry) => Number(entry.invoiceAmountAwg ?? 0), dayStart, now),
+        week: sumAmountInPeriod(entries, (entry) => entry.invoicedAt, (entry) => Number(entry.invoiceAmountAwg ?? 0), weekStart, now),
+        month: sumAmountInPeriod(entries, (entry) => entry.invoicedAt, (entry) => Number(entry.invoiceAmountAwg ?? 0), monthStart, now),
+    };
+    const recaudo = {
+        day: sumAmountInPeriod(collections, (entry) => entry.collectedAt, (entry) => Number(entry.amountAwg ?? 0), dayStart, now),
+        week: sumAmountInPeriod(collections, (entry) => entry.collectedAt, (entry) => Number(entry.amountAwg ?? 0), weekStart, now),
+        month: sumAmountInPeriod(collections, (entry) => entry.collectedAt, (entry) => Number(entry.amountAwg ?? 0), monthStart, now),
+    };
+    const outstandingTotal = entries.reduce((sum, entry) => sum + Number(entry.outstandingAmountAwg ?? 0), 0);
+    const facturacionByPaymentMethod = {
+        credito: entries
+            .filter((entry) => entry.paymentMethod === "credito")
+            .reduce((sum, entry) => sum + Number(entry.invoiceAmountAwg ?? 0), 0),
+        datafono: entries
+            .filter((entry) => entry.paymentMethod === "datafono")
+            .reduce((sum, entry) => sum + Number(entry.invoiceAmountAwg ?? 0), 0),
+        transferencia: entries
+            .filter((entry) => entry.paymentMethod === "transferencia")
+            .reduce((sum, entry) => sum + Number(entry.invoiceAmountAwg ?? 0), 0),
+        efectivo: entries
+            .filter((entry) => entry.paymentMethod === "efectivo")
+            .reduce((sum, entry) => sum + Number(entry.invoiceAmountAwg ?? 0), 0),
+    };
+    const recaudoByPaymentMethod = {
+        datafono: collections
+            .filter((entry) => entry.paymentMethod === "datafono")
+            .reduce((sum, entry) => sum + Number(entry.amountAwg ?? 0), 0),
+        transferencia: collections
+            .filter((entry) => entry.paymentMethod === "transferencia")
+            .reduce((sum, entry) => sum + Number(entry.amountAwg ?? 0), 0),
+        efectivo: collections
+            .filter((entry) => entry.paymentMethod === "efectivo")
+            .reduce((sum, entry) => sum + Number(entry.amountAwg ?? 0), 0),
+    };
+    return {
+        facturacion,
+        recaudo,
+        outstandingTotal,
+        facturacionByPaymentMethod,
+        recaudoByPaymentMethod,
+    };
+}
+function mapCarteraEntryRecord(entry) {
+    const invoiceAmountAwg = Number(entry.invoiceAmountAwg ?? 0);
+    const paymentMethod = String(entry.paymentMethod ?? "");
+    const storedCollectedAmountAwg = Number(entry.collectedAmountAwg ?? NaN);
+    const storedOutstandingAmountAwg = Number(entry.outstandingAmountAwg ?? NaN);
+    const collectedAmountAwg = Number.isFinite(storedCollectedAmountAwg)
+        ? storedCollectedAmountAwg
+        : paymentMethod === "credito"
+            ? 0
+            : invoiceAmountAwg;
+    const outstandingAmountAwg = Number.isFinite(storedOutstandingAmountAwg)
+        ? storedOutstandingAmountAwg
+        : paymentMethod === "credito"
+            ? Math.max(invoiceAmountAwg - collectedAmountAwg, 0)
+            : 0;
+    return {
+        _id: String(entry._id),
+        orderId: String(entry.orderId ?? ""),
+        storeId: String(entry.storeId ?? ""),
+        storeName: String(entry.storeName ?? ""),
+        salesRepId: String(entry.salesRepId ?? ""),
+        salesRepName: String(entry.salesRepName ?? ""),
+        routeId: String(entry.routeId ?? ""),
+        routeName: String(entry.routeName ?? ""),
+        routeDay: String(entry.routeDay ?? ""),
+        deliveryZone: String(entry.deliveryZone ?? ""),
+        paymentMethod,
+        invoiceAmountAwg,
+        invoiceNumber: Number(entry.invoiceNumber ?? 0) || null,
+        collectedAmountAwg,
+        outstandingAmountAwg,
+        invoicedAt: entry.invoicedAt,
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt,
+    };
+}
+async function applyCreditCollections(collections, context) {
+    if (collections.length === 0) {
+        return [];
+    }
+    const entryIds = [...new Set(collections.map((entry) => entry.carteraEntryId))];
+    const pendingEntries = await CarteraEntry.find({
+        _id: { $in: entryIds },
+        storeId: context.storeId,
+        active: { $ne: false },
+        outstandingAmountAwg: { $gt: 0 },
+    }).lean();
+    const pendingById = new Map(pendingEntries.map((entry) => [String(entry._id), entry]));
+    const createdCollections = [];
+    for (const collection of collections) {
+        const targetEntry = pendingById.get(collection.carteraEntryId);
+        if (!targetEntry) {
+            throw new Error("Una de las facturas de credito seleccionadas ya no tiene saldo pendiente.");
+        }
+        const outstandingAmountAwg = Number(targetEntry.outstandingAmountAwg ?? 0);
+        if (collection.amountAwg > outstandingAmountAwg + 0.009) {
+            throw new Error(`El recaudo supera el saldo pendiente de ${targetEntry.storeName}.`);
+        }
+        const nextCollectedAmountAwg = Number(targetEntry.collectedAmountAwg ?? 0) + collection.amountAwg;
+        const nextOutstandingAmountAwg = Math.max(outstandingAmountAwg - collection.amountAwg, 0);
+        await CarteraEntry.findByIdAndUpdate(targetEntry._id, {
+            collectedAmountAwg: Math.round(nextCollectedAmountAwg * 100) / 100,
+            outstandingAmountAwg: Math.round(nextOutstandingAmountAwg * 100) / 100,
+        });
+        targetEntry.collectedAmountAwg = nextCollectedAmountAwg;
+        targetEntry.outstandingAmountAwg = nextOutstandingAmountAwg;
+        const createdCollection = await CarteraCollection.create({
+            carteraEntryId: String(targetEntry._id),
+            storeId: context.storeId,
+            storeName: context.storeName,
+            relatedOrderId: context.relatedOrderId,
+            amountAwg: collection.amountAwg,
+            paymentMethod: collection.paymentMethod,
+            collectedAt: context.collectedAt,
+            salesRepId: context.salesRepId,
+            salesRepName: context.salesRepName,
+            notes: context.notes ?? "Recaudo de factura en credito durante entrega.",
+            active: true,
+        });
+        createdCollections.push(createdCollection);
+    }
+    return createdCollections;
+}
+async function getNextInvoiceNumber() {
+    const lastEntry = await CarteraEntry.findOne({ invoiceNumber: { $exists: true, $ne: null } })
+        .sort({ invoiceNumber: -1 })
+        .select({ invoiceNumber: 1 })
+        .lean();
+    return Math.max(Number(lastEntry?.invoiceNumber ?? 11810), 11810) + 1;
+}
+async function buildWarehouseInvoiceDocumentLines(order) {
+    const orderItems = Array.isArray(order.items) ? order.items : [];
+    const productIds = orderItems.map((item) => String(item.productId ?? "")).filter(Boolean);
+    const products = productIds.length > 0
+        ? await Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1, description: 1, salePrice: 1 }).lean()
+        : [];
+    const productsById = new Map(products.map((product) => [String(product._id), product]));
+    return orderItems.map((item) => {
+        const product = productsById.get(String(item.productId ?? ""));
+        const quantity = Number(item.quantity ?? 0);
+        const rate = Number(product?.salePrice ?? 0);
+        const amount = Math.round(quantity * rate * 100) / 100;
+        return {
+            productName: String(product?.name ?? "Producto"),
+            productSku: String(product?.sku ?? "-"),
+            productDescription: String(product?.description ?? product?.name ?? "Producto"),
+            quantity,
+            rate,
+            amount,
+        };
+    });
+}
+apiRouter.get("/warehouse/orders/:id/invoice-document", async (request, response) => {
     try {
         const order = await Order.findById(request.params.id).lean();
         if (!order) {
             response.status(404).json({ message: "El pedido no existe." });
             return;
         }
-        await applyOrderInventoryDeduction({
-            _id: order._id,
-            items: Array.isArray(order.items) ? order.items : [],
+        const mappedOrder = await mapWarehouseOrderRecord(order);
+        const carteraEntry = await CarteraEntry.findOne({ orderId: String(order._id), active: { $ne: false } }).lean();
+        const logisticsInvoice = await LogisticsInvoice.findOne({ orderId: String(order._id), active: { $ne: false } }).lean();
+        const fallbackLines = await buildWarehouseInvoiceDocumentLines(order);
+        const items = logisticsInvoice?.items?.length
+            ? logisticsInvoice.items.map((item) => ({
+                productName: String(item.productName ?? "Producto"),
+                productSku: String(item.productSku ?? "-"),
+                productDescription: String(item.productName ?? "Producto"),
+                quantity: Number(item.quantity ?? 0),
+                rate: Number(item.salePriceAwg ?? 0),
+                amount: Number(item.lineTotalAwg ?? 0),
+            }))
+            : fallbackLines;
+        const totalAmount = carteraEntry
+            ? Number(carteraEntry.invoiceAmountAwg ?? 0)
+            : items.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+        response.json({
+            order: mappedOrder,
+            carteraEntry: carteraEntry ? mapCarteraEntryRecord(carteraEntry) : null,
+            items,
+            totalAmount,
         });
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
+apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
+    try {
+        const order = await Order.findById(request.params.id).lean();
+        if (!order) {
+            response.status(404).json({ message: "El pedido no existe." });
+            return;
+        }
         if (order.status === "delivered") {
+            response.status(400).json({ message: "No puedes enviar a despacho un pedido ya facturado." });
+            return;
+        }
+        if (order.status === "dispatched") {
             response.json({
-                message: "El pedido ya estaba completado; inventario sincronizado correctamente.",
+                message: "El pedido ya estaba en despacho.",
                 order: {
                     _id: String(order._id),
                     status: order.status,
@@ -1597,23 +1903,124 @@ apiRouter.put("/warehouse/orders/:id/complete", async (request, response) => {
             });
             return;
         }
-        const updatedOrder = await Order.findByIdAndUpdate(request.params.id, {
-            status: "delivered",
-        }, {
-            new: true,
-            runValidators: true,
-        }).lean();
+        if (order.status !== "submitted") {
+            response.status(400).json({ message: "Solo puedes enviar a despacho pedidos recibidos en bodega." });
+            return;
+        }
+        const updatedOrder = await Order.findByIdAndUpdate(request.params.id, { status: "dispatched" }, { new: true, runValidators: true }).lean();
         if (!updatedOrder) {
             response.status(404).json({ message: "El pedido no existe." });
             return;
         }
         response.json({
-            message: "Pedido completado correctamente.",
+            message: "Pedido enviado a despacho correctamente.",
             order: {
                 _id: String(updatedOrder._id),
                 status: updatedOrder.status,
                 updatedAt: updatedOrder.updatedAt,
             },
+        });
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
+apiRouter.put("/warehouse/orders/:id/complete", async (request, response) => {
+    try {
+        const order = await Order.findById(request.params.id).lean();
+        if (!order) {
+            response.status(404).json({ message: "El pedido no existe." });
+            return;
+        }
+        if (order.status === "delivered") {
+            response.json({
+                message: "El pedido ya estaba completado.",
+                order: {
+                    _id: String(order._id),
+                    status: order.status,
+                    updatedAt: order.updatedAt,
+                },
+                carteraEntryId: null,
+            });
+            return;
+        }
+        if (order.status !== "dispatched") {
+            response.status(400).json({ message: "Primero imprime y envia el pedido a despacho antes de facturarlo." });
+            return;
+        }
+        const paymentMethod = normalizeCarteraPaymentMethod(request.body?.paymentMethod);
+        const invoiceAmountAwg = normalizeCarteraInvoiceAmount(request.body?.invoiceAmountAwg);
+        const creditCollections = normalizeCreditCollectionsPayload(request.body?.creditCollections);
+        const invoicedAt = new Date();
+        const isCreditInvoice = paymentMethod === "credito";
+        const initialCollectedAmountAwg = isCreditInvoice ? 0 : invoiceAmountAwg;
+        const initialOutstandingAmountAwg = isCreditInvoice ? invoiceAmountAwg : 0;
+        const invoiceNumber = await getNextInvoiceNumber();
+        await applyOrderInventoryDeduction({
+            _id: order._id,
+            items: Array.isArray(order.items) ? order.items : [],
+        });
+        const updatedOrder = await Order.findByIdAndUpdate(request.params.id, { status: "delivered" }, { new: true, runValidators: true }).lean();
+        if (!updatedOrder) {
+            response.status(404).json({ message: "El pedido no existe." });
+            return;
+        }
+        const carteraEntry = await CarteraEntry.findOneAndUpdate({ orderId: String(updatedOrder._id) }, {
+            orderId: String(updatedOrder._id),
+            storeId: String(updatedOrder.storeId ?? ""),
+            storeName: String(updatedOrder.storeName ?? ""),
+            salesRepId: String(updatedOrder.salesRepId ?? ""),
+            salesRepName: String(updatedOrder.salesRepName ?? ""),
+            routeId: String(updatedOrder.routeId ?? ""),
+            routeName: String(updatedOrder.routeName ?? ""),
+            routeDay: String(updatedOrder.routeDay ?? ""),
+            deliveryZone: String(updatedOrder.deliveryZone ?? ""),
+            paymentMethod,
+            invoiceAmountAwg,
+            invoiceNumber,
+            collectedAmountAwg: initialCollectedAmountAwg,
+            outstandingAmountAwg: initialOutstandingAmountAwg,
+            invoicedAt,
+            active: true,
+        }, { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true }).lean();
+        if (!carteraEntry) {
+            throw new Error("No fue posible registrar la factura en cartera.");
+        }
+        if (!isCreditInvoice) {
+            await CarteraCollection.create({
+                carteraEntryId: String(carteraEntry._id),
+                storeId: String(updatedOrder.storeId ?? ""),
+                storeName: String(updatedOrder.storeName ?? ""),
+                relatedOrderId: String(updatedOrder._id),
+                amountAwg: invoiceAmountAwg,
+                paymentMethod,
+                collectedAt: invoicedAt,
+                salesRepId: String(updatedOrder.salesRepId ?? ""),
+                salesRepName: String(updatedOrder.salesRepName ?? ""),
+                notes: "Recaudo al facturar pedido.",
+                active: true,
+            });
+        }
+        const appliedCreditCollections = await applyCreditCollections(creditCollections, {
+            storeId: String(updatedOrder.storeId ?? ""),
+            storeName: String(updatedOrder.storeName ?? ""),
+            relatedOrderId: String(updatedOrder._id),
+            salesRepId: String(updatedOrder.salesRepId ?? ""),
+            salesRepName: String(updatedOrder.salesRepName ?? ""),
+            collectedAt: invoicedAt,
+        });
+        response.json({
+            message: appliedCreditCollections.length > 0
+                ? "Pedido facturado y recaudos de credito registrados correctamente."
+                : "Pedido facturado y completado correctamente.",
+            order: {
+                _id: String(updatedOrder._id),
+                status: updatedOrder.status,
+                updatedAt: updatedOrder.updatedAt,
+            },
+            carteraEntryId: String(carteraEntry._id),
+            invoiceNumber,
+            creditCollectionsApplied: appliedCreditCollections.length,
         });
     }
     catch (error) {
@@ -2736,6 +3143,79 @@ apiRouter.post("/management/inventory-adjustments", async (request, response) =>
         sendCreationError(response, error);
     }
 });
+apiRouter.put("/management/inventory-rows", async (request, response) => {
+    try {
+        const stockRowId = typeof request.body?.stockRowId === "string" ? request.body.stockRowId.trim() : "";
+        const productId = typeof request.body?.productId === "string" ? request.body.productId.trim() : "";
+        const nextProductId = typeof request.body?.nextProductId === "string" && request.body.nextProductId.trim()
+            ? request.body.nextProductId.trim()
+            : productId;
+        const quantity = Number(request.body?.quantity ?? NaN);
+        const salePriceAwg = Number(request.body?.salePriceAwg ?? NaN);
+        const productWeightKg = Number(request.body?.productWeightKg ?? NaN);
+        const expirationDateValue = typeof request.body?.expirationDate === "string"
+            ? request.body.expirationDate.trim()
+            : undefined;
+        if (!productId) {
+            response.status(400).json({ message: "Selecciona un producto del inventario." });
+            return;
+        }
+        const targetProduct = await Product.findById(nextProductId).lean();
+        if (!targetProduct || targetProduct.active === false) {
+            response.status(404).json({ message: "El producto no existe o esta inactivo." });
+            return;
+        }
+        if (stockRowId) {
+            if (!Number.isFinite(quantity) || quantity < 0) {
+                response.status(400).json({ message: "Ingresa una cantidad valida." });
+                return;
+            }
+            const stockRow = await WarehouseStock.findOne({ _id: stockRowId, productId }).lean();
+            if (!stockRow) {
+                response.status(404).json({ message: "El lote de inventario no existe." });
+                return;
+            }
+            const normalizedExpiration = expirationDateValue !== undefined
+                ? normalizeOptionalDateValue(expirationDateValue)
+                : normalizeOptionalDateValue(stockRow.expirationDate);
+            if (expirationDateValue !== undefined && expirationDateValue && !normalizedExpiration) {
+                response.status(400).json({ message: "La fecha de caducidad no es valida." });
+                return;
+            }
+            await applyInventoryRowStockUpdate({
+                stockRowId,
+                productId,
+                nextProductId,
+                quantity,
+                expirationDate: normalizedExpiration,
+            });
+        }
+        else if (expirationDateValue !== undefined) {
+            const normalizedExpiration = normalizeOptionalDateValue(expirationDateValue);
+            if (expirationDateValue && !normalizedExpiration) {
+                response.status(400).json({ message: "La fecha de caducidad no es valida." });
+                return;
+            }
+            await Product.findByIdAndUpdate(nextProductId, {
+                expirationDate: normalizedExpiration,
+            }, { runValidators: true });
+        }
+        const productUpdate = {};
+        if (Number.isFinite(salePriceAwg) && salePriceAwg >= 0) {
+            productUpdate.salePrice = salePriceAwg;
+        }
+        if (Number.isFinite(productWeightKg) && productWeightKg >= 0) {
+            productUpdate.productWeightKg = productWeightKg;
+        }
+        if (Object.keys(productUpdate).length > 0) {
+            await Product.findByIdAndUpdate(nextProductId, productUpdate, { runValidators: true });
+        }
+        response.json({ message: "Inventario actualizado correctamente." });
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
 apiRouter.post("/management/inventory-entries", async (request, response) => {
     try {
         const warehouseId = typeof request.body?.warehouseId === "string" ? request.body.warehouseId.trim() : "";
@@ -3230,8 +3710,9 @@ apiRouter.post("/management/products/import-excel", async (request, response) =>
                         : "unidad",
                 containerType: containerTypeValue === "refrigerado" ? "refrigerado" : "seco",
                 shareWithAruba: normalizeImportBoolean(getImportRowField(row, ["compartir_aruba", "share_with_aruba", "aruba"]), true),
-                productWeightKg: normalizeImportNumber(getImportRowField(row, ["peso kg", "peso_kg", "peso", "product_weight_kg"]), 0),
-                unitsPerBox: normalizeImportNumber(getImportRowField(row, ["unidades_por_caja", "units_per_box"]), 0),
+                productWeightKg: normalizeImportNumber(getImportRowField(row, ["peso kg", "peso_kg", "peso", "product_weight_kg", "peso (kg)"]), 0),
+                displaysPerBox: normalizeImportNumber(getImportRowField(row, ["display", "displays", "displays_por_caja", "displays_per_box"]), 1) || 1,
+                unitsPerBox: normalizeImportNumber(getImportRowField(row, ["unidades", "unidades_por_caja", "units_per_box"]), 0),
                 unitsPerBoxUnit: ["kg", "lb", "unidad", "paquete"].includes(normalizeImportText(getImportRowField(row, ["unidad_caja", "units_per_box_unit"])).toLowerCase())
                     ? normalizeImportText(getImportRowField(row, ["unidad_caja", "units_per_box_unit"])).toLowerCase()
                     : "unidad",
@@ -4205,6 +4686,12 @@ async function syncDeliveredOrdersIntoLogisticsInvoices() {
         if (normalizedItems.length === 0) {
             return;
         }
+        const existingInvoice = await LogisticsInvoice.findOne({ orderId })
+            .select({ active: 1, syncExcluded: 1 })
+            .lean();
+        if (existingInvoice?.syncExcluded || (existingInvoice?.active === false && orderId)) {
+            return;
+        }
         const totalRevenueAwg = normalizedItems.reduce((sum, item) => sum + Number(item.lineTotalAwg ?? 0), 0);
         const totalCostAwg = normalizedItems.reduce((sum, item) => sum + Number(item.unitCostAwg ?? 0) * Number(item.quantity ?? 0), 0);
         const totalUtilityAwg = totalRevenueAwg - totalCostAwg;
@@ -4231,6 +4718,107 @@ async function syncDeliveredOrdersIntoLogisticsInvoices() {
     });
     await Promise.all(upsertOperations);
 }
+apiRouter.get("/warehouse/cartera/pending-credit", async (request, response) => {
+    const storeId = typeof request.query.storeId === "string" ? request.query.storeId.trim() : "";
+    if (!storeId) {
+        response.status(400).json({ message: "Indica el cliente para consultar su credito pendiente." });
+        return;
+    }
+    const entries = await CarteraEntry.find({
+        storeId,
+        active: { $ne: false },
+        paymentMethod: "credito",
+        outstandingAmountAwg: { $gt: 0 },
+    })
+        .sort({ invoicedAt: 1, createdAt: 1 })
+        .lean();
+    response.json(entries.map((entry) => mapCarteraEntryRecord(entry)));
+});
+apiRouter.get("/management/cartera", async (request, response) => {
+    const monthFilter = typeof request.query.month === "string" ? request.query.month.trim() : "";
+    const storeIdFilter = typeof request.query.storeId === "string" ? request.query.storeId.trim() : "";
+    const filters = { active: { $ne: false } };
+    const collectionFilters = { active: { $ne: false } };
+    if (storeIdFilter) {
+        filters.storeId = storeIdFilter;
+        collectionFilters.storeId = storeIdFilter;
+    }
+    if (/^\d{4}-\d{2}$/.test(monthFilter)) {
+        const [year, month] = monthFilter.split("-").map(Number);
+        const startDate = new Date(year, month - 1, 1);
+        const endDate = new Date(year, month, 1);
+        filters.invoicedAt = { $gte: startDate, $lt: endDate };
+        collectionFilters.collectedAt = { $gte: startDate, $lt: endDate };
+    }
+    const [entries, collections, summary] = await Promise.all([
+        CarteraEntry.find(filters).sort({ invoicedAt: -1, createdAt: -1 }).lean(),
+        CarteraCollection.find(collectionFilters).sort({ collectedAt: -1, createdAt: -1 }).lean(),
+        buildCarteraSummary(),
+    ]);
+    response.json({
+        summary,
+        entries: entries.map((entry) => mapCarteraEntryRecord(entry)),
+        collections: collections.map((collection) => ({
+            _id: String(collection._id),
+            carteraEntryId: String(collection.carteraEntryId ?? ""),
+            storeId: String(collection.storeId ?? ""),
+            storeName: String(collection.storeName ?? ""),
+            relatedOrderId: String(collection.relatedOrderId ?? ""),
+            amountAwg: Number(collection.amountAwg ?? 0),
+            paymentMethod: String(collection.paymentMethod ?? ""),
+            collectedAt: collection.collectedAt,
+            salesRepId: String(collection.salesRepId ?? ""),
+            salesRepName: String(collection.salesRepName ?? ""),
+            notes: String(collection.notes ?? ""),
+            createdAt: collection.createdAt,
+            updatedAt: collection.updatedAt,
+        })),
+    });
+});
+apiRouter.post("/management/cartera/entries/:id/collect", async (request, response) => {
+    try {
+        const entry = await CarteraEntry.findById(request.params.id).lean();
+        if (!entry || entry.active === false) {
+            response.status(404).json({ message: "La factura no existe." });
+            return;
+        }
+        const amountAwg = normalizeCarteraInvoiceAmount(request.body?.amountAwg);
+        const paymentMethod = normalizeCarteraCollectionPaymentMethod(request.body?.paymentMethod);
+        const collectedAtValue = typeof request.body?.collectedAt === "string" ? request.body.collectedAt.trim() : "";
+        const collectedAt = collectedAtValue ? new Date(`${collectedAtValue}T12:00:00`) : new Date();
+        if (Number.isNaN(collectedAt.getTime())) {
+            throw new Error("La fecha de recaudo no es valida.");
+        }
+        if (amountAwg <= 0) {
+            throw new Error("Indica un monto de recaudo valido.");
+        }
+        const outstandingAmountAwg = Number(entry.outstandingAmountAwg ?? 0);
+        if (amountAwg > outstandingAmountAwg + 0.009) {
+            throw new Error("El monto supera el saldo pendiente de la factura.");
+        }
+        await applyCreditCollections([{
+                carteraEntryId: String(entry._id),
+                amountAwg,
+                paymentMethod,
+            }], {
+            storeId: String(entry.storeId ?? ""),
+            storeName: String(entry.storeName ?? ""),
+            relatedOrderId: "",
+            salesRepId: "",
+            salesRepName: "",
+            collectedAt,
+            notes: "Recaudo registrado desde cartera.",
+        });
+        const updatedEntry = await CarteraEntry.findById(entry._id).lean();
+        response.json({
+            message: "Recaudo registrado correctamente.",
+            entry: updatedEntry ? mapCarteraEntryRecord(updatedEntry) : null,
+        });
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
 apiRouter.get("/management/logistics-accounting/invoices", async (_request, response) => {
     await syncDeliveredOrdersIntoLogisticsInvoices();
     const invoices = await LogisticsInvoice.find({ active: { $ne: false } }).sort({ invoiceDate: -1, createdAt: -1 }).lean();
@@ -4267,7 +4855,7 @@ apiRouter.post("/management/logistics-accounting/invoices", async (request, resp
 });
 apiRouter.delete("/management/logistics-accounting/invoices/:id", async (request, response) => {
     try {
-        const invoice = await LogisticsInvoice.findByIdAndUpdate(request.params.id, { active: false }, { new: true });
+        const invoice = await LogisticsInvoice.findByIdAndUpdate(request.params.id, { active: false, syncExcluded: true }, { new: true });
         if (!invoice) {
             response.status(404).json({ message: "La factura logistica no existe." });
             return;

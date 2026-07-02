@@ -3,53 +3,53 @@ export declare const SalesRoute: import("mongoose").Model<{
     code: string;
     name: string;
     active: boolean;
-    salesRepName: string;
     salesRepId: string;
+    salesRepName: string;
     weekStart: NativeDate;
     weekLabel: string;
     days: import("mongoose").Types.DocumentArray<{
         day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         stores: import("mongoose").Types.DocumentArray<{
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }> & {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }>;
     }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
         day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         stores: import("mongoose").Types.DocumentArray<{
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }> & {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }>;
     }> & {
         day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         stores: import("mongoose").Types.DocumentArray<{
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }> & {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }>;
     }>;
@@ -60,53 +60,53 @@ export declare const SalesRoute: import("mongoose").Model<{
     code: string;
     name: string;
     active: boolean;
-    salesRepName: string;
     salesRepId: string;
+    salesRepName: string;
     weekStart: NativeDate;
     weekLabel: string;
     days: import("mongoose").Types.DocumentArray<{
         day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         stores: import("mongoose").Types.DocumentArray<{
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }> & {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }>;
     }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
         day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         stores: import("mongoose").Types.DocumentArray<{
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }> & {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }>;
     }> & {
         day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         stores: import("mongoose").Types.DocumentArray<{
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }> & {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }>;
     }>;
@@ -119,53 +119,53 @@ export declare const SalesRoute: import("mongoose").Model<{
     code: string;
     name: string;
     active: boolean;
-    salesRepName: string;
     salesRepId: string;
+    salesRepName: string;
     weekStart: NativeDate;
     weekLabel: string;
     days: import("mongoose").Types.DocumentArray<{
         day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         stores: import("mongoose").Types.DocumentArray<{
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }> & {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }>;
     }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
         day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         stores: import("mongoose").Types.DocumentArray<{
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }> & {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }>;
     }> & {
         day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         stores: import("mongoose").Types.DocumentArray<{
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }> & {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }>;
     }>;
@@ -182,53 +182,53 @@ export declare const SalesRoute: import("mongoose").Model<{
     code: string;
     name: string;
     active: boolean;
-    salesRepName: string;
     salesRepId: string;
+    salesRepName: string;
     weekStart: NativeDate;
     weekLabel: string;
     days: import("mongoose").Types.DocumentArray<{
         day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         stores: import("mongoose").Types.DocumentArray<{
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }> & {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }>;
     }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
         day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         stores: import("mongoose").Types.DocumentArray<{
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }> & {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }>;
     }> & {
         day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         stores: import("mongoose").Types.DocumentArray<{
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }> & {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }>;
     }>;
@@ -239,53 +239,53 @@ export declare const SalesRoute: import("mongoose").Model<{
     code: string;
     name: string;
     active: boolean;
-    salesRepName: string;
     salesRepId: string;
+    salesRepName: string;
     weekStart: NativeDate;
     weekLabel: string;
     days: import("mongoose").Types.DocumentArray<{
         day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         stores: import("mongoose").Types.DocumentArray<{
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }> & {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }>;
     }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
         day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         stores: import("mongoose").Types.DocumentArray<{
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }> & {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }>;
     }> & {
         day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         stores: import("mongoose").Types.DocumentArray<{
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }> & {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }>;
     }>;
@@ -298,53 +298,53 @@ export declare const SalesRoute: import("mongoose").Model<{
     code: string;
     name: string;
     active: boolean;
-    salesRepName: string;
     salesRepId: string;
+    salesRepName: string;
     weekStart: NativeDate;
     weekLabel: string;
     days: import("mongoose").Types.DocumentArray<{
         day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         stores: import("mongoose").Types.DocumentArray<{
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }> & {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }>;
     }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
         day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         stores: import("mongoose").Types.DocumentArray<{
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }> & {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }>;
     }> & {
         day: "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
         stores: import("mongoose").Types.DocumentArray<{
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }> & {
-            storeName: string;
             storeId: string;
+            storeName: string;
             address?: string | null | undefined;
         }>;
     }>;
