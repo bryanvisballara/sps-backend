@@ -1245,6 +1245,13 @@ const contabilidadSidebarSections = [
       { key: "warehouse-inventory", label: "Inventario" },
     ],
   },
+  {
+    key: "parametrizacion",
+    label: "Parametrización",
+    items: [
+      { key: "products", label: "Productos" },
+    ],
+  },
 ] as const;
 
 const contabilidadAllowedSections = new Set<ActiveSection>([
@@ -1253,6 +1260,9 @@ const contabilidadAllowedSections = new Set<ActiveSection>([
   "cartera",
   "warehouse-dispatch",
   "warehouse-inventory",
+  "products",
+  "products-create",
+  "products-import",
 ]);
 
 const carteraPaymentMethodOptions: Array<{ value: CarteraPaymentMethod; label: string }> = [
@@ -5064,7 +5074,8 @@ export default function App() {
         || selectedCollection.endpoint === "/management/categories"
         || selectedCollection.endpoint === "/management/suppliers"
         || selectedCollection.endpoint === "/management/products"
-      ));
+      ))
+      || (sessionUser?.role === "contabilidad" && selectedCollection.endpoint === "/management/products");
 
     if (!canManageCreationSection || !isCreationSection) {
       return;
