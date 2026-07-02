@@ -186,6 +186,7 @@ type ProductOption = {
   value: string;
   label: string;
   sku: string;
+  description: string;
   salePrice: number;
   inventoryAlert: number;
   productWeightKg: number;
@@ -3339,6 +3340,7 @@ function mapRecordToProductOption(product: Record<string, unknown>): ProductOpti
     value: String(product._id ?? ""),
     label: String(product.name ?? ""),
     sku: String(product.sku ?? ""),
+    description: String(product.description ?? "").trim(),
     salePrice: roundCurrencyValue(Number(product.salePrice ?? 0)),
     inventoryAlert: Number(product.inventoryAlert ?? 0),
     productWeightKg: Number(product.productWeightKg ?? 0),
@@ -3410,6 +3412,29 @@ function formatProductPackUnitsInfo(product: {
   }
 
   return parts.join(" · ");
+}
+
+function resolveProductInvoiceDescription(product: {
+  description?: string;
+  name?: string;
+  label?: string;
+  displaysPerBox?: number;
+  unitsPerBox?: number;
+  unitsPerBoxUnit?: string;
+} | null | undefined) {
+  const explicitDescription = String(product?.description ?? "").trim();
+
+  if (explicitDescription) {
+    return explicitDescription;
+  }
+
+  const packInfo = product ? formatProductPackUnitsInfo(product).trim() : "";
+
+  if (packInfo) {
+    return packInfo;
+  }
+
+  return "-";
 }
 
 function formatExportWeightLabel(weightKg: number) {
@@ -8129,13 +8154,23 @@ export default function App() {
       throw new Error("Este pedido no tiene productos para facturar.");
     }
 
-    const lineItems: CommercialInvoiceLineItem[] = warehousePricedItems.map((item) => ({
-      productLabel: item.productSku || "-",
-      description: item.productName,
-      quantity: item.quantity,
-      rate: item.resolvedSalePrice,
-      amount: item.lineTotal,
-    }));
+    const lineItems: CommercialInvoiceLineItem[] = warehousePricedItems.map((item) => {
+      const productOption = productOptionsById.get(item.productId);
+
+      return {
+        productLabel: item.productName,
+        description: resolveProductInvoiceDescription({
+          description: productOption?.description,
+          name: item.productName,
+          displaysPerBox: productOption?.displaysPerBox,
+          unitsPerBox: productOption?.unitsPerBox,
+          unitsPerBoxUnit: productOption?.unitsPerBoxUnit,
+        }),
+        quantity: item.quantity,
+        rate: item.resolvedSalePrice,
+        amount: item.lineTotal,
+      };
+    });
 
     return buildCommercialInvoicePdf({
       documentKind,
@@ -8604,8 +8639,8 @@ export default function App() {
         billToName: order.storeName,
         billToLocation: order.deliveryZone || order.routeName,
         lineItems: data.items.map((item) => ({
-          productLabel: item.productSku || "-",
-          description: item.productDescription || item.productName,
+          productLabel: item.productName,
+          description: item.productDescription || "-",
           quantity: item.quantity,
           rate: item.rate,
           amount: item.amount,

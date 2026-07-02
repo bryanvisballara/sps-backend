@@ -42,6 +42,13 @@ function formatInvoiceAmount(value: number) {
   }).format(Number.isFinite(value) ? value : 0);
 }
 
+function formatInvoiceQuantity(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number.isFinite(value) ? value : 0);
+}
+
 function sanitizePdfFileName(value: string) {
   return value
     .normalize("NFD")
@@ -137,7 +144,7 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
   const tableBody = input.lineItems.map((item) => [
     item.productLabel.toUpperCase(),
     item.description.toUpperCase(),
-    String(item.quantity),
+    formatInvoiceQuantity(item.quantity),
     formatInvoiceAmount(item.rate),
     formatInvoiceAmount(item.amount),
   ]);

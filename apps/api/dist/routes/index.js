@@ -2208,9 +2208,10 @@ async function buildWarehouseInvoiceDocumentLines(order) {
         const rate = Number(product?.salePrice ?? 0);
         const amount = Math.round(quantity * rate * 100) / 100;
         return {
+            productId: String(item.productId ?? ""),
             productName: String(product?.name ?? "Producto"),
             productSku: String(product?.sku ?? "-"),
-            productDescription: String(product?.description ?? product?.name ?? "Producto"),
+            productDescription: String(product?.description ?? "").trim() || String(product?.name ?? "Producto"),
             quantity,
             rate,
             amount,
@@ -2228,16 +2229,35 @@ apiRouter.get("/warehouse/orders/:id/invoice-document", async (request, response
         const carteraEntry = await CarteraEntry.findOne({ orderId: String(order._id), active: { $ne: false } }).lean();
         const logisticsInvoice = await LogisticsInvoice.findOne({ orderId: String(order._id), active: { $ne: false } }).lean();
         const fallbackLines = await buildWarehouseInvoiceDocumentLines(order);
-        const items = logisticsInvoice?.items?.length
+        const sourceItems = logisticsInvoice?.items?.length
             ? logisticsInvoice.items.map((item) => ({
+                productId: String(item.productId ?? ""),
                 productName: String(item.productName ?? "Producto"),
                 productSku: String(item.productSku ?? "-"),
-                productDescription: String(item.productName ?? "Producto"),
                 quantity: Number(item.quantity ?? 0),
                 rate: Number(item.salePriceAwg ?? 0),
                 amount: Number(item.lineTotalAwg ?? 0),
             }))
             : fallbackLines;
+        const productIds = sourceItems
+            .map((item) => String(item.productId ?? "").trim())
+            .filter(Boolean);
+        const invoiceProducts = productIds.length > 0
+            ? await Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1, description: 1 }).lean()
+            : [];
+        const invoiceProductsById = new Map(invoiceProducts.map((product) => [String(product._id), product]));
+        const items = sourceItems.map((item) => {
+            const product = invoiceProductsById.get(String(item.productId ?? ""));
+            return {
+                productName: String(item.productName ?? product?.name ?? "Producto"),
+                productSku: String(item.productSku ?? product?.sku ?? "-"),
+                productDescription: String(product?.description ?? "").trim()
+                    || String(item.productName ?? "Producto"),
+                quantity: Number(item.quantity ?? 0),
+                rate: Number(item.rate ?? 0),
+                amount: Number(item.amount ?? 0),
+            };
+        });
         const totalAmount = carteraEntry
             ? Number(carteraEntry.invoiceAmountAwg ?? 0)
             : items.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
