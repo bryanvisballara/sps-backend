@@ -2858,7 +2858,8 @@ async function getNextInvoiceNumber() {
     .select({ invoiceNumber: 1 })
     .lean();
 
-  return Math.max(Number(lastEntry?.invoiceNumber ?? 11810), 11810) + 1;
+  const lastNumber = Number(lastEntry?.invoiceNumber ?? 0);
+  return Math.max(lastNumber + 1, 12020);
 }
 
 async function buildWarehouseInvoiceDocumentLines(order: {
