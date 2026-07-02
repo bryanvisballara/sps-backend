@@ -40,7 +40,8 @@ type ActiveSection =
   | "cartera"
   | "warehouse-dispatch"
   | "warehouse-inventory"
-  | "invoice-change-requests";
+  | "invoice-change-requests"
+  | "order-delete-requests";
 
 type KpiCard = {
   label: string;
@@ -796,6 +797,28 @@ type InvoiceChangeRequestRecord = {
   updatedAt: string;
 };
 
+type OrderDeleteRequestRecord = {
+  _id: string;
+  orderId: string;
+  storeId: string;
+  storeName: string;
+  salesRepName: string;
+  routeName: string;
+  invoiceNumber: number | null;
+  orderStatus: string;
+  status: "pending" | "approved" | "rejected";
+  requestedByUserId: string;
+  requestedByUserName: string;
+  requestedByRole: string;
+  requestNotes: string;
+  reviewedByUserId: string;
+  reviewedByUserName: string;
+  reviewNotes: string;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type CarteraCollectionRecord = {
   _id?: string;
   carteraEntryId: string;
@@ -1155,6 +1178,7 @@ const managementSidebarSections = [
       { key: "catalog", label: "Catálogo" },
       { key: "cartera", label: "Cartera" },
       { key: "invoice-change-requests", label: "Solicitudes factura" },
+      { key: "order-delete-requests", label: "Solicitudes borrado" },
     ],
   },
   {
@@ -3752,7 +3776,13 @@ export default function App() {
   const [isLoadingInvoiceChangeRequests, setIsLoadingInvoiceChangeRequests] = useState(false);
   const [invoiceChangeReviewStatus, setInvoiceChangeReviewStatus] = useState<CreationStatus | null>(null);
   const [isReviewingInvoiceChangeRequest, setIsReviewingInvoiceChangeRequest] = useState(false);
+  const [orderDeleteRequests, setOrderDeleteRequests] = useState<OrderDeleteRequestRecord[]>([]);
+  const [orderDeleteRequestsError, setOrderDeleteRequestsError] = useState("");
+  const [isLoadingOrderDeleteRequests, setIsLoadingOrderDeleteRequests] = useState(false);
+  const [orderDeleteReviewStatus, setOrderDeleteReviewStatus] = useState<CreationStatus | null>(null);
+  const [isReviewingOrderDeleteRequest, setIsReviewingOrderDeleteRequest] = useState(false);
   const [invoiceChangeReviewNotesDraft, setInvoiceChangeReviewNotesDraft] = useState<Record<string, string>>({});
+  const [orderDeleteReviewNotesDraft, setOrderDeleteReviewNotesDraft] = useState<Record<string, string>>({});
   const [sellerOrderDraft, setSellerOrderDraft] = useState<SellerOrderDraft>({});
   const [sellerDeliveryDateDraft, setSellerDeliveryDateDraft] = useState(() => getBusinessDateKey());
   const [sellerOrderEditDeliveryDate, setSellerOrderEditDeliveryDate] = useState(() => getBusinessDateKey());
@@ -4190,6 +4220,9 @@ export default function App() {
   );
   const pendingInvoiceChangeOrderIds = new Set(
     invoiceChangeRequests.filter((request) => request.status === "pending").map((request) => request.orderId),
+  );
+  const pendingOrderDeleteOrderIds = new Set(
+    orderDeleteRequests.filter((request) => request.status === "pending").map((request) => request.orderId),
   );
   const warehouseIncomingOrders = warehouseOrders.filter((order) => order.status === "submitted");
   const warehouseDispatchOrders = warehouseOrders.filter((order) => order.status === "dispatched");
@@ -5478,6 +5511,20 @@ export default function App() {
 
     void refreshInvoiceChangeRequests(
       sessionUser?.role === "management" && activeSection === "invoice-change-requests" ? "pending" : "all",
+    );
+  }, [activeSection, sessionUser]);
+
+  useEffect(() => {
+    if (sessionUser?.role !== "management" && sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "contabilidad") {
+      return;
+    }
+
+    if (activeSection !== "order-delete-requests" && activeSection !== "orders" && activeSection !== "warehouse-dispatch") {
+      return;
+    }
+
+    void refreshOrderDeleteRequests(
+      sessionUser?.role === "management" && activeSection === "order-delete-requests" ? "pending" : "all",
     );
   }, [activeSection, sessionUser]);
 
@@ -8396,6 +8443,26 @@ export default function App() {
     }
   }
 
+  async function refreshOrderDeleteRequests(status: "pending" | "all" = "pending") {
+    try {
+      setIsLoadingOrderDeleteRequests(true);
+      setOrderDeleteRequestsError("");
+      const response = await fetch(`${apiBaseUrl}/management/order-delete-requests?status=${status}`);
+      const data = (await response.json()) as OrderDeleteRequestRecord[] | { message?: string };
+
+      if (!response.ok || !Array.isArray(data)) {
+        setOrderDeleteRequestsError(Array.isArray(data) ? "No fue posible cargar las solicitudes." : data.message ?? "No fue posible cargar las solicitudes.");
+        return;
+      }
+
+      setOrderDeleteRequests(data);
+    } catch {
+      setOrderDeleteRequestsError("No fue posible conectar con el backend.");
+    } finally {
+      setIsLoadingOrderDeleteRequests(false);
+    }
+  }
+
   function openInvoiceChangeModal(order: SellerOrderRecord) {
     setInvoiceChangeOrder(order);
     setInvoiceChangeItemDraft(
@@ -8558,12 +8625,66 @@ export default function App() {
   }
 
   async function handleDeleteWarehouseOrder(order: SellerOrderRecord) {
-    if (!order._id) {
+    if (!order._id || !sessionUser) {
       setWarehouseOrderCompletionStatus({ tone: "error", message: "No fue posible identificar el pedido." });
       return;
     }
 
-    if (!globalThis.confirm(`Se borrara el pedido de ${order.storeName}.`)) {
+    if (pendingOrderDeleteOrderIds.has(String(order._id))) {
+      setWarehouseOrderCompletionStatus({ tone: "error", message: "Ya existe una solicitud pendiente para borrar este pedido." });
+      return;
+    }
+
+    const isManagement = sessionUser.role === "management";
+
+    if (isManagement) {
+      if (!globalThis.confirm(`Se borrara el pedido de ${order.storeName} y su factura en cartera.`)) {
+        return;
+      }
+    } else {
+      const requestNotes = globalThis.prompt(`Solicitar borrado del pedido de ${order.storeName}. Indica el motivo:`);
+
+       if (requestNotes === null) {
+        return;
+      }
+
+      try {
+        setDeletingWarehouseOrderId(order._id);
+        setWarehouseOrderCompletionStatus(null);
+        const response = await fetch(`${apiBaseUrl}/warehouse/orders/${order._id}/delete-requests`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            requestNotes,
+            requestedByUserId: sessionUser.id,
+            requestedByUserName: sessionUser.name,
+            requestedByRole: sessionUser.role,
+          }),
+        });
+        const data = (await response.json()) as { message?: string };
+
+        if (!response.ok) {
+          setWarehouseOrderCompletionStatus({
+            tone: "error",
+            message: data.message ?? "No fue posible enviar la solicitud de borrado.",
+          });
+          return;
+        }
+
+        await refreshOrderDeleteRequests("all");
+        setWarehouseOrderCompletionStatus({
+          tone: "success",
+          message: data.message ?? "Solicitud de borrado enviada a gerencia.",
+        });
+      } catch (error) {
+        setWarehouseOrderCompletionStatus({
+          tone: "error",
+          message: error instanceof Error ? error.message : "No fue posible conectar con el backend.",
+        });
+      } finally {
+        setDeletingWarehouseOrderId("");
+      }
+
       return;
     }
 
@@ -8572,6 +8693,8 @@ export default function App() {
       setWarehouseOrderCompletionStatus(null);
       const response = await fetch(`${apiBaseUrl}/warehouse/orders/${order._id}`, {
         method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestedByRole: sessionUser.role }),
       });
       const rawBody = await response.text();
       let data: { message?: string } = {};
@@ -8595,8 +8718,9 @@ export default function App() {
       setWarehouseOrders((current) => current.filter((currentOrder) => currentOrder._id !== order._id));
       setSelectedWarehouseOrderDetail((current) => (current?._id === order._id ? null : current));
 
-      if (sessionUser?.role === "management" || sessionUser?.role === "contabilidad") {
+      if (sessionUser.role === "management" || sessionUser.role === "contabilidad") {
         await refreshCarteraData(carteraMonthFilter);
+        await refreshInventorySummary();
       }
 
       setWarehouseOrderCompletionStatus({
@@ -8610,6 +8734,62 @@ export default function App() {
       });
     } finally {
       setDeletingWarehouseOrderId("");
+    }
+  }
+
+  async function handleReviewOrderDeleteRequest(
+    requestId: string,
+    action: "approve" | "reject",
+  ) {
+    if (!sessionUser) {
+      return;
+    }
+
+    try {
+      setIsReviewingOrderDeleteRequest(true);
+      setOrderDeleteReviewStatus(null);
+
+      const response = await fetch(`${apiBaseUrl}/management/order-delete-requests/${requestId}/${action}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reviewedByUserId: sessionUser.id,
+          reviewedByUserName: sessionUser.name,
+          reviewNotes: orderDeleteReviewNotesDraft[requestId] ?? "",
+        }),
+      });
+      const data = (await response.json()) as { message?: string; request?: OrderDeleteRequestRecord };
+
+      if (!response.ok) {
+        throw new Error(data.message ?? "No fue posible revisar la solicitud.");
+      }
+
+      if (action === "approve" && data.request?.orderId) {
+        setWarehouseOrders((current) => current.filter((currentOrder) => currentOrder._id !== data.request!.orderId));
+        setSelectedWarehouseOrderDetail((current) => (
+          current?._id === data.request!.orderId ? null : current
+        ));
+        await refreshInventorySummary();
+        await refreshCarteraData(carteraMonthFilter);
+      }
+
+      setOrderDeleteReviewNotesDraft((current) => {
+        const next = { ...current };
+        delete next[requestId];
+        return next;
+      });
+      await refreshOrderDeleteRequests("pending");
+      setOrderDeleteReviewStatus({
+        tone: "success",
+        message: data.message ?? (action === "approve" ? "Solicitud aprobada." : "Solicitud rechazada."),
+      });
+    } catch (error) {
+      setOrderDeleteReviewStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible revisar la solicitud.",
+      });
+    } finally {
+      setIsReviewingOrderDeleteRequest(false);
     }
   }
 
@@ -13710,6 +13890,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 ? "Cartera"
               : activeSection === "invoice-change-requests"
                 ? "Solicitudes de factura"
+              : activeSection === "order-delete-requests"
+                ? "Solicitudes de borrado"
               : activeSection === "imports"
                 ? "Exportaciones"
                 : activeSection === "import-billing"
@@ -13747,6 +13929,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 ? "Consulta los pedidos facturados desde bodega y el metodo de pago registrado por cada cliente."
               : activeSection === "invoice-change-requests"
                 ? "Revisa y aprueba correcciones solicitadas sobre facturas ya completadas. Al aprobar, se actualizan la factura y el inventario."
+              : activeSection === "order-delete-requests"
+                ? "Revisa y aprueba solicitudes para borrar pedidos. Al aprobar, se elimina el pedido y su factura en cartera."
               : activeSection === "imports"
                 ? "Registra contenedores, define gastos generales de exportación y distribuye el costo real entre los productos recibidos."
                 : activeSection === "import-billing"
@@ -19791,6 +19975,101 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               </div>
             </article>
           </section>
+        ) : activeSection === "order-delete-requests" ? (
+          <section className="routes-layout">
+            <article className="creation-selector-block">
+              <p className="section-label">Ventas</p>
+              <h2>Solicitudes de borrado de pedido</h2>
+              <p className="route-helper-text">Aprueba o rechaza solicitudes para borrar pedidos. Al aprobar, se elimina el pedido, su factura en cartera y se restaura inventario si aplica.</p>
+            </article>
+
+            {orderDeleteReviewStatus ? (
+              <p className={`form-feedback ${orderDeleteReviewStatus.tone === "error" ? "error" : "success"}`}>
+                {orderDeleteReviewStatus.message}
+              </p>
+            ) : null}
+
+            <article className="database-card">
+              <div className="management-table-header">
+                <div>
+                  <h2>Pendientes de aprobacion</h2>
+                  <p>Revisa el pedido y el motivo antes de aprobar el borrado.</p>
+                </div>
+                <p className="management-table-meta">
+                  {orderDeleteRequests.filter((request) => request.status === "pending").length} solicitudes
+                </p>
+              </div>
+
+              {orderDeleteRequestsError ? <p className="form-feedback error">{orderDeleteRequestsError}</p> : null}
+
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Factura</th>
+                      <th>Cliente</th>
+                      <th>Estado pedido</th>
+                      <th>Solicitante</th>
+                      <th>Motivo</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isLoadingOrderDeleteRequests ? (
+                      <tr>
+                        <td colSpan={7} className="empty-table-cell">Cargando solicitudes...</td>
+                      </tr>
+                    ) : orderDeleteRequests.filter((request) => request.status === "pending").length > 0 ? (
+                      orderDeleteRequests.filter((request) => request.status === "pending").map((request) => (
+                        <tr key={request._id}>
+                          <td>{formatSellerOrderDate(request.createdAt)}</td>
+                          <td>{request.invoiceNumber ? `#${request.invoiceNumber}` : "-"}</td>
+                          <td>{request.storeName}</td>
+                          <td>{formatSellerOrderStatus(request.orderStatus as SellerOrderRecord["status"])}</td>
+                          <td>{request.requestedByUserName}</td>
+                          <td>{request.requestNotes || "-"}</td>
+                          <td className="table-actions-cell">
+                            <input
+                              className="import-table-input"
+                              type="text"
+                              placeholder="Notas de revision"
+                              value={orderDeleteReviewNotesDraft[request._id] ?? ""}
+                              disabled={isReviewingOrderDeleteRequest}
+                              onChange={(event) => setOrderDeleteReviewNotesDraft((current) => ({
+                                ...current,
+                                [request._id]: event.target.value,
+                              }))}
+                            />
+                            <button
+                              className="ghost-button"
+                              type="button"
+                              disabled={isReviewingOrderDeleteRequest}
+                              onClick={() => void handleReviewOrderDeleteRequest(request._id, "reject")}
+                            >
+                              Rechazar
+                            </button>
+                            <button
+                              className="submit-button"
+                              type="button"
+                              disabled={isReviewingOrderDeleteRequest}
+                              onClick={() => void handleReviewOrderDeleteRequest(request._id, "approve")}
+                            >
+                              Aprobar
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={7} className="empty-table-cell">No hay solicitudes pendientes.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          </section>
         ) : activeSection === "orders" ? (
           <section className="routes-layout">
             <article className="creation-selector-block">
@@ -19828,9 +20107,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <button
                       className="table-action-icon is-danger"
                       type="button"
-                      aria-label="Borrar pedido recibido"
-                      title="Borrar pedido"
-                      disabled={isDeletingOrder}
+                      aria-label={pendingOrderDeleteOrderIds.has(String(order._id)) ? "Solicitud pendiente" : sessionUser?.role === "management" ? "Borrar pedido" : "Solicitar borrado"}
+                      title={pendingOrderDeleteOrderIds.has(String(order._id)) ? "Solicitud pendiente" : sessionUser?.role === "management" ? "Borrar pedido" : "Solicitar borrado"}
+                      disabled={isDeletingOrder || pendingOrderDeleteOrderIds.has(String(order._id))}
                       onClick={() => void handleDeleteWarehouseOrder(order)}
                     >
                       x
@@ -19920,9 +20199,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               <button
                                 className="table-action-icon is-danger"
                                 type="button"
-                                aria-label="Borrar pedido"
-                                title="Borrar pedido"
-                                disabled={isDeletingOrder}
+                                aria-label={pendingOrderDeleteOrderIds.has(String(order._id)) ? "Solicitud pendiente" : sessionUser?.role === "management" ? "Borrar pedido" : "Solicitar borrado"}
+                                title={pendingOrderDeleteOrderIds.has(String(order._id)) ? "Solicitud pendiente" : sessionUser?.role === "management" ? "Borrar pedido" : "Solicitar borrado"}
+                                disabled={isDeletingOrder || pendingOrderDeleteOrderIds.has(String(order._id))}
                                 onClick={() => void handleDeleteWarehouseOrder(order)}
                               >
                                 x

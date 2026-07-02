@@ -30,6 +30,7 @@ import { WarehouseStock } from "../modules/inventory/warehouse-stock.model.js";
 import { ImportTemplate } from "../modules/imports/import-template.model.js";
 import { Order } from "../modules/orders/order.model.js";
 import { InvoiceChangeRequest } from "../modules/orders/invoice-change-request.model.js";
+import { OrderDeleteRequest } from "../modules/orders/order-delete-request.model.js";
 import { Product } from "../modules/catalog/product.model.js";
 import { SalesRoute } from "../modules/routes/route.model.js";
 import { OperationsClient } from "../modules/stores/operations-client.model.js";
@@ -2603,7 +2604,7 @@ async function syncDeliveredOrdersIntoCartera() {
         updatedAt: 1,
       })
       .lean(),
-    CarteraEntry.find({ active: { $ne: false } }).select({ orderId: 1 }).lean(),
+    CarteraEntry.find({}).select({ orderId: 1 }).lean(),
   ]);
 
   const existingOrderIds = new Set(existingEntries.map((entry) => String(entry.orderId ?? "")));
@@ -2934,30 +2935,125 @@ async function deactivateCarteraForOrder(orderId: string) {
     return;
   }
 
-  const carteraEntry = await CarteraEntry.findOne({
-    orderId: normalizedOrderId,
-    active: { $ne: false },
-  }).lean();
+  const relatedEntries = await CarteraEntry.find({ orderId: normalizedOrderId }).select({ _id: 1 }).lean();
+  const carteraEntryIds = relatedEntries.map((entry) => String(entry._id));
 
-  if (!carteraEntry) {
+  if (carteraEntryIds.length === 0) {
     return;
   }
 
-  const carteraEntryId = String(carteraEntry._id);
-
   await Promise.all([
-    CarteraEntry.findByIdAndUpdate(carteraEntryId, { active: false }),
+    CarteraEntry.updateMany({ orderId: normalizedOrderId }, { active: false }),
     CarteraCollection.updateMany(
       {
         active: { $ne: false },
         $or: [
-          { carteraEntryId },
           { relatedOrderId: normalizedOrderId },
+          { carteraEntryId: { $in: carteraEntryIds } },
         ],
       },
       { active: false },
     ),
   ]);
+}
+
+async function cleanupOrphanCarteraEntries() {
+  const activeEntries = await CarteraEntry.find({ active: { $ne: false } }).select({ orderId: 1 }).lean();
+
+  if (activeEntries.length === 0) {
+    return;
+  }
+
+  const orderIds = Array.from(new Set(activeEntries.map((entry) => String(entry.orderId ?? "")).filter(Boolean)));
+  const existingOrders = await Order.find({ _id: { $in: orderIds } }).select({ _id: 1 }).lean();
+  const existingOrderIds = new Set(existingOrders.map((order) => String(order._id)));
+
+  for (const entry of activeEntries) {
+    const orderId = String(entry.orderId ?? "");
+
+    if (orderId && !existingOrderIds.has(orderId)) {
+      await deactivateCarteraForOrder(orderId);
+    }
+  }
+}
+
+async function restoreOrderInventoryOnDelete(order: {
+  _id: unknown;
+  items?: Array<{ productId?: unknown; quantity?: unknown }>;
+}) {
+  const orderId = String(order._id);
+  const quantitiesByProductId = buildOrderQuantitiesMap(Array.isArray(order.items) ? order.items : []);
+
+  for (const [productId, quantity] of quantitiesByProductId.entries()) {
+    await restoreInventoryForProduct(productId, quantity, orderId);
+  }
+}
+
+async function deleteWarehouseOrderWithCleanup(orderId: string) {
+  const order = await Order.findById(orderId).lean();
+
+  if (!order) {
+    throw new Error("El pedido no existe.");
+  }
+
+  if (order.status === "delivered") {
+    await restoreOrderInventoryOnDelete(order);
+  }
+
+  await deactivateCarteraForOrder(String(order._id));
+  await Order.findByIdAndDelete(order._id);
+  await OrderDeleteRequest.updateMany(
+    { orderId: String(order._id), status: "pending" },
+    {
+      status: "rejected",
+      reviewNotes: "Pedido eliminado.",
+      reviewedAt: new Date(),
+    },
+  );
+}
+
+function mapOrderDeleteRequestRecord(entry: {
+  _id?: unknown;
+  orderId?: unknown;
+  storeId?: unknown;
+  storeName?: unknown;
+  salesRepName?: unknown;
+  routeName?: unknown;
+  invoiceNumber?: unknown;
+  orderStatus?: unknown;
+  status?: unknown;
+  requestedByUserId?: unknown;
+  requestedByUserName?: unknown;
+  requestedByRole?: unknown;
+  requestNotes?: unknown;
+  reviewedByUserId?: unknown;
+  reviewedByUserName?: unknown;
+  reviewNotes?: unknown;
+  reviewedAt?: unknown;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}) {
+  return {
+    _id: String(entry._id),
+    orderId: String(entry.orderId ?? ""),
+    storeId: String(entry.storeId ?? ""),
+    storeName: String(entry.storeName ?? ""),
+    salesRepName: String(entry.salesRepName ?? ""),
+    routeName: String(entry.routeName ?? ""),
+    invoiceNumber: Number(entry.invoiceNumber ?? 0) || null,
+    orderStatus: String(entry.orderStatus ?? ""),
+    status: String(entry.status ?? "pending"),
+    requestedByUserId: String(entry.requestedByUserId ?? ""),
+    requestedByUserName: String(entry.requestedByUserName ?? ""),
+    requestedByRole: String(entry.requestedByRole ?? ""),
+    requestNotes: String(entry.requestNotes ?? ""),
+    reviewedByUserId: String(entry.reviewedByUserId ?? ""),
+    reviewedByUserName: String(entry.reviewedByUserName ?? ""),
+    reviewNotes: String(entry.reviewNotes ?? ""),
+    reviewedAt: entry.reviewedAt ? String(entry.reviewedAt) : null,
+    createdAt: entry.createdAt ? String(entry.createdAt) : "",
+    updatedAt: entry.updatedAt ? String(entry.updatedAt) : "",
+  };
 }
 
 apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
@@ -3179,6 +3275,30 @@ apiRouter.put("/warehouse/orders/:id/complete", async (request, response) => {
 
 apiRouter.delete("/warehouse/orders/:id", async (request, response) => {
   try {
+    const requestedByRole = typeof request.body?.requestedByRole === "string" ? request.body.requestedByRole.trim() : "";
+
+    if (requestedByRole !== "management") {
+      response.status(403).json({ message: "Debes solicitar autorizacion de gerencia para borrar pedidos." });
+      return;
+    }
+
+    await deleteWarehouseOrderWithCleanup(String(request.params.id));
+
+    response.json({
+      message: "Pedido borrado correctamente. La factura y recaudos asociados fueron retirados de cartera.",
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "El pedido no existe.") {
+      response.status(404).json({ message: error.message });
+      return;
+    }
+
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.post("/warehouse/orders/:id/delete-requests", async (request, response) => {
+  try {
     const order = await Order.findById(request.params.id).lean();
 
     if (!order) {
@@ -3186,11 +3306,168 @@ apiRouter.delete("/warehouse/orders/:id", async (request, response) => {
       return;
     }
 
-    await deactivateCarteraForOrder(String(order._id));
-    await Order.findByIdAndDelete(order._id);
+    const existingPending = await OrderDeleteRequest.findOne({
+      orderId: String(order._id),
+      status: "pending",
+    }).lean();
+
+    if (existingPending) {
+      response.status(400).json({ message: "Ya existe una solicitud pendiente para borrar este pedido." });
+      return;
+    }
+
+    const payload = request.body as {
+      requestNotes?: unknown;
+      requestedByUserId?: unknown;
+      requestedByUserName?: unknown;
+      requestedByRole?: unknown;
+    };
+    const requestedByUserId = typeof payload.requestedByUserId === "string" ? payload.requestedByUserId.trim() : "";
+    const requestedByUserName = typeof payload.requestedByUserName === "string" ? payload.requestedByUserName.trim() : "";
+    const requestedByRole = typeof payload.requestedByRole === "string" ? payload.requestedByRole.trim() : "";
+    const requestNotes = typeof payload.requestNotes === "string" ? payload.requestNotes.trim() : "";
+
+    if (!requestedByUserId || !requestedByUserName || !requestedByRole) {
+      response.status(400).json({ message: "No fue posible identificar al usuario que solicita el borrado." });
+      return;
+    }
+
+    if (requestedByRole === "management") {
+      response.status(400).json({ message: "Gerencia puede borrar el pedido directamente." });
+      return;
+    }
+
+    const carteraEntry = await CarteraEntry.findOne({ orderId: String(order._id) })
+      .sort({ active: -1, createdAt: -1 })
+      .lean();
+
+    const createdRequest = await OrderDeleteRequest.create({
+      orderId: String(order._id),
+      storeId: String(order.storeId ?? ""),
+      storeName: String(order.storeName ?? ""),
+      salesRepName: String(order.salesRepName ?? ""),
+      routeName: String(order.routeName ?? ""),
+      invoiceNumber: Number(carteraEntry?.invoiceNumber ?? 0) || undefined,
+      orderStatus: order.status as "submitted" | "dispatched" | "delivered",
+      requestedByUserId,
+      requestedByUserName,
+      requestedByRole,
+      requestNotes,
+    });
+
+    response.status(201).json({
+      message: "Solicitud de borrado enviada a gerencia.",
+      request: mapOrderDeleteRequestRecord(createdRequest.toObject()),
+    });
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.get("/management/order-delete-requests", async (request, response) => {
+  try {
+    const status = typeof request.query.status === "string" ? request.query.status.trim() : "pending";
+    const filter = status === "all" ? {} : { status: "pending" };
+    const requests = await OrderDeleteRequest.find(filter).sort({ createdAt: -1 }).lean();
+
+    response.json(requests.map((entry) => mapOrderDeleteRequestRecord(entry)));
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.put("/management/order-delete-requests/:id/approve", async (request, response) => {
+  try {
+    const deleteRequest = await OrderDeleteRequest.findById(request.params.id);
+
+    if (!deleteRequest) {
+      response.status(404).json({ message: "La solicitud no existe." });
+      return;
+    }
+
+    if (deleteRequest.status !== "pending") {
+      response.status(400).json({ message: "Esta solicitud ya fue revisada." });
+      return;
+    }
+
+    const payload = request.body as {
+      reviewedByUserId?: unknown;
+      reviewedByUserName?: unknown;
+      reviewNotes?: unknown;
+    };
+    const reviewedByUserId = typeof payload.reviewedByUserId === "string" ? payload.reviewedByUserId.trim() : "";
+    const reviewedByUserName = typeof payload.reviewedByUserName === "string" ? payload.reviewedByUserName.trim() : "";
+    const reviewNotes = typeof payload.reviewNotes === "string" ? payload.reviewNotes.trim() : "";
+
+    if (!reviewedByUserId || !reviewedByUserName) {
+      response.status(400).json({ message: "No fue posible identificar al usuario que aprueba el borrado." });
+      return;
+    }
+
+    const order = await Order.findById(deleteRequest.orderId).lean();
+
+    if (order) {
+      await deleteWarehouseOrderWithCleanup(deleteRequest.orderId);
+    } else {
+      await deactivateCarteraForOrder(deleteRequest.orderId);
+    }
+
+    deleteRequest.status = "approved";
+    deleteRequest.reviewedByUserId = reviewedByUserId;
+    deleteRequest.reviewedByUserName = reviewedByUserName;
+    deleteRequest.reviewNotes = reviewNotes;
+    deleteRequest.reviewedAt = new Date();
+    await deleteRequest.save();
 
     response.json({
-      message: "Pedido borrado correctamente. La factura y recaudos asociados fueron retirados de cartera.",
+      message: order
+        ? "Solicitud aprobada. El pedido fue borrado y la factura retirada de cartera."
+        : "Solicitud aprobada. El pedido ya no existia, pero la factura fue retirada de cartera.",
+      request: mapOrderDeleteRequestRecord(deleteRequest.toObject()),
+    });
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.put("/management/order-delete-requests/:id/reject", async (request, response) => {
+  try {
+    const deleteRequest = await OrderDeleteRequest.findById(request.params.id);
+
+    if (!deleteRequest) {
+      response.status(404).json({ message: "La solicitud no existe." });
+      return;
+    }
+
+    if (deleteRequest.status !== "pending") {
+      response.status(400).json({ message: "Esta solicitud ya fue revisada." });
+      return;
+    }
+
+    const payload = request.body as {
+      reviewedByUserId?: unknown;
+      reviewedByUserName?: unknown;
+      reviewNotes?: unknown;
+    };
+    const reviewedByUserId = typeof payload.reviewedByUserId === "string" ? payload.reviewedByUserId.trim() : "";
+    const reviewedByUserName = typeof payload.reviewedByUserName === "string" ? payload.reviewedByUserName.trim() : "";
+    const reviewNotes = typeof payload.reviewNotes === "string" ? payload.reviewNotes.trim() : "";
+
+    if (!reviewedByUserId || !reviewedByUserName) {
+      response.status(400).json({ message: "No fue posible identificar al usuario que rechaza el borrado." });
+      return;
+    }
+
+    deleteRequest.status = "rejected";
+    deleteRequest.reviewedByUserId = reviewedByUserId;
+    deleteRequest.reviewedByUserName = reviewedByUserName;
+    deleteRequest.reviewNotes = reviewNotes;
+    deleteRequest.reviewedAt = new Date();
+    await deleteRequest.save();
+
+    response.json({
+      message: "Solicitud rechazada.",
+      request: mapOrderDeleteRequestRecord(deleteRequest.toObject()),
     });
   } catch (error) {
     sendCreationError(response, error);
@@ -6790,6 +7067,7 @@ apiRouter.get("/management/cartera", async (request, response) => {
   const collectionFilters: Record<string, unknown> = { active: { $ne: false } };
 
   await syncDeliveredOrdersIntoCartera();
+  await cleanupOrphanCarteraEntries();
 
   if (storeIdFilter) {
     filters.storeId = storeIdFilter;
