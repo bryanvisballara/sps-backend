@@ -8594,6 +8594,11 @@ export default function App() {
 
       setWarehouseOrders((current) => current.filter((currentOrder) => currentOrder._id !== order._id));
       setSelectedWarehouseOrderDetail((current) => (current?._id === order._id ? null : current));
+
+      if (sessionUser?.role === "management" || sessionUser?.role === "contabilidad") {
+        await refreshCarteraData(carteraMonthFilter);
+      }
+
       setWarehouseOrderCompletionStatus({
         tone: "success",
         message: data.message ?? "Pedido borrado correctamente.",
@@ -11165,6 +11170,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
   const carteraCollectionExportColumns: DataExportColumn[] = [
     { key: "collectedAt", label: "Fecha" },
+    ...(selectedCarteraStoreId ? [] : [{ key: "storeName", label: "Cliente" }]),
+    { key: "salesRepName", label: "Vendedor" },
     { key: "paymentMethod", label: "Metodo recaudo" },
     { key: "amountAwg", label: "Monto (AWG)" },
     { key: "notes", label: "Notas" },
@@ -11237,6 +11244,43 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             rows: filteredCarteraCollections as Array<Record<string, unknown>>,
           }]
         : [],
+    });
+  }
+
+  function downloadCarteraCollectionsPdf() {
+    if (filteredCarteraCollections.length === 0) {
+      return;
+    }
+
+    const storeLabel = selectedCarteraStore?.label ?? "todas-las-tiendas";
+    downloadDataTablePdf({
+      title: selectedCarteraStore ? `Recaudos · ${selectedCarteraStore.label}` : "Recaudos del mes",
+      fileName: `recaudos-${storeLabel.toLowerCase().replace(/\s+/g, "-")}-${carteraMonthFilter}`,
+      subtitleLines: [
+        `Mes: ${carteraMonthFilter}`,
+        `${filteredCarteraCollections.length} movimiento${filteredCarteraCollections.length === 1 ? "" : "s"}`,
+        `Total: ${formatCurrency(carteraMonthlyRecaudoTotal)}`,
+      ],
+      columns: carteraCollectionExportColumns,
+      rows: filteredCarteraCollections as Array<Record<string, unknown>>,
+      formatCell: formatCarteraExportCell,
+      landscape: true,
+    });
+  }
+
+  function downloadCarteraCollectionsExcel() {
+    if (filteredCarteraCollections.length === 0) {
+      return;
+    }
+
+    const storeLabel = selectedCarteraStore?.label ?? "todas-las-tiendas";
+    downloadDataTableExcel({
+      title: selectedCarteraStore ? `Recaudos · ${selectedCarteraStore.label}` : "Recaudos del mes",
+      fileName: `recaudos-${storeLabel.toLowerCase().replace(/\s+/g, "-")}-${carteraMonthFilter}`,
+      columns: carteraCollectionExportColumns,
+      rows: filteredCarteraCollections as Array<Record<string, unknown>>,
+      formatCell: formatCarteraExportCell,
+      sheetName: "Recaudos",
     });
   }
 
@@ -16449,13 +16493,18 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             </article>
 
             <article className="database-card">
-              <div className="management-table-header">
+              <div className="management-table-header cartera-table-header">
                 <div>
                   <h2>Recaudos del mes{selectedCarteraStore ? ` · ${selectedCarteraStore.label}` : ""}</h2>
                   <p>Incluye cobros inmediatos al facturar y pagos de facturas en credito cobradas despues.</p>
                 </div>
-                <p className="management-table-meta">{filteredCarteraCollections.length} movimiento{filteredCarteraCollections.length === 1 ? "" : "s"}</p>
+                <InventoryExportButtons
+                  disabled={isLoadingCartera || filteredCarteraCollections.length === 0}
+                  onDownloadPdf={() => downloadCarteraCollectionsPdf()}
+                  onDownloadExcel={() => downloadCarteraCollectionsExcel()}
+                />
               </div>
+              <p className="management-table-meta cartera-table-meta">{filteredCarteraCollections.length} movimiento{filteredCarteraCollections.length === 1 ? "" : "s"}</p>
 
               <div className="table-wrap">
                 <table className="data-table">

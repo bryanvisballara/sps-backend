@@ -2213,6 +2213,30 @@ apiRouter.get("/warehouse/orders/:id/invoice-document", async (request, response
         sendCreationError(response, error);
     }
 });
+async function deactivateCarteraForOrder(orderId) {
+    const normalizedOrderId = String(orderId ?? "").trim();
+    if (!normalizedOrderId) {
+        return;
+    }
+    const carteraEntry = await CarteraEntry.findOne({
+        orderId: normalizedOrderId,
+        active: { $ne: false },
+    }).lean();
+    if (!carteraEntry) {
+        return;
+    }
+    const carteraEntryId = String(carteraEntry._id);
+    await Promise.all([
+        CarteraEntry.findByIdAndUpdate(carteraEntryId, { active: false }),
+        CarteraCollection.updateMany({
+            active: { $ne: false },
+            $or: [
+                { carteraEntryId },
+                { relatedOrderId: normalizedOrderId },
+            ],
+        }, { active: false }),
+    ]);
+}
 apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
     try {
         const order = await Order.findById(request.params.id).lean();
@@ -2393,13 +2417,15 @@ apiRouter.put("/warehouse/orders/:id/complete", async (request, response) => {
 });
 apiRouter.delete("/warehouse/orders/:id", async (request, response) => {
     try {
-        const order = await Order.findByIdAndDelete(request.params.id).lean();
+        const order = await Order.findById(request.params.id).lean();
         if (!order) {
             response.status(404).json({ message: "El pedido no existe." });
             return;
         }
+        await deactivateCarteraForOrder(String(order._id));
+        await Order.findByIdAndDelete(order._id);
         response.json({
-            message: "Pedido borrado correctamente.",
+            message: "Pedido borrado correctamente. La factura y recaudos asociados fueron retirados de cartera.",
         });
     }
     catch (error) {
