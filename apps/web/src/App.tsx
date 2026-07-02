@@ -1748,6 +1748,22 @@ function isOptionalProductField(field: FieldConfig) {
   return field.optional === true || field.type === "file" || field.type === "group-title";
 }
 
+function isRequiredCreationField(config: CollectionConfig, field: FieldConfig) {
+  if (field.type === "file" || field.type === "group-title" || field.type === "checkbox") {
+    return false;
+  }
+
+  if (field.optional === true) {
+    return false;
+  }
+
+  if (config.key === "products") {
+    return !isOptionalProductField(field);
+  }
+
+  return true;
+}
+
 function isArubaRole(role: string | undefined) {
   return role === "management" || role === "sales-rep-aruba" || role === "warehouse-aruba" || role === "contabilidad";
 }
@@ -2046,14 +2062,15 @@ function getCollectionConfigs(
       endpoint: "/management/clients",
       fields: [
         { name: "name", label: "Nombre comercial", type: "text", placeholder: "Supermercado Aruba" },
-        { name: "managerName", label: "Nombre del encargado", type: "text", placeholder: "Ana Ruiz" },
-        { name: "email", label: "Correo", type: "email", placeholder: "compras@cliente.com" },
+        { name: "managerName", label: "Nombre del encargado", type: "text", placeholder: "Ana Ruiz", optional: true },
+        { name: "email", label: "Correo", type: "email", placeholder: "compras@cliente.com", optional: true },
         {
           name: "phoneCountryCode",
           label: "Código",
           type: "select",
           options: phoneCountryOptions,
           width: "third",
+          optional: true,
         },
         {
           name: "phone",
@@ -2061,8 +2078,9 @@ function getCollectionConfigs(
           type: "text",
           placeholder: "300 000 0000",
           width: "two-third",
+          optional: true,
         },
-        { name: "address", label: "Dirección", type: "text", placeholder: "Main Street 12" },
+        { name: "address", label: "Dirección", type: "text", placeholder: "Main Street 12", optional: true },
       ],
       tableColumns: [
         { key: "name", label: "Cliente" },
@@ -2116,7 +2134,7 @@ function getCollectionConfigs(
         { key: "name", label: "Producto" },
         { key: "category", label: "Categoría" },
         { key: "warehouseStock", label: "Stock" },
-        { key: "packDescription", label: "Descripción" },
+        { key: "description", label: "Descripción" },
         { key: "salePrice", label: "Venta" },
       ],
     },
@@ -3834,6 +3852,7 @@ export default function App() {
   const [isLoadingSellerProductCatalog, setIsLoadingSellerProductCatalog] = useState(false);
   const [sellerProductCatalogError, setSellerProductCatalogError] = useState("");
   const [addingSellerProductId, setAddingSellerProductId] = useState("");
+  const [removingSellerProductId, setRemovingSellerProductId] = useState("");
   const [sellerProductOfferStatus, setSellerProductOfferStatus] = useState<CreationStatus | null>(null);
   const [sellerCatalogSearchQuery, setSellerCatalogSearchQuery] = useState("");
   const [sellerCatalogPage, setSellerCatalogPage] = useState(1);
@@ -6295,7 +6314,72 @@ export default function App() {
     );
   }
 
-  function renderSellerAssignedProductRow(product: SellerClientProduct, showOrderFields: boolean) {
+  async function handleRemoveProductFromSellerClient(storeId: string, productId: string) {
+    if (!sessionUser || sessionUser.role !== "sales-rep-aruba") {
+      return;
+    }
+
+    const storeOption = storeOptionsById.get(storeId);
+    const currentAssignedProductIds = storeOption?.assignedProductIds
+      ?? sellerClientProducts.map((product) => product.productId);
+    const nextAssignedProductIds = currentAssignedProductIds.filter((entry) => entry !== productId);
+
+    if (nextAssignedProductIds.length === currentAssignedProductIds.length) {
+      return;
+    }
+
+    try {
+      setRemovingSellerProductId(productId);
+      setSellerProductOfferStatus(null);
+      const response = await fetch(`${apiBaseUrl}/sales/stores/${storeId}/assigned-products`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          salesRepId: sessionUser.id,
+          assignedProductIds: nextAssignedProductIds,
+        }),
+      });
+      const data = (await response.json()) as {
+        message?: string;
+        store?: { assignedProductIds?: string[] };
+      };
+
+      if (!response.ok) {
+        setSellerProductOfferStatus({ tone: "error", message: data.message ?? "No fue posible quitar el producto del cliente." });
+        return;
+      }
+
+      const assignedProductIds = Array.isArray(data.store?.assignedProductIds)
+        ? data.store.assignedProductIds.map((entry) => String(entry)).filter(Boolean)
+        : nextAssignedProductIds;
+
+      setStoreOptions((current) => current.map((store) => (
+        store.value === storeId
+          ? { ...store, assignedProductIds }
+          : store
+      )));
+
+      setSellerClientProducts((current) => current.filter((product) => product.productId !== productId));
+      setSellerOrderDraft((current) => {
+        if (!(productId in current)) {
+          return current;
+        }
+
+        const next = { ...current };
+        delete next[productId];
+        return next;
+      });
+
+      setSellerProductOfferStatus({ tone: "success", message: data.message ?? "Producto quitado del cliente." });
+      void refreshSellerProductCatalog(storeId);
+    } catch {
+      setSellerProductOfferStatus({ tone: "error", message: "No fue posible conectar con el backend." });
+    } finally {
+      setRemovingSellerProductId("");
+    }
+  }
+
+  function renderSellerAssignedProductRow(product: SellerClientProduct, storeId: string, showOrderFields: boolean) {
     const draft = sellerOrderDraft[product.productId] ?? { stockCurrent: "", quantity: "", notes: "" };
     const quantityValue = Number(draft.quantity || 0);
     const lineTotal = Number.isFinite(quantityValue) && quantityValue > 0
@@ -6304,6 +6388,8 @@ export default function App() {
     const catalogMatch = [...sellerProductCatalog.expiringSoon, ...sellerProductCatalog.products]
       .find((entry) => entry.productId === product.productId);
     const warehouseStock = Number(product.warehouseStock ?? catalogMatch?.warehouseStock ?? 0);
+
+    const isRemoving = removingSellerProductId === product.productId;
 
     return (
       <article className="seller-product-catalog-row seller-product-catalog-row-assigned" key={`seller-assigned-${product.productId}`}>
@@ -6370,6 +6456,16 @@ export default function App() {
               />
             </label>
           ) : null}
+          <button
+            className="seller-assigned-product-remove"
+            type="button"
+            aria-label={`Quitar ${product.name}`}
+            title="Quitar producto del cliente"
+            disabled={isRemoving}
+            onClick={() => void handleRemoveProductFromSellerClient(storeId, product.productId)}
+          >
+            {isRemoving ? "..." : "x"}
+          </button>
         </div>
       </article>
     );
@@ -6428,7 +6524,7 @@ export default function App() {
           ) : assignedProducts.length > 0 ? (
             <>
               <div className="seller-product-catalog-list">
-                {assignedProducts.map((product) => renderSellerAssignedProductRow(product, showOrderFields))}
+                {assignedProducts.map((product) => renderSellerAssignedProductRow(product, storeId, showOrderFields))}
               </div>
               {showOrderFields ? (
                 <div className="seller-order-footer seller-order-footer-inline">
@@ -10726,6 +10822,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       setSellerOrderDraft({});
       setSellerOrderNotesDraft("");
       setSellerDeliveryDateDraft(getBusinessDateKey());
+      setSelectedSellerStoreId("");
       setSellerOrderStatus({ tone: "success", message: data.message ?? "Pedido enviado a bodega correctamente." });
       await refreshSellerOrders(sessionUser.id);
     } catch {
@@ -11704,6 +11801,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       const productId = String(row._id ?? "");
       const stockQuantity = Number(inventoryRowsByProductId.get(productId)?.quantity ?? 0);
       return String(stockQuantity);
+    }
+
+    if (key === "description") {
+      const explicitDescription = String(row.description ?? "").trim();
+
+      if (explicitDescription) {
+        return explicitDescription;
+      }
+
+      return formatProductPackDescription(row);
     }
 
     if (key === "packDescription") {
@@ -13325,6 +13432,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
                         {selectedSellerStore ? (
                           <p className="warehouse-selected-meta">{selectedSellerStore.storeName} · {selectedSellerStore.address || "Sin dirección"}</p>
+                        ) : sellerOrderStatus ? (
+                          <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p>
                         ) : null}
                       </div>
 
@@ -21072,7 +21181,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           defaultValue={selectedCollection.key === "products" && field.name === "presentation"
                             ? undefined
                             : getFormFieldInitialValue(field, editingRow)}
-                          required
+                          required={isRequiredCreationField(selectedCollection, field)}
                           onChange={selectedCollection.key === "products" && field.name === "presentation"
                             ? (event) => setProductPresentationDraft(event.target.value)
                             : undefined}
@@ -21137,7 +21246,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           name={field.name}
                           placeholder={field.placeholder}
                           defaultValue={getFormFieldInitialValue(field, editingRow)}
-                          required={selectedCollection.key !== "products" || !isOptionalProductField(field)}
+                          required={isRequiredCreationField(selectedCollection, field)}
                         />
                       )}
                     </label>

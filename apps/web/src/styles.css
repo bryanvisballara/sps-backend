@@ -2704,6 +2704,28 @@ h1 {
   color: rgba(17, 17, 17, 0.78);
 }
 
+.seller-assigned-product-remove {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(17, 17, 17, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.95);
+  color: rgba(17, 17, 17, 0.72);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.seller-assigned-product-remove:hover:not(:disabled) {
+  border-color: rgba(220, 38, 38, 0.35);
+  color: #dc2626;
+}
+
+.seller-assigned-product-remove:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .seller-product-catalog-field-total {
   justify-content: center;
   min-width: 120px;
