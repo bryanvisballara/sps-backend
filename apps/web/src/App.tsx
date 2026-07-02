@@ -2869,7 +2869,8 @@ function formatCurrency(value: number) {
 function formatAwgCurrency(value: number) {
   return new Intl.NumberFormat("es-CO", {
     style: "decimal",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
   }).format(Number.isFinite(value) ? value : 0);
 }
 
@@ -4418,6 +4419,8 @@ export default function App() {
     })
     : [];
   const warehouseOrderSubtotal = warehousePricedItems.reduce((sum, item) => sum + item.lineTotal, 0);
+  const isWarehouseUser = sessionUser?.role === "warehouse-aruba";
+  const canWarehouseInvoiceOrder = sessionUser?.role === "contabilidad";
   const warehouseOrderDiscountAmount = selectedWarehouseOrderDetail?.status === "dispatched"
     ? roundCurrencyValue(Math.max(0, Number(warehouseOrderDiscountDraft || 0)))
     : 0;
@@ -5970,7 +5973,7 @@ export default function App() {
             ? storedPrice
             : Number(invRow?.salePrice ?? productOption?.salePrice ?? 0);
 
-          return [item.productId, fallbackPrice > 0 ? String(fallbackPrice) : ""];
+          return [item.productId, fallbackPrice > 0 ? String(roundCurrencyValue(fallbackPrice)) : ""];
         }),
       ),
     );
@@ -8709,7 +8712,7 @@ export default function App() {
         Object.fromEntries(
           updatedOrder.items.map((item) => [
             item.productId,
-            Number(item.salePriceAwg ?? 0) > 0 ? String(item.salePriceAwg) : "",
+            Number(item.salePriceAwg ?? 0) > 0 ? String(roundCurrencyValue(Number(item.salePriceAwg))) : "",
           ]),
         ),
       );
@@ -8817,7 +8820,9 @@ export default function App() {
       setWarehouseActiveSection("dispatch");
       setWarehouseOrderCompletionStatus({
         tone: "success",
-        message: "Pedido impreso y enviado a despacho. Podras facturarlo cuando el transportador confirme la entrega.",
+        message: isWarehouseUser
+          ? "Pedido impreso y enviado a despacho. Contabilidad lo facturara al confirmar la entrega."
+          : "Pedido impreso y enviado a despacho. Podras facturarlo cuando el transportador confirme la entrega.",
       });
     } catch (error) {
       setWarehouseOrderCompletionStatus({
@@ -13726,7 +13731,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
                       <div className="warehouse-order-summary-card">
                         <p className="section-label">Checklist</p>
-                        <strong>{warehouseAllItemsChecked ? "Listo para facturar" : "Pendiente de revisión"}</strong>
+                        <strong>{warehouseAllItemsChecked ? (canWarehouseInvoiceOrder ? "Listo para facturar" : "Listo para despacho") : "Pendiente de revisión"}</strong>
                         <p>
                           Marca cada producto preparado antes de completar el pedido.
                         </p>
@@ -13758,11 +13763,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         <p className="section-label">Factura</p>
                         {selectedWarehouseOrderDetail.status === "dispatched" && warehouseOrderDiscountAmount > 0 ? (
                           <>
-                            <p className="warehouse-invoice-subtotal">Subtotal: {formatCurrency(warehouseOrderSubtotal)}</p>
-                            <p className="warehouse-invoice-discount">Descuento: -{formatCurrency(warehouseOrderDiscountAmount)}</p>
+                            <p className="warehouse-invoice-subtotal">Subtotal: {formatAwgCurrency(warehouseOrderSubtotal)} AWG</p>
+                            <p className="warehouse-invoice-discount">Descuento: -{formatAwgCurrency(warehouseOrderDiscountAmount)} AWG</p>
                           </>
                         ) : null}
-                        <strong>{formatCurrency(warehouseInvoiceTotal)}</strong>
+                        <strong>{formatAwgCurrency(warehouseInvoiceTotal)} AWG</strong>
                         <p>
                           {!selectedCatalogId
                             ? "Total calculado con el precio de venta de cada producto."
@@ -13880,10 +13885,10 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                     }}
                                   />
                                 ) : (
-                                  formatCurrency(item.resolvedSalePrice)
+                                  formatAwgCurrency(item.resolvedSalePrice)
                                 )}
                               </td>
-                              <td>{formatCurrency(item.lineTotal)}</td>
+                              <td>{formatAwgCurrency(item.lineTotal)} AWG</td>
                               <td className="warehouse-order-col-optional">{item.notes || "-"}</td>
                               {selectedWarehouseOrderDetail.status !== "delivered" ? (
                                 <td>
@@ -13909,7 +13914,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       {selectedWarehouseOrderDetail.status !== "delivered" ? (
                         <p className="route-helper-text">
                           {selectedWarehouseOrderDetail.status === "dispatched"
-                            ? "Ajusta cantidades o quita productos si el cliente cambio de opinion antes de facturar."
+                            ? (canWarehouseInvoiceOrder
+                              ? "Ajusta cantidades o quita productos si el cliente cambio de opinion antes de facturar."
+                              : "Ajusta cantidades o quita productos si el cliente cambio de opinion antes de la entrega.")
                             : "Ajusta cantidades si hubo dano en bodega o quita productos que no se puedan despachar."}
                         </p>
                       ) : null}
@@ -13958,7 +13965,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           {isDispatchingWarehouseOrder ? "Imprimiendo guia..." : "Imprimir y enviar a despacho"}
                         </button>
                       ) : null}
-                      {selectedWarehouseOrderDetail.status === "dispatched" ? (
+                      {selectedWarehouseOrderDetail.status === "dispatched" && canWarehouseInvoiceOrder ? (
                         <button
                           className="submit-button seller-order-submit"
                           type="button"
@@ -13984,7 +13991,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <article className="creation-selector-block">
                     <p className="section-label">Despacho</p>
                     <h2>Pedidos en ruta</h2>
-                    <p className="route-helper-text">Pedidos ya impresos y enviados al transportador. Ajusta productos si el cliente cambia de opinion antes de facturar.</p>
+                    <p className="route-helper-text">Pedidos ya impresos y enviados al transportador.{canWarehouseInvoiceOrder ? " Ajusta productos si el cliente cambia de opinion antes de facturar." : " Contabilidad facturara el pedido al confirmar la entrega."}</p>
                   </article>
 
                   {warehouseOrderCompletionStatus ? (
@@ -14385,7 +14392,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             </div>
           ) : null}
 
-          {warehousePaymentModalOpen ? (
+          {warehousePaymentModalOpen && canWarehouseInvoiceOrder ? (
             <div
               className="modal-overlay"
               role="presentation"
@@ -14410,11 +14417,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   </div>
                   <div className="import-summary-card">
                     <p>Facturacion del pedido</p>
-                    <strong>{formatCurrency(warehouseInvoiceTotal)}</strong>
+                    <strong>{formatAwgCurrency(warehouseInvoiceTotal)} AWG</strong>
                   </div>
                   <div className="import-summary-card">
                     <p>Recaudo estimado ahora</p>
-                    <strong>{formatCurrency(warehouseTotalRecaudoPreview)}</strong>
+                    <strong>{formatAwgCurrency(warehouseTotalRecaudoPreview)} AWG</strong>
                   </div>
                 </div>
 
@@ -14498,7 +14505,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 </td>
                                 <td>{entry.storeName}</td>
                                 <td>{String(entry.invoicedAt).slice(0, 10)}</td>
-                                <td>{formatCurrency(entry.outstandingAmountAwg)}</td>
+                                <td>{formatAwgCurrency(entry.outstandingAmountAwg)} AWG</td>
                                 <td>
                                   <input
                                     className="import-table-input"
@@ -21052,19 +21059,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <h2>{selectedWarehouseOrderDetail.storeName}</h2>
                       <p>{selectedWarehouseOrderDetail.salesRepName} · Entrega {formatDeliveryDateLabel(getOrderDeliveryDateKey(selectedWarehouseOrderDetail))} · {formatSellerOrderDate(selectedWarehouseOrderDetail.createdAt)}</p>
                     </div>
-                    <div className="table-action-group">
-                      <button
-                        className="table-action-icon is-danger"
-                        type="button"
-                        aria-label="Borrar pedido abierto"
-                        title="Borrar pedido"
-                        disabled={deletingWarehouseOrderId === selectedWarehouseOrderDetail._id}
-                        onClick={() => void handleDeleteWarehouseOrder(selectedWarehouseOrderDetail)}
-                      >
-                        x
-                      </button>
-                      <button className="modal-close-button" type="button" onClick={() => setSelectedWarehouseOrderDetail(null)}>Cerrar</button>
-                    </div>
+                    <button className="modal-close-button" type="button" onClick={() => setSelectedWarehouseOrderDetail(null)}>Cerrar</button>
                   </div>
 
                   {selectedWarehouseOrderDetail.status === "submitted" ? (
@@ -21118,7 +21113,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                     type="number"
                                     min="0"
                                     step="0.01"
-                                    value={accountingOrderPriceDraft[item.productId] ?? String(fallbackSalePriceAwg || "")}
+                                    value={accountingOrderPriceDraft[item.productId] ?? (fallbackSalePriceAwg > 0 ? String(roundCurrencyValue(fallbackSalePriceAwg)) : "")}
                                     onChange={(event) => {
                                       setAccountingOrderPriceDraft((current) => ({
                                         ...current,
