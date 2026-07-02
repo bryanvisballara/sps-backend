@@ -470,6 +470,7 @@ function normalizeCatalogPayload(body: unknown) {
     description?: unknown;
     categoryNames?: unknown;
     productIds?: unknown;
+    excludedProductIds?: unknown;
   };
 
   const name = typeof payload.name === "string" ? payload.name.trim() : "";
@@ -482,6 +483,12 @@ function normalizeCatalogPayload(body: unknown) {
     : [];
   const productIds = Array.isArray(payload.productIds)
     ? payload.productIds
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+    : [];
+  const excludedProductIds = Array.isArray(payload.excludedProductIds)
+    ? payload.excludedProductIds
         .filter((entry): entry is string => typeof entry === "string")
         .map((entry) => entry.trim())
         .filter(Boolean)
@@ -500,6 +507,7 @@ function normalizeCatalogPayload(body: unknown) {
     description,
     categoryNames: [...new Set(categoryNames)],
     productIds: [...new Set(productIds)],
+    excludedProductIds: [...new Set(excludedProductIds)],
   };
 }
 
@@ -673,6 +681,7 @@ async function normalizeOperationsClientPayload(body: unknown) {
 async function resolveCatalogProducts(catalog: {
   productIds?: Array<unknown>;
   categoryNames?: Array<string>;
+  excludedProductIds?: Array<unknown>;
 }) {
   const explicitProductIds = Array.isArray(catalog.productIds)
     ? catalog.productIds.map((entry) => String(entry)).filter(Boolean)
@@ -680,6 +689,11 @@ async function resolveCatalogProducts(catalog: {
   const categoryNames = Array.isArray(catalog.categoryNames)
     ? catalog.categoryNames.map((entry) => entry.trim()).filter(Boolean)
     : [];
+  const excludedProductIds = new Set(
+    Array.isArray(catalog.excludedProductIds)
+      ? catalog.excludedProductIds.map((entry) => String(entry)).filter(Boolean)
+      : [],
+  );
 
   const filters: Array<Record<string, unknown>> = [];
 
@@ -719,21 +733,23 @@ async function resolveCatalogProducts(catalog: {
     }
   });
 
-  return products.map((product) => {
-    const arubaPurchaseCostUsd = Number(product.arubaPurchaseCostUsd ?? 0);
-    const arubaUsdToAwgRate = Number(product.arubaUsdToAwgRate ?? 1.79);
-    const arubaCostAwg = arubaPurchaseCostUsd * arubaUsdToAwgRate;
+  return products
+    .filter((product) => !excludedProductIds.has(String(product._id)))
+    .map((product) => {
+      const arubaPurchaseCostUsd = Number(product.arubaPurchaseCostUsd ?? 0);
+      const arubaUsdToAwgRate = Number(product.arubaUsdToAwgRate ?? 1.79);
+      const arubaCostAwg = arubaPurchaseCostUsd * arubaUsdToAwgRate;
 
-    return {
-      productId: String(product._id),
-      name: product.name,
-      sku: product.sku,
-      category: product.category,
-      imageUrl: String(product.imageUrl ?? ""),
-      cost: arubaCostAwg > 0 ? arubaCostAwg : latestCostMap.get(String(product._id)) ?? Number(product.cost ?? 0),
-      salePrice: Number(product.salePrice ?? 0),
-    };
-  });
+      return {
+        productId: String(product._id),
+        name: product.name,
+        sku: product.sku,
+        category: product.category,
+        imageUrl: String(product.imageUrl ?? ""),
+        cost: arubaCostAwg > 0 ? arubaCostAwg : latestCostMap.get(String(product._id)) ?? Number(product.cost ?? 0),
+        salePrice: Number(product.salePrice ?? 0),
+      };
+    });
 }
 
 function normalizeImportCostPayload(body: unknown) {

@@ -30,6 +30,31 @@ export declare const CatalogRecord: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     }>;
+    excludedProductIds: Types.DocumentArray<{
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    }, Types.Subdocument<import("bson").ObjectId, any, {
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    }> & {
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    }>;
     availableForOrders: boolean;
 } & import("mongoose").DefaultTimestampProps, {}, {}, {}, import("mongoose").Document<unknown, {}, {
     code: string;
@@ -38,6 +63,31 @@ export declare const CatalogRecord: import("mongoose").Model<{
     description: string;
     categoryNames: string[];
     productIds: Types.DocumentArray<{
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    }, Types.Subdocument<import("bson").ObjectId, any, {
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    }> & {
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    }>;
+    excludedProductIds: Types.DocumentArray<{
         prototype?: Types.ObjectId | null | undefined;
         cacheHexString?: unknown;
         generate?: {} | null | undefined;
@@ -72,6 +122,31 @@ export declare const CatalogRecord: import("mongoose").Model<{
     description: string;
     categoryNames: string[];
     productIds: Types.DocumentArray<{
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    }, Types.Subdocument<import("bson").ObjectId, any, {
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    }> & {
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    }>;
+    excludedProductIds: Types.DocumentArray<{
         prototype?: Types.ObjectId | null | undefined;
         cacheHexString?: unknown;
         generate?: {} | null | undefined;
@@ -134,6 +209,31 @@ export declare const CatalogRecord: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     }>;
+    excludedProductIds: Types.DocumentArray<{
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    }, Types.Subdocument<import("bson").ObjectId, any, {
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    }> & {
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    }>;
     availableForOrders: boolean;
 } & import("mongoose").DefaultTimestampProps, import("mongoose").Document<unknown, {}, import("mongoose").FlatRecord<{
     code: string;
@@ -142,6 +242,31 @@ export declare const CatalogRecord: import("mongoose").Model<{
     description: string;
     categoryNames: string[];
     productIds: Types.DocumentArray<{
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    }, Types.Subdocument<import("bson").ObjectId, any, {
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    }> & {
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    }>;
+    excludedProductIds: Types.DocumentArray<{
         prototype?: Types.ObjectId | null | undefined;
         cacheHexString?: unknown;
         generate?: {} | null | undefined;
@@ -176,6 +301,31 @@ export declare const CatalogRecord: import("mongoose").Model<{
     description: string;
     categoryNames: string[];
     productIds: Types.DocumentArray<{
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    }, Types.Subdocument<import("bson").ObjectId, any, {
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    }> & {
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    }>;
+    excludedProductIds: Types.DocumentArray<{
         prototype?: Types.ObjectId | null | undefined;
         cacheHexString?: unknown;
         generate?: {} | null | undefined;

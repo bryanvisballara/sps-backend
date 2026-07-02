@@ -7,6 +7,7 @@ const catalogRecordSchema = new Schema(
     description: { type: String, trim: true, default: "" },
     categoryNames: { type: [String], default: [] },
     productIds: { type: [Types.ObjectId], ref: "Product", default: [] },
+    excludedProductIds: { type: [Types.ObjectId], ref: "Product", default: [] },
     availableForOrders: { type: Boolean, default: false },
     active: { type: Boolean, default: true },
   },

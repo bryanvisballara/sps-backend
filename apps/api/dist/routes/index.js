@@ -358,6 +358,12 @@ function normalizeCatalogPayload(body) {
             .map((entry) => entry.trim())
             .filter(Boolean)
         : [];
+    const excludedProductIds = Array.isArray(payload.excludedProductIds)
+        ? payload.excludedProductIds
+            .filter((entry) => typeof entry === "string")
+            .map((entry) => entry.trim())
+            .filter(Boolean)
+        : [];
     if (!name) {
         throw new Error("El nombre del catalogo es obligatorio.");
     }
@@ -369,6 +375,7 @@ function normalizeCatalogPayload(body) {
         description,
         categoryNames: [...new Set(categoryNames)],
         productIds: [...new Set(productIds)],
+        excludedProductIds: [...new Set(excludedProductIds)],
     };
 }
 function normalizeCatalogClientPricingPayload(body) {
@@ -494,6 +501,9 @@ async function resolveCatalogProducts(catalog) {
     const categoryNames = Array.isArray(catalog.categoryNames)
         ? catalog.categoryNames.map((entry) => entry.trim()).filter(Boolean)
         : [];
+    const excludedProductIds = new Set(Array.isArray(catalog.excludedProductIds)
+        ? catalog.excludedProductIds.map((entry) => String(entry)).filter(Boolean)
+        : []);
     const filters = [];
     if (explicitProductIds.length > 0) {
         filters.push({ _id: { $in: explicitProductIds } });
@@ -523,7 +533,9 @@ async function resolveCatalogProducts(catalog) {
             latestCostMap.set(productId, Number(row.landedUnitCost ?? 0));
         }
     });
-    return products.map((product) => {
+    return products
+        .filter((product) => !excludedProductIds.has(String(product._id)))
+        .map((product) => {
         const arubaPurchaseCostUsd = Number(product.arubaPurchaseCostUsd ?? 0);
         const arubaUsdToAwgRate = Number(product.arubaUsdToAwgRate ?? 1.79);
         const arubaCostAwg = arubaPurchaseCostUsd * arubaUsdToAwgRate;

@@ -186,6 +186,7 @@ type ProductOption = {
   value: string;
   label: string;
   sku: string;
+  category: string;
   description: string;
   salePrice: number;
   inventoryAlert: number;
@@ -212,6 +213,7 @@ type CatalogRecord = {
   description: string;
   categoryNames: string[];
   productIds: string[];
+  excludedProductIds?: string[];
   availableForOrders?: boolean;
   active?: boolean;
 };
@@ -251,6 +253,7 @@ type CatalogFormState = {
   description: string;
   categoryNames: string[];
   productIds: string[];
+  excludedProductIds: string[];
 };
 
 type CatalogWhatsappDraftAttachment = {
@@ -1925,7 +1928,64 @@ function createInitialCatalogForm(): CatalogFormState {
     description: "",
     categoryNames: [],
     productIds: [],
+    excludedProductIds: [],
   };
+}
+
+function isCatalogProductSelected(
+  productId: string,
+  form: CatalogFormState,
+  productsById: Map<string, ProductOption>,
+) {
+  if (form.excludedProductIds.includes(productId)) {
+    return false;
+  }
+
+  if (form.productIds.includes(productId)) {
+    return true;
+  }
+
+  const product = productsById.get(productId);
+
+  return Boolean(product && form.categoryNames.includes(product.category));
+}
+
+function countSelectedCatalogProducts(
+  form: CatalogFormState,
+  products: ProductOption[],
+  productsById: Map<string, ProductOption>,
+) {
+  return products.filter((product) => (
+    product.shareWithAruba !== false
+    && isCatalogProductSelected(product.value, form, productsById)
+  )).length;
+}
+
+function buildCatalogFormPreviewItems(
+  form: CatalogFormState,
+  products: ProductOption[],
+  productsById: Map<string, ProductOption>,
+  inventoryRowsByProductId: Map<string, InventorySummaryRow>,
+): CatalogPreviewItem[] {
+  return products
+    .filter((product) => (
+      product.shareWithAruba !== false
+      && isCatalogProductSelected(product.value, form, productsById)
+    ))
+    .map((product) => {
+      const inventoryRow = inventoryRowsByProductId.get(product.value);
+      const arubaCostAwg = product.arubaPurchaseCostUsd * product.arubaUsdToAwgRate;
+
+      return {
+        productId: product.value,
+        name: product.label,
+        sku: product.sku,
+        category: product.category,
+        cost: roundCurrencyValue(inventoryRow?.unitCost ?? (arubaCostAwg > 0 ? arubaCostAwg : 0)),
+        salePrice: roundCurrencyValue(inventoryRow?.salePrice ?? product.salePrice),
+      };
+    })
+    .sort((left, right) => left.name.localeCompare(right.name, "es"));
 }
 
 function createInitialClientProductDraft(): ClientProductDraft {
@@ -3358,6 +3418,7 @@ function mapRecordToProductOption(product: Record<string, unknown>): ProductOpti
     value: String(product._id ?? ""),
     label: String(product.name ?? ""),
     sku: String(product.sku ?? ""),
+    category: String(product.category ?? ""),
     description: String(product.description ?? "").trim(),
     salePrice: roundCurrencyValue(Number(product.salePrice ?? 0)),
     inventoryAlert: Number(product.inventoryAlert ?? 0),
@@ -4247,12 +4308,39 @@ export default function App() {
   }, new Map<string, InventorySummaryRow>());
   const productOptionsById = new Map(productOptions.map((product) => [product.value, product]));
   const normalizedCatalogDirectProductFilter = catalogDirectProductFilter.trim().toLowerCase();
-  const filteredCatalogDirectProducts = normalizedCatalogDirectProductFilter.length > 0
-    ? productOptions.filter((product) => (
-      product.label.toLowerCase().includes(normalizedCatalogDirectProductFilter)
-      || product.sku.toLowerCase().includes(normalizedCatalogDirectProductFilter)
-    ))
-    : productOptions;
+  const selectedCatalogProductCount = countSelectedCatalogProducts(catalogForm, productOptions, productOptionsById);
+  const catalogDirectPanelProducts = (() => {
+    let baseProducts = catalogForm.categoryNames.length > 0
+      ? (() => {
+        const fromCategories = productOptions.filter((product) => (
+          product.shareWithAruba !== false
+          && catalogForm.categoryNames.includes(product.category)
+        ));
+        const directExtras = productOptions.filter((product) => (
+          product.shareWithAruba !== false
+          && catalogForm.productIds.includes(product.value)
+          && !catalogForm.categoryNames.includes(product.category)
+        ));
+        const combinedProducts = new Map<string, ProductOption>();
+
+        [...fromCategories, ...directExtras].forEach((product) => {
+          combinedProducts.set(product.value, product);
+        });
+
+        return Array.from(combinedProducts.values());
+      })()
+      : productOptions.filter((product) => product.shareWithAruba !== false);
+
+    if (normalizedCatalogDirectProductFilter.length > 0) {
+      baseProducts = baseProducts.filter((product) => (
+        product.label.toLowerCase().includes(normalizedCatalogDirectProductFilter)
+        || product.sku.toLowerCase().includes(normalizedCatalogDirectProductFilter)
+      ));
+    }
+
+    return baseProducts.sort((left, right) => left.label.localeCompare(right.label, "es"));
+  })();
+  const availableCatalogRecipientStores = storeOptions.filter((store) => !selectedCatalogClientIds.includes(store.value));
   const campaignProductOptions = productOptions.filter((product) => product.shareWithAruba !== false);
   const warehouseOrderDraftProductIds = selectedWarehouseOrderDetail
     ? Object.keys(warehouseOrderItemDraft)
@@ -5568,14 +5656,60 @@ export default function App() {
       return;
     }
 
+    const hasCatalogSelection = catalogForm.categoryNames.length > 0 || catalogForm.productIds.length > 0;
+
+    if (!hasCatalogSelection) {
+      if (!selectedCatalogId) {
+        setCatalogPreviewItems([]);
+      }
+      return;
+    }
+
+    const productsById = new Map(productOptions.map((product) => [product.value, product]));
+
+    setCatalogPreviewItems((current) => {
+      const priceByProductId = new Map(current.map((item) => [item.productId, item.salePrice]));
+
+      return buildCatalogFormPreviewItems(
+        catalogForm,
+        productOptions,
+        productsById,
+        inventoryRowsByProductId,
+      ).map((item) => ({
+        ...item,
+        salePrice: priceByProductId.get(item.productId) ?? item.salePrice,
+      }));
+    });
+  }, [activeSection, catalogForm, inventoryRowsByProductId, productOptions, selectedCatalogId, sessionUser]);
+
+  useEffect(() => {
+    if (sessionUser?.role !== "management" && sessionUser?.role !== "contabilidad") {
+      return;
+    }
+
+    if (activeSection !== "catalog") {
+      return;
+    }
+
     if (!selectedCatalogId) {
-      setCatalogPreviewItems([]);
       setCatalogPreviewError("");
       return;
     }
 
+    const catalog = catalogs.find((entry) => entry._id === selectedCatalogId);
+
+    if (catalog) {
+      setCatalogForm({
+        name: catalog.name ?? "",
+        description: catalog.description ?? "",
+        categoryNames: [...(catalog.categoryNames ?? [])],
+        productIds: [...(catalog.productIds ?? [])],
+        excludedProductIds: [...(catalog.excludedProductIds ?? [])],
+      });
+    }
+
     void refreshCatalogPreview(selectedCatalogId);
-  }, [activeSection, selectedCatalogId, sessionUser]);
+  }, [activeSection, catalogs, selectedCatalogId, sessionUser]);
 
   useEffect(() => {
     setIsCatalogWhatsappComposerOpen(false);
@@ -9072,7 +9206,7 @@ export default function App() {
     normalizeUppercaseInputTarget(event.target);
   }
 
-  function handleCatalogFieldChange(field: keyof Omit<CatalogFormState, "categoryNames" | "productIds">, value: string) {
+  function handleCatalogFieldChange(field: keyof Omit<CatalogFormState, "categoryNames" | "productIds" | "excludedProductIds">, value: string) {
     setCatalogForm((current) => ({
       ...current,
       [field]: value,
@@ -9080,21 +9214,59 @@ export default function App() {
   }
 
   function toggleCatalogCategory(categoryName: string) {
-    setCatalogForm((current) => ({
-      ...current,
-      categoryNames: current.categoryNames.includes(categoryName)
-        ? current.categoryNames.filter((currentCategoryName) => currentCategoryName !== categoryName)
-        : [...current.categoryNames, categoryName],
-    }));
+    setCatalogForm((current) => {
+      if (current.categoryNames.includes(categoryName)) {
+        return {
+          ...current,
+          categoryNames: current.categoryNames.filter((currentCategoryName) => currentCategoryName !== categoryName),
+        };
+      }
+
+      const categoryProductIds = productOptions
+        .filter((product) => product.category === categoryName)
+        .map((product) => product.value);
+
+      return {
+        ...current,
+        categoryNames: [...current.categoryNames, categoryName],
+        excludedProductIds: current.excludedProductIds.filter((productId) => !categoryProductIds.includes(productId)),
+      };
+    });
   }
 
   function toggleCatalogProduct(productId: string) {
-    setCatalogForm((current) => ({
-      ...current,
-      productIds: current.productIds.includes(productId)
-        ? current.productIds.filter((currentProductId) => currentProductId !== productId)
-        : [...current.productIds, productId],
-    }));
+    setCatalogForm((current) => {
+      const product = productOptionsById.get(productId);
+      const fromSelectedCategory = Boolean(product && current.categoryNames.includes(product.category));
+      const isSelected = isCatalogProductSelected(productId, current, productOptionsById);
+
+      if (isSelected) {
+        if (fromSelectedCategory) {
+          return {
+            ...current,
+            excludedProductIds: [...new Set([...current.excludedProductIds, productId])],
+            productIds: current.productIds.filter((currentProductId) => currentProductId !== productId),
+          };
+        }
+
+        return {
+          ...current,
+          productIds: current.productIds.filter((currentProductId) => currentProductId !== productId),
+        };
+      }
+
+      if (fromSelectedCategory) {
+        return {
+          ...current,
+          excludedProductIds: current.excludedProductIds.filter((currentProductId) => currentProductId !== productId),
+        };
+      }
+
+      return {
+        ...current,
+        productIds: [...current.productIds, productId],
+      };
+    });
   }
 
   function resetCatalogForm(options?: { preserveStatus?: boolean }) {
@@ -9116,6 +9288,7 @@ export default function App() {
       description: catalog.description ?? "",
       categoryNames: [...(catalog.categoryNames ?? [])],
       productIds: [...(catalog.productIds ?? [])],
+      excludedProductIds: [...(catalog.excludedProductIds ?? [])],
     });
   }
 
@@ -12357,6 +12530,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           description: catalogForm.description.trim(),
           categoryNames: catalogForm.categoryNames,
           productIds: catalogForm.productIds,
+          excludedProductIds: catalogForm.excludedProductIds,
         }),
       });
       const data = (await response.json()) as CatalogRecord | { message?: string };
@@ -12373,7 +12547,24 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
         tone: "success",
         message: editingCatalogId ? "Catalogo actualizado correctamente." : "Catalogo guardado correctamente.",
       });
-      resetCatalogForm({ preserveStatus: true });
+
+      const savedCatalog = data as CatalogRecord;
+      const savedCatalogId = typeof savedCatalog._id === "string" ? savedCatalog._id : editingCatalogId;
+
+      if (savedCatalogId) {
+        setSelectedCatalogId(savedCatalogId);
+        setEditingCatalogId(savedCatalogId);
+        setCatalogForm({
+          name: savedCatalog.name ?? catalogForm.name.trim(),
+          description: savedCatalog.description ?? catalogForm.description.trim(),
+          categoryNames: [...(savedCatalog.categoryNames ?? catalogForm.categoryNames)],
+          productIds: [...(savedCatalog.productIds ?? catalogForm.productIds)],
+          excludedProductIds: [...(savedCatalog.excludedProductIds ?? catalogForm.excludedProductIds)],
+        });
+      } else {
+        resetCatalogForm({ preserveStatus: true });
+      }
+
       await refreshCatalogs();
     } catch {
       setCatalogStatus({ tone: "error", message: "No fue posible conectar con el backend." });
@@ -15020,7 +15211,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <span>Selección actual</span>
                     <input
                       type="text"
-                      value={`${catalogForm.categoryNames.length} categorías · ${catalogForm.productIds.length} productos`}
+                      value={`${catalogForm.categoryNames.length} categorías · ${selectedCatalogProductCount} productos`}
                       readOnly
                     />
                   </label>
@@ -15067,7 +15258,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <article className="route-day-card">
                     <div className="route-day-header">
                       <h3>Productos directos</h3>
-                      <span>{catalogForm.productIds.length} seleccionados</span>
+                      <span>{selectedCatalogProductCount} seleccionados</span>
                     </div>
 
                     <label className="field catalog-direct-product-filter">
@@ -15083,23 +15274,25 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <div className="route-store-list">
                       {productOptions.length === 0 ? (
                         <p className="route-empty-state">Primero crea productos.</p>
-                      ) : filteredCatalogDirectProducts.length === 0 ? (
+                      ) : catalogDirectPanelProducts.length === 0 ? (
                         <p className="route-empty-state">
                           {normalizedCatalogDirectProductFilter.length > 0
                             ? `No hay productos que coincidan con "${catalogDirectProductFilter.trim()}".`
-                            : "No hay productos disponibles."}
+                            : catalogForm.categoryNames.length > 0
+                              ? "No hay productos en las categorías seleccionadas."
+                              : "No hay productos disponibles."}
                         </p>
                       ) : (
-                        filteredCatalogDirectProducts.map((product) => (
+                        catalogDirectPanelProducts.map((product) => (
                           <label className="route-store-option" key={product.value}>
                             <input
                               type="checkbox"
-                              checked={catalogForm.productIds.includes(product.value)}
+                              checked={isCatalogProductSelected(product.value, catalogForm, productOptionsById)}
                               onChange={() => toggleCatalogProduct(product.value)}
                             />
                             <span>
                               <strong>{product.label}</strong>
-                              <small>SKU {product.sku}</small>
+                              <small>SKU {product.sku}{product.category ? ` · ${product.category}` : ""}</small>
                             </span>
                           </label>
                         ))
@@ -15133,16 +15326,17 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               <div className="catalog-pricing-toolbar">
                 <label className="field">
                   <span>Clientes destino</span>
-                  <select
+                  <SearchableStoreSelect
+                    stores={availableCatalogRecipientStores}
                     value=""
-                    onChange={(event) => addCatalogRecipient(event.target.value)}
+                    onChange={(clientId) => {
+                      if (clientId) {
+                        addCatalogRecipient(clientId);
+                      }
+                    }}
+                    placeholder="Buscar cliente por nombre o código..."
                     disabled={storeOptions.length === 0 || selectedCatalogClients.length === storeOptions.length}
-                  >
-                    <option value="">Agrega un cliente</option>
-                    {storeOptions.map((store) => (
-                      <option key={store.value} value={store.value} disabled={selectedCatalogClientIds.includes(store.value)}>{selectedCatalogClientIds.includes(store.value) ? `${store.label} · agregado` : store.label}</option>
-                    ))}
-                  </select>
+                  />
                 </label>
 
                 <label className="field">
@@ -15206,7 +15400,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     ))}
                   </div>
                 ) : (
-                  <p className="catalog-recipient-empty">Selecciona clientes desde el desplegable para construir la lista de envío.</p>
+                  <p className="catalog-recipient-empty">Busca y selecciona clientes para construir la lista de envío.</p>
                 )}
               </div>
 
@@ -15268,7 +15462,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       })
                     ) : (
                       <tr>
-                        <td colSpan={5} className="empty-table-cell">Selecciona un catálogo para ver sus productos.</td>
+                        <td colSpan={5} className="empty-table-cell">Selecciona categorías o productos arriba, o elige un catálogo guardado.</td>
                       </tr>
                     )}
                   </tbody>
