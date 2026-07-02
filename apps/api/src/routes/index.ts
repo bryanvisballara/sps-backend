@@ -29,6 +29,7 @@ import { WarehouseLocation } from "../modules/inventory/warehouse-location.model
 import { WarehouseStock } from "../modules/inventory/warehouse-stock.model.js";
 import { ImportTemplate } from "../modules/imports/import-template.model.js";
 import { Order } from "../modules/orders/order.model.js";
+import { InvoiceChangeRequest } from "../modules/orders/invoice-change-request.model.js";
 import { Product } from "../modules/catalog/product.model.js";
 import { SalesRoute } from "../modules/routes/route.model.js";
 import { OperationsClient } from "../modules/stores/operations-client.model.js";
@@ -1530,6 +1531,260 @@ async function applyOrderInventoryDeduction(order: {
   }
 }
 
+function buildOrderQuantitiesMap(items: Array<{ productId?: unknown; quantity?: unknown }>) {
+  return items.reduce<Map<string, number>>((map, item) => {
+    const productId = String(item.productId ?? "").trim();
+    const quantity = Number(item.quantity ?? 0);
+
+    if (!productId || !Number.isFinite(quantity) || quantity < 0) {
+      return map;
+    }
+
+    map.set(productId, (map.get(productId) ?? 0) + quantity);
+    return map;
+  }, new Map());
+}
+
+async function restoreInventoryForProduct(productId: string, quantityToRestore: number, orderId: string) {
+  if (quantityToRestore <= 0) {
+    return;
+  }
+
+  const stockRows = (await WarehouseStock.find({ productId }).lean())
+    .sort(compareWarehouseStockLotsByConsumptionPriority);
+
+  if (stockRows.length > 0) {
+    const targetRow = stockRows[0];
+    const nextAvailable = Number(targetRow.availableUnits ?? 0) + quantityToRestore;
+
+    await WarehouseStock.findByIdAndUpdate(
+      targetRow._id,
+      {
+        availableUnits: nextAvailable,
+        status: resolveWarehouseStockStatus(nextAvailable, Number(targetRow.minUnits ?? 0)),
+      },
+      { runValidators: true },
+    );
+  }
+
+  const originalAdjustment = await InventoryAdjustment.findOne({
+    productId,
+    reason: "Despacho de pedido completado",
+    notes: `Salida automatica por pedido ${orderId}`,
+  }).lean();
+
+  if (originalAdjustment) {
+    const nextQuantity = Math.max(Number(originalAdjustment.quantity ?? 0) - quantityToRestore, 0);
+
+    if (nextQuantity <= 0) {
+      await InventoryAdjustment.deleteOne({ _id: originalAdjustment._id });
+    } else {
+      await InventoryAdjustment.findByIdAndUpdate(originalAdjustment._id, { quantity: nextQuantity });
+    }
+  }
+}
+
+async function deductAdditionalInventoryForProduct(productId: string, quantityToDeduct: number, orderId: string) {
+  if (quantityToDeduct <= 0) {
+    return;
+  }
+
+  const stockRows = (await WarehouseStock.find({ productId }).lean())
+    .sort(compareWarehouseStockLotsByConsumptionPriority);
+  let remaining = quantityToDeduct;
+
+  if (stockRows.length > 0) {
+    for (const stockRow of stockRows) {
+      if (remaining <= 0) {
+        break;
+      }
+
+      const rowAvailable = Number(stockRow.availableUnits ?? 0);
+      const nextAvailable = Math.max(rowAvailable - remaining, 0);
+      const deductedFromRow = rowAvailable - nextAvailable;
+
+      if (deductedFromRow <= 0) {
+        continue;
+      }
+
+      remaining -= deductedFromRow;
+      await WarehouseStock.findByIdAndUpdate(
+        stockRow._id,
+        {
+          availableUnits: nextAvailable,
+          status: resolveWarehouseStockStatus(nextAvailable, Number(stockRow.minUnits ?? 0)),
+        },
+        { runValidators: true },
+      );
+    }
+  }
+
+  const originalAdjustment = await InventoryAdjustment.findOne({
+    productId,
+    reason: "Despacho de pedido completado",
+    notes: `Salida automatica por pedido ${orderId}`,
+  }).lean();
+
+  if (originalAdjustment) {
+    await InventoryAdjustment.findByIdAndUpdate(originalAdjustment._id, {
+      quantity: Number(originalAdjustment.quantity ?? 0) + quantityToDeduct,
+    });
+    return;
+  }
+
+  await InventoryAdjustment.create({
+    productId,
+    quantity: quantityToDeduct,
+    reason: "Despacho de pedido completado",
+    notes: `Salida automatica por pedido ${orderId}`,
+    source: stockRows.length > 0 ? "warehouse-stock" : "import-fallback",
+  });
+}
+
+async function applyOrderInventoryDelta(
+  orderId: string,
+  oldItems: Array<{ productId?: unknown; quantity?: unknown }>,
+  newItems: Array<{ productId?: unknown; quantity?: unknown }>,
+) {
+  const oldMap = buildOrderQuantitiesMap(oldItems);
+  const newMap = buildOrderQuantitiesMap(newItems);
+  const productIds = new Set([...oldMap.keys(), ...newMap.keys()]);
+
+  for (const productId of productIds) {
+    const delta = (newMap.get(productId) ?? 0) - (oldMap.get(productId) ?? 0);
+
+    if (delta > 0) {
+      await deductAdditionalInventoryForProduct(productId, delta, orderId);
+    } else if (delta < 0) {
+      await restoreInventoryForProduct(productId, Math.abs(delta), orderId);
+    }
+  }
+}
+
+function normalizeInvoiceChangeRequestItems(rawItems: unknown, existingItems: Array<{ productId: unknown; stockCurrent?: unknown; notes?: unknown }>) {
+  return normalizeWarehouseOrderItems(rawItems, existingItems);
+}
+
+async function enrichInvoiceChangeItems(items: Array<{ productId: string; quantity: number; notes?: string }>) {
+  const productIds = items.map((item) => item.productId);
+  const products = productIds.length > 0
+    ? await Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1 }).lean()
+    : [];
+  const productsById = new Map(products.map((product) => [String(product._id), product]));
+
+  return items.map((item) => {
+    const product = productsById.get(item.productId);
+
+    return {
+      productId: item.productId,
+      productName: String(product?.name ?? "Producto"),
+      productSku: String(product?.sku ?? "-"),
+      quantity: item.quantity,
+      notes: item.notes ?? "",
+    };
+  });
+}
+
+function mapInvoiceChangeRequestRecord(entry: {
+  _id?: unknown;
+  orderId?: unknown;
+  storeId?: unknown;
+  storeName?: unknown;
+  salesRepName?: unknown;
+  routeName?: unknown;
+  invoiceNumber?: unknown;
+  status?: unknown;
+  requestedByUserId?: unknown;
+  requestedByUserName?: unknown;
+  requestedByRole?: unknown;
+  requestNotes?: unknown;
+  reviewedByUserId?: unknown;
+  reviewedByUserName?: unknown;
+  reviewNotes?: unknown;
+  reviewedAt?: unknown;
+  currentItems?: unknown;
+  proposedItems?: unknown;
+  currentInvoiceAmountAwg?: unknown;
+  proposedInvoiceAmountAwg?: unknown;
+  currentPaymentMethod?: unknown;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}) {
+  return {
+    _id: String(entry._id),
+    orderId: String(entry.orderId ?? ""),
+    storeId: String(entry.storeId ?? ""),
+    storeName: String(entry.storeName ?? ""),
+    salesRepName: String(entry.salesRepName ?? ""),
+    routeName: String(entry.routeName ?? ""),
+    invoiceNumber: Number(entry.invoiceNumber ?? 0) || null,
+    status: String(entry.status ?? "pending"),
+    requestedByUserId: String(entry.requestedByUserId ?? ""),
+    requestedByUserName: String(entry.requestedByUserName ?? ""),
+    requestedByRole: String(entry.requestedByRole ?? ""),
+    requestNotes: String(entry.requestNotes ?? ""),
+    reviewedByUserId: String(entry.reviewedByUserId ?? ""),
+    reviewedByUserName: String(entry.reviewedByUserName ?? ""),
+    reviewNotes: String(entry.reviewNotes ?? ""),
+    reviewedAt: entry.reviewedAt ? String(entry.reviewedAt) : null,
+    currentItems: Array.isArray(entry.currentItems) ? entry.currentItems : [],
+    proposedItems: Array.isArray(entry.proposedItems) ? entry.proposedItems : [],
+    currentInvoiceAmountAwg: Number(entry.currentInvoiceAmountAwg ?? 0),
+    proposedInvoiceAmountAwg: Number(entry.proposedInvoiceAmountAwg ?? 0),
+    currentPaymentMethod: String(entry.currentPaymentMethod ?? ""),
+    createdAt: entry.createdAt ? String(entry.createdAt) : "",
+    updatedAt: entry.updatedAt ? String(entry.updatedAt) : "",
+  };
+}
+
+async function calculateInvoiceAmountFromItems(items: Array<{ productId: string; quantity: number }>) {
+  const lines = await buildWarehouseInvoiceDocumentLines({ items });
+  return Math.round(lines.reduce((sum, line) => sum + Number(line.amount ?? 0), 0) * 100) / 100;
+}
+
+async function updateCarteraAfterInvoiceChange(params: {
+  carteraEntryId: string;
+  orderId: string;
+  newInvoiceAmountAwg: number;
+  paymentMethod: "credito" | "datafono" | "transferencia" | "efectivo";
+}) {
+  const entry = await CarteraEntry.findById(params.carteraEntryId).lean();
+
+  if (!entry) {
+    throw new Error("No se encontro la factura en cartera.");
+  }
+
+  const collectedAmountAwg = Number(entry.collectedAmountAwg ?? 0);
+  const isCreditInvoice = params.paymentMethod === "credito";
+
+  if (isCreditInvoice && params.newInvoiceAmountAwg < collectedAmountAwg - 0.009) {
+    throw new Error("El nuevo monto de factura no puede ser menor al recaudo ya registrado.");
+  }
+
+  if (isCreditInvoice) {
+    await CarteraEntry.findByIdAndUpdate(params.carteraEntryId, {
+      invoiceAmountAwg: params.newInvoiceAmountAwg,
+      outstandingAmountAwg: Math.round(Math.max(params.newInvoiceAmountAwg - collectedAmountAwg, 0) * 100) / 100,
+    });
+    return;
+  }
+
+  await CarteraEntry.findByIdAndUpdate(params.carteraEntryId, {
+    invoiceAmountAwg: params.newInvoiceAmountAwg,
+    collectedAmountAwg: params.newInvoiceAmountAwg,
+    outstandingAmountAwg: 0,
+  });
+
+  await CarteraCollection.updateMany(
+    {
+      carteraEntryId: params.carteraEntryId,
+      relatedOrderId: params.orderId,
+      active: { $ne: false },
+    },
+    { amountAwg: params.newInvoiceAmountAwg },
+  );
+}
+
 apiRouter.get("/health", (_request, response) => {
   response.json({ status: "ok" });
 });
@@ -2711,6 +2966,238 @@ apiRouter.delete("/warehouse/orders/:id", async (request, response) => {
 
     response.json({
       message: "Pedido borrado correctamente.",
+    });
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.post("/warehouse/orders/:id/invoice-change-requests", async (request, response) => {
+  try {
+    const order = await Order.findById(request.params.id).lean();
+
+    if (!order) {
+      response.status(404).json({ message: "El pedido no existe." });
+      return;
+    }
+
+    if (order.status !== "delivered") {
+      response.status(400).json({ message: "Solo puedes solicitar cambios en pedidos ya facturados." });
+      return;
+    }
+
+    const existingPending = await InvoiceChangeRequest.findOne({
+      orderId: String(order._id),
+      status: "pending",
+    }).lean();
+
+    if (existingPending) {
+      response.status(400).json({ message: "Ya existe una solicitud pendiente para este pedido." });
+      return;
+    }
+
+    const payload = request.body as {
+      items?: unknown;
+      requestNotes?: unknown;
+      requestedByUserId?: unknown;
+      requestedByUserName?: unknown;
+      requestedByRole?: unknown;
+    };
+    const requestedByUserId = typeof payload.requestedByUserId === "string" ? payload.requestedByUserId.trim() : "";
+    const requestedByUserName = typeof payload.requestedByUserName === "string" ? payload.requestedByUserName.trim() : "";
+    const requestedByRole = typeof payload.requestedByRole === "string" ? payload.requestedByRole.trim() : "";
+    const requestNotes = typeof payload.requestNotes === "string" ? payload.requestNotes.trim() : "";
+
+    if (!requestedByUserId || !requestedByUserName || !requestedByRole) {
+      response.status(400).json({ message: "No fue posible identificar al usuario que solicita el cambio." });
+      return;
+    }
+
+    const proposedItems = normalizeInvoiceChangeRequestItems(payload.items, order.items);
+    const currentItems = await enrichInvoiceChangeItems(
+      order.items.map((item) => ({
+        productId: String(item.productId),
+        quantity: Number(item.quantity ?? 0),
+        notes: typeof item.notes === "string" ? item.notes : "",
+      })),
+    );
+    const enrichedProposedItems = await enrichInvoiceChangeItems(proposedItems);
+    const currentInvoiceAmountAwg = await calculateInvoiceAmountFromItems(currentItems);
+    const proposedInvoiceAmountAwg = await calculateInvoiceAmountFromItems(enrichedProposedItems);
+    const carteraEntry = await CarteraEntry.findOne({ orderId: String(order._id), active: { $ne: false } }).lean();
+
+    if (!carteraEntry) {
+      response.status(400).json({ message: "Este pedido no tiene una factura registrada en cartera." });
+      return;
+    }
+
+    const currentSnapshot = JSON.stringify(currentItems.map((item) => ({ productId: item.productId, quantity: item.quantity })));
+    const proposedSnapshot = JSON.stringify(enrichedProposedItems.map((item) => ({ productId: item.productId, quantity: item.quantity })));
+
+    if (currentSnapshot === proposedSnapshot && Math.abs(currentInvoiceAmountAwg - proposedInvoiceAmountAwg) < 0.009) {
+      response.status(400).json({ message: "No hay cambios en la factura respecto al pedido actual." });
+      return;
+    }
+
+    const createdRequest = await InvoiceChangeRequest.create({
+      orderId: String(order._id),
+      storeId: String(order.storeId ?? ""),
+      storeName: String(order.storeName ?? ""),
+      salesRepName: String(order.salesRepName ?? ""),
+      routeName: String(order.routeName ?? ""),
+      invoiceNumber: Number(carteraEntry.invoiceNumber ?? 0) || undefined,
+      status: "pending",
+      requestedByUserId,
+      requestedByUserName,
+      requestedByRole,
+      requestNotes,
+      currentItems,
+      proposedItems: enrichedProposedItems,
+      currentInvoiceAmountAwg: Number(carteraEntry.invoiceAmountAwg ?? currentInvoiceAmountAwg),
+      proposedInvoiceAmountAwg,
+      currentPaymentMethod: String(carteraEntry.paymentMethod ?? "credito") as "credito" | "datafono" | "transferencia" | "efectivo",
+    });
+
+    response.status(201).json({
+      message: "Solicitud de cambio enviada a gerencia para aprobacion.",
+      request: mapInvoiceChangeRequestRecord(createdRequest.toObject()),
+    });
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.get("/management/invoice-change-requests", async (request, response) => {
+  try {
+    const status = typeof request.query.status === "string" ? request.query.status.trim().toLowerCase() : "pending";
+    const filter = status === "all" ? {} : { status: status === "approved" || status === "rejected" ? status : "pending" };
+    const requests = await InvoiceChangeRequest.find(filter).sort({ createdAt: -1 }).lean();
+
+    response.json(requests.map((entry) => mapInvoiceChangeRequestRecord(entry)));
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.put("/management/invoice-change-requests/:id/approve", async (request, response) => {
+  try {
+    const changeRequest = await InvoiceChangeRequest.findById(request.params.id);
+
+    if (!changeRequest) {
+      response.status(404).json({ message: "La solicitud no existe." });
+      return;
+    }
+
+    if (changeRequest.status !== "pending") {
+      response.status(400).json({ message: "Esta solicitud ya fue revisada." });
+      return;
+    }
+
+    const payload = request.body as {
+      reviewedByUserId?: unknown;
+      reviewedByUserName?: unknown;
+      reviewNotes?: unknown;
+    };
+    const reviewedByUserId = typeof payload.reviewedByUserId === "string" ? payload.reviewedByUserId.trim() : "";
+    const reviewedByUserName = typeof payload.reviewedByUserName === "string" ? payload.reviewedByUserName.trim() : "";
+    const reviewNotes = typeof payload.reviewNotes === "string" ? payload.reviewNotes.trim() : "";
+
+    if (!reviewedByUserId || !reviewedByUserName) {
+      response.status(400).json({ message: "No fue posible identificar al usuario que aprueba el cambio." });
+      return;
+    }
+
+    const order = await Order.findById(changeRequest.orderId);
+
+    if (!order || order.status !== "delivered") {
+      response.status(400).json({ message: "El pedido asociado ya no esta disponible para correccion." });
+      return;
+    }
+
+    const carteraEntry = await CarteraEntry.findOne({ orderId: String(order._id), active: { $ne: false } }).lean();
+
+    if (!carteraEntry) {
+      response.status(400).json({ message: "No se encontro la factura en cartera." });
+      return;
+    }
+
+    const proposedItems = changeRequest.proposedItems.map((item) => ({
+      productId: String(item.productId),
+      stockCurrent: null,
+      quantity: Number(item.quantity ?? 0),
+      notes: String(item.notes ?? ""),
+    }));
+
+    await applyOrderInventoryDelta(String(order._id), order.items, proposedItems);
+
+    await Order.findByIdAndUpdate(
+      order._id,
+      { items: proposedItems },
+      { new: true, runValidators: true },
+    );
+
+    await updateCarteraAfterInvoiceChange({
+      carteraEntryId: String(carteraEntry._id),
+      orderId: String(order._id),
+      newInvoiceAmountAwg: Number(changeRequest.proposedInvoiceAmountAwg ?? 0),
+      paymentMethod: String(changeRequest.currentPaymentMethod ?? carteraEntry.paymentMethod ?? "credito") as "credito" | "datafono" | "transferencia" | "efectivo",
+    });
+
+    changeRequest.status = "approved";
+    changeRequest.reviewedByUserId = reviewedByUserId;
+    changeRequest.reviewedByUserName = reviewedByUserName;
+    changeRequest.reviewNotes = reviewNotes;
+    changeRequest.reviewedAt = new Date();
+    await changeRequest.save();
+
+    response.json({
+      message: "Solicitud aprobada. La factura y el inventario fueron actualizados.",
+      request: mapInvoiceChangeRequestRecord(changeRequest.toObject()),
+      order: await mapWarehouseOrderRecord((await Order.findById(order._id).lean())!),
+    });
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.put("/management/invoice-change-requests/:id/reject", async (request, response) => {
+  try {
+    const changeRequest = await InvoiceChangeRequest.findById(request.params.id);
+
+    if (!changeRequest) {
+      response.status(404).json({ message: "La solicitud no existe." });
+      return;
+    }
+
+    if (changeRequest.status !== "pending") {
+      response.status(400).json({ message: "Esta solicitud ya fue revisada." });
+      return;
+    }
+
+    const payload = request.body as {
+      reviewedByUserId?: unknown;
+      reviewedByUserName?: unknown;
+      reviewNotes?: unknown;
+    };
+    const reviewedByUserId = typeof payload.reviewedByUserId === "string" ? payload.reviewedByUserId.trim() : "";
+    const reviewedByUserName = typeof payload.reviewedByUserName === "string" ? payload.reviewedByUserName.trim() : "";
+    const reviewNotes = typeof payload.reviewNotes === "string" ? payload.reviewNotes.trim() : "";
+
+    if (!reviewedByUserId || !reviewedByUserName) {
+      response.status(400).json({ message: "No fue posible identificar al usuario que rechaza el cambio." });
+      return;
+    }
+
+    changeRequest.status = "rejected";
+    changeRequest.reviewedByUserId = reviewedByUserId;
+    changeRequest.reviewedByUserName = reviewedByUserName;
+    changeRequest.reviewNotes = reviewNotes;
+    changeRequest.reviewedAt = new Date();
+    await changeRequest.save();
+
+    response.json({
+      message: "Solicitud rechazada.",
+      request: mapInvoiceChangeRequestRecord(changeRequest.toObject()),
     });
   } catch (error) {
     sendCreationError(response, error);

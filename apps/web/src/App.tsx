@@ -39,7 +39,8 @@ type ActiveSection =
   | "logistics-accounting"
   | "cartera"
   | "warehouse-dispatch"
-  | "warehouse-inventory";
+  | "warehouse-inventory"
+  | "invoice-change-requests";
 
 type KpiCard = {
   label: string;
@@ -759,6 +760,40 @@ type CarteraEntryRecord = {
   updatedAt?: string;
 };
 
+type InvoiceChangeItemRecord = {
+  productId: string;
+  productName: string;
+  productSku: string;
+  quantity: number;
+  notes: string;
+};
+
+type InvoiceChangeRequestRecord = {
+  _id: string;
+  orderId: string;
+  storeId: string;
+  storeName: string;
+  salesRepName: string;
+  routeName: string;
+  invoiceNumber: number | null;
+  status: "pending" | "approved" | "rejected";
+  requestedByUserId: string;
+  requestedByUserName: string;
+  requestedByRole: string;
+  requestNotes: string;
+  reviewedByUserId: string;
+  reviewedByUserName: string;
+  reviewNotes: string;
+  reviewedAt: string | null;
+  currentItems: InvoiceChangeItemRecord[];
+  proposedItems: InvoiceChangeItemRecord[];
+  currentInvoiceAmountAwg: number;
+  proposedInvoiceAmountAwg: number;
+  currentPaymentMethod: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type CarteraCollectionRecord = {
   _id?: string;
   carteraEntryId: string;
@@ -1117,6 +1152,7 @@ const managementSidebarSections = [
       { key: "orders", label: "Pedidos" },
       { key: "catalog", label: "Catálogo" },
       { key: "cartera", label: "Cartera" },
+      { key: "invoice-change-requests", label: "Solicitudes factura" },
     ],
   },
   {
@@ -3446,6 +3482,17 @@ export default function App() {
   const [warehouseOrderItemDraft, setWarehouseOrderItemDraft] = useState<Record<string, string>>({});
   const [warehouseOrderEditStatus, setWarehouseOrderEditStatus] = useState<CreationStatus | null>(null);
   const [isSavingWarehouseOrderEdit, setIsSavingWarehouseOrderEdit] = useState(false);
+  const [invoiceChangeOrder, setInvoiceChangeOrder] = useState<SellerOrderRecord | null>(null);
+  const [invoiceChangeItemDraft, setInvoiceChangeItemDraft] = useState<Record<string, string>>({});
+  const [invoiceChangeNotes, setInvoiceChangeNotes] = useState("");
+  const [invoiceChangeStatus, setInvoiceChangeStatus] = useState<CreationStatus | null>(null);
+  const [isSubmittingInvoiceChangeRequest, setIsSubmittingInvoiceChangeRequest] = useState(false);
+  const [invoiceChangeRequests, setInvoiceChangeRequests] = useState<InvoiceChangeRequestRecord[]>([]);
+  const [invoiceChangeRequestsError, setInvoiceChangeRequestsError] = useState("");
+  const [isLoadingInvoiceChangeRequests, setIsLoadingInvoiceChangeRequests] = useState(false);
+  const [invoiceChangeReviewStatus, setInvoiceChangeReviewStatus] = useState<CreationStatus | null>(null);
+  const [isReviewingInvoiceChangeRequest, setIsReviewingInvoiceChangeRequest] = useState(false);
+  const [invoiceChangeReviewNotesDraft, setInvoiceChangeReviewNotesDraft] = useState<Record<string, string>>({});
   const [sellerOrderDraft, setSellerOrderDraft] = useState<SellerOrderDraft>({});
   const [isSubmittingSellerOrder, setIsSubmittingSellerOrder] = useState(false);
   const [sellerOrderStatus, setSellerOrderStatus] = useState<CreationStatus | null>(null);
@@ -3851,6 +3898,37 @@ export default function App() {
     : [];
   const warehouseInvoiceTotal = warehousePricedItems.reduce((sum, item) => sum + item.lineTotal, 0);
   const warehouseFallbackPriceCount = warehousePricedItems.filter((item) => item.priceSource !== "catalog").length;
+  const invoiceChangeDraftProductIds = invoiceChangeOrder ? Object.keys(invoiceChangeItemDraft) : [];
+  const invoiceChangePricedItems = invoiceChangeOrder
+    ? invoiceChangeOrder.items
+      .filter((item) => invoiceChangeDraftProductIds.includes(item.productId))
+      .map((item) => {
+        const productOption = productOptionsById.get(item.productId);
+        const invRow = inventoryRowsByProductId.get(item.productId);
+        const resolvedSalePrice = roundCurrencyValue(Number(invRow?.salePrice ?? productOption?.salePrice ?? 0));
+        const quantity = Number(invoiceChangeItemDraft[item.productId] ?? item.quantity ?? 0);
+
+        return {
+          ...item,
+          quantity,
+          resolvedSalePrice,
+          lineTotal: roundCurrencyValue(resolvedSalePrice * quantity),
+        };
+      })
+    : [];
+  const invoiceChangeTotal = invoiceChangePricedItems.reduce((sum, item) => sum + item.lineTotal, 0);
+  const invoiceChangeItemsDirty = Boolean(
+    invoiceChangeOrder
+    && (
+      invoiceChangeOrder.items.length !== invoiceChangeDraftProductIds.length
+      || invoiceChangeOrder.items.some((item) => (
+        String(item.quantity) !== (invoiceChangeItemDraft[item.productId] ?? String(item.quantity))
+      ))
+    ),
+  );
+  const pendingInvoiceChangeOrderIds = new Set(
+    invoiceChangeRequests.filter((request) => request.status === "pending").map((request) => request.orderId),
+  );
   const warehouseIncomingOrders = warehouseOrders.filter((order) => order.status === "submitted");
   const warehouseDispatchOrders = warehouseOrders.filter((order) => order.status === "dispatched");
   const warehouseActiveOrders = warehouseOrders.filter((order) => order.status !== "delivered");
@@ -5125,6 +5203,20 @@ export default function App() {
     }
 
     void refreshWarehouseOrders();
+  }, [activeSection, sessionUser]);
+
+  useEffect(() => {
+    if (sessionUser?.role !== "management" && sessionUser?.role !== "contabilidad") {
+      return;
+    }
+
+    if (activeSection !== "invoice-change-requests" && activeSection !== "orders") {
+      return;
+    }
+
+    void refreshInvoiceChangeRequests(
+      sessionUser?.role === "management" && activeSection === "invoice-change-requests" ? "pending" : "all",
+    );
   }, [activeSection, sessionUser]);
 
   useEffect(() => {
@@ -8006,6 +8098,187 @@ export default function App() {
         tone: "error",
         message: error instanceof Error ? error.message : "No fue posible imprimir la factura.",
       });
+    }
+  }
+
+  async function refreshInvoiceChangeRequests(status: "pending" | "all" = "pending") {
+    try {
+      setIsLoadingInvoiceChangeRequests(true);
+      setInvoiceChangeRequestsError("");
+      const response = await fetch(`${apiBaseUrl}/management/invoice-change-requests?status=${status}`);
+      const data = (await response.json()) as InvoiceChangeRequestRecord[] | { message?: string };
+
+      if (!response.ok || !Array.isArray(data)) {
+        setInvoiceChangeRequestsError(Array.isArray(data) ? "No fue posible cargar las solicitudes." : data.message ?? "No fue posible cargar las solicitudes.");
+        return;
+      }
+
+      setInvoiceChangeRequests(data);
+    } catch {
+      setInvoiceChangeRequestsError("No fue posible conectar con el backend.");
+    } finally {
+      setIsLoadingInvoiceChangeRequests(false);
+    }
+  }
+
+  function openInvoiceChangeModal(order: SellerOrderRecord) {
+    setInvoiceChangeOrder(order);
+    setInvoiceChangeItemDraft(
+      Object.fromEntries(order.items.map((item) => [item.productId, String(item.quantity)])),
+    );
+    setInvoiceChangeNotes("");
+    setInvoiceChangeStatus(null);
+  }
+
+  function closeInvoiceChangeModal() {
+    setInvoiceChangeOrder(null);
+    setInvoiceChangeItemDraft({});
+    setInvoiceChangeNotes("");
+    setInvoiceChangeStatus(null);
+  }
+
+  function removeInvoiceChangeItem(productId: string) {
+    if (!invoiceChangeOrder) {
+      return;
+    }
+
+    const remainingProductIds = Object.keys(invoiceChangeItemDraft).filter((currentProductId) => currentProductId !== productId);
+
+    if (remainingProductIds.length === 0) {
+      setInvoiceChangeStatus({ tone: "error", message: "La factura debe conservar al menos un producto." });
+      return;
+    }
+
+    setInvoiceChangeItemDraft((current) => {
+      const next = { ...current };
+      delete next[productId];
+      return next;
+    });
+    setInvoiceChangeStatus(null);
+  }
+
+  async function handleSubmitInvoiceChangeRequest() {
+    if (!invoiceChangeOrder || !sessionUser) {
+      return;
+    }
+
+    if (pendingInvoiceChangeOrderIds.has(String(invoiceChangeOrder._id))) {
+      setInvoiceChangeStatus({ tone: "error", message: "Ya existe una solicitud pendiente para este pedido." });
+      return;
+    }
+
+    const nextItems = invoiceChangeOrder.items
+      .filter((item) => item.productId in invoiceChangeItemDraft)
+      .map((item) => ({
+        productId: item.productId,
+        stockCurrent: item.stockCurrent,
+        quantity: Number(invoiceChangeItemDraft[item.productId] ?? item.quantity),
+        notes: item.notes,
+      }))
+      .filter((item) => Number.isFinite(item.quantity) && item.quantity > 0);
+
+    if (nextItems.length === 0) {
+      setInvoiceChangeStatus({ tone: "error", message: "La factura debe conservar al menos un producto con cantidad mayor a cero." });
+      return;
+    }
+
+    if (!invoiceChangeItemsDirty) {
+      setInvoiceChangeStatus({ tone: "error", message: "Realiza al menos un cambio antes de solicitar la correccion." });
+      return;
+    }
+
+    try {
+      setIsSubmittingInvoiceChangeRequest(true);
+      setInvoiceChangeStatus(null);
+
+      const response = await fetch(`${apiBaseUrl}/warehouse/orders/${invoiceChangeOrder._id}/invoice-change-requests`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: nextItems,
+          requestNotes: invoiceChangeNotes,
+          requestedByUserId: sessionUser.id,
+          requestedByUserName: sessionUser.name,
+          requestedByRole: sessionUser.role,
+        }),
+      });
+      const data = (await response.json()) as { message?: string };
+
+      if (!response.ok) {
+        throw new Error(data.message ?? "No fue posible enviar la solicitud.");
+      }
+
+      closeInvoiceChangeModal();
+      setWarehouseOrderCompletionStatus({
+        tone: "success",
+        message: data.message ?? "Solicitud enviada a gerencia para aprobacion.",
+      });
+      await refreshInvoiceChangeRequests("all");
+    } catch (error) {
+      setInvoiceChangeStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible enviar la solicitud.",
+      });
+    } finally {
+      setIsSubmittingInvoiceChangeRequest(false);
+    }
+  }
+
+  async function handleReviewInvoiceChangeRequest(
+    requestId: string,
+    action: "approve" | "reject",
+  ) {
+    if (!sessionUser) {
+      return;
+    }
+
+    try {
+      setIsReviewingInvoiceChangeRequest(true);
+      setInvoiceChangeReviewStatus(null);
+
+      const response = await fetch(`${apiBaseUrl}/management/invoice-change-requests/${requestId}/${action}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reviewedByUserId: sessionUser.id,
+          reviewedByUserName: sessionUser.name,
+          reviewNotes: invoiceChangeReviewNotesDraft[requestId] ?? "",
+        }),
+      });
+      const data = (await response.json()) as {
+        message?: string;
+        order?: SellerOrderRecord;
+      };
+
+      if (!response.ok) {
+        throw new Error(data.message ?? "No fue posible revisar la solicitud.");
+      }
+
+      if (action === "approve" && data.order) {
+        setWarehouseOrders((current) => current.map((order) => (
+          String(order._id) === String(data.order!._id) ? { ...data.order!, items: data.order!.items ?? [] } : order
+        )));
+        await refreshInventorySummary();
+        await refreshCarteraData(carteraMonthFilter);
+      }
+
+      setInvoiceChangeReviewNotesDraft((current) => {
+        const next = { ...current };
+        delete next[requestId];
+        return next;
+      });
+      await refreshInvoiceChangeRequests("pending");
+      setInvoiceChangeReviewStatus({
+        tone: "success",
+        message: data.message ?? (action === "approve" ? "Solicitud aprobada." : "Solicitud rechazada."),
+      });
+    } catch (error) {
+      setInvoiceChangeReviewStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible revisar la solicitud.",
+      });
+    } finally {
+      setIsReviewingInvoiceChangeRequest(false);
     }
   }
 
@@ -13226,6 +13499,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 ? "Catálogo"
               : activeSection === "cartera"
                 ? "Cartera"
+              : activeSection === "invoice-change-requests"
+                ? "Solicitudes de factura"
               : activeSection === "imports"
                 ? "Exportaciones"
                 : activeSection === "import-billing"
@@ -13261,6 +13536,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 ? "Arma catálogos por categorías o productos, luego define el precio de venta por cliente con un porcentaje global o ajustes manuales."
               : activeSection === "cartera"
                 ? "Consulta los pedidos facturados desde bodega y el metodo de pago registrado por cada cliente."
+              : activeSection === "invoice-change-requests"
+                ? "Revisa y aprueba correcciones solicitadas sobre facturas ya completadas. Al aprobar, se actualizan la factura y el inventario."
               : activeSection === "imports"
                 ? "Registra contenedores, define gastos generales de exportación y distribuye el costo real entre los productos recibidos."
                 : activeSection === "import-billing"
@@ -19183,6 +19460,125 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               </div>
             ) : null}
           </section>
+        ) : activeSection === "invoice-change-requests" ? (
+          <section className="routes-layout">
+            <article className="creation-selector-block">
+              <p className="section-label">Ventas</p>
+              <h2>Solicitudes de correccion de factura</h2>
+              <p className="route-helper-text">Aprueba o rechaza cambios solicitados sobre pedidos ya facturados. Al aprobar, se corrigen la factura y el inventario.</p>
+            </article>
+
+            {invoiceChangeReviewStatus ? (
+              <p className={`form-feedback ${invoiceChangeReviewStatus.tone === "error" ? "error" : "success"}`}>
+                {invoiceChangeReviewStatus.message}
+              </p>
+            ) : null}
+
+            <article className="database-card">
+              <div className="management-table-header">
+                <div>
+                  <h2>Pendientes de aprobacion</h2>
+                  <p>Compara la factura actual con la propuesta antes de aprobar.</p>
+                </div>
+                <p className="management-table-meta">
+                  {invoiceChangeRequests.filter((request) => request.status === "pending").length} solicitudes
+                </p>
+              </div>
+
+              {invoiceChangeRequestsError ? <p className="form-feedback error">{invoiceChangeRequestsError}</p> : null}
+
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Factura</th>
+                      <th>Cliente</th>
+                      <th>Solicitante</th>
+                      <th>Actual</th>
+                      <th>Propuesto</th>
+                      <th>Detalle</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isLoadingInvoiceChangeRequests ? (
+                      <tr>
+                        <td colSpan={8} className="empty-table-cell">Cargando solicitudes...</td>
+                      </tr>
+                    ) : invoiceChangeRequests.filter((request) => request.status === "pending").length > 0 ? (
+                      invoiceChangeRequests.filter((request) => request.status === "pending").map((request) => (
+                        <tr key={request._id}>
+                          <td>{formatSellerOrderDate(request.createdAt)}</td>
+                          <td>{request.invoiceNumber ? `#${request.invoiceNumber}` : "-"}</td>
+                          <td>{request.storeName}</td>
+                          <td>{request.requestedByUserName}</td>
+                          <td>{formatCurrency(request.currentInvoiceAmountAwg)}</td>
+                          <td>{formatCurrency(request.proposedInvoiceAmountAwg)}</td>
+                          <td>
+                            <details>
+                              <summary>Ver cambios</summary>
+                              <div className="warehouse-order-hints">
+                                {request.proposedItems.map((item) => {
+                                  const currentItem = request.currentItems.find((entry) => entry.productId === item.productId);
+                                  const currentQty = Number(currentItem?.quantity ?? 0);
+                                  const nextQty = Number(item.quantity ?? 0);
+
+                                  if (currentQty === nextQty) {
+                                    return null;
+                                  }
+
+                                  return (
+                                    <p key={`${request._id}-${item.productId}`}>
+                                      {item.productSku} · {item.productName}: {currentQty} → {nextQty}
+                                    </p>
+                                  );
+                                })}
+                                {request.requestNotes ? <p>Nota: {request.requestNotes}</p> : null}
+                              </div>
+                            </details>
+                          </td>
+                          <td className="table-actions-cell">
+                            <input
+                              className="import-table-input"
+                              type="text"
+                              placeholder="Notas de revision"
+                              value={invoiceChangeReviewNotesDraft[request._id] ?? ""}
+                              disabled={isReviewingInvoiceChangeRequest}
+                              onChange={(event) => setInvoiceChangeReviewNotesDraft((current) => ({
+                                ...current,
+                                [request._id]: event.target.value,
+                              }))}
+                            />
+                            <button
+                              className="ghost-button"
+                              type="button"
+                              disabled={isReviewingInvoiceChangeRequest}
+                              onClick={() => void handleReviewInvoiceChangeRequest(request._id, "reject")}
+                            >
+                              Rechazar
+                            </button>
+                            <button
+                              className="submit-button"
+                              type="button"
+                              disabled={isReviewingInvoiceChangeRequest}
+                              onClick={() => void handleReviewInvoiceChangeRequest(request._id, "approve")}
+                            >
+                              Aprobar
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={8} className="empty-table-cell">No hay solicitudes pendientes.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          </section>
         ) : activeSection === "orders" ? (
           <section className="routes-layout">
             <article className="creation-selector-block">
@@ -19326,6 +19722,20 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                   <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
                                 </svg>
                               </button>
+                              {(sessionUser.role === "management" || sessionUser.role === "contabilidad") ? (
+                                <button
+                                  className="table-action-icon"
+                                  type="button"
+                                  aria-label="Editar factura"
+                                  title={pendingInvoiceChangeOrderIds.has(String(order._id)) ? "Solicitud pendiente" : "Editar factura"}
+                                  disabled={isDeletingOrder || pendingInvoiceChangeOrderIds.has(String(order._id))}
+                                  onClick={() => openInvoiceChangeModal(order)}
+                                >
+                                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                    <path d="M4 20h4l10-10-4-4L4 16v4zm12.7-12.3 1.6-1.6a1 1 0 0 1 1.4 0l1.2 1.2a1 1 0 0 1 0 1.4L19.3 10l-2.6-2.3z" fill="currentColor" />
+                                  </svg>
+                                </button>
+                              ) : null}
                               <button
                                 className="table-action-icon"
                                 type="button"
@@ -19433,6 +19843,125 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
         ) : (
           <section className="dashboard-grid" />
         )}
+
+        {invoiceChangeOrder ? (
+          <div className="modal-overlay" role="presentation" onClick={closeInvoiceChangeModal}>
+            <div className="modal-card modal-card--wide" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+              <div className="modal-header">
+                <div>
+                  <p className="section-label">Correccion de factura</p>
+                  <h2>{invoiceChangeOrder.storeName}</h2>
+                  <p>{invoiceChangeOrder.salesRepName} · {formatSellerOrderDate(invoiceChangeOrder.updatedAt)}</p>
+                </div>
+                <button className="modal-close-button" type="button" onClick={closeInvoiceChangeModal}>Cerrar</button>
+              </div>
+
+              <p className="route-helper-text">
+                Ajusta cantidades o quita productos. Los cambios no se aplican de inmediato: se enviaran a gerencia para aprobacion.
+              </p>
+
+              <div className="table-wrap table-wrap--warehouse-items">
+                <table className="data-table data-table--warehouse-order-items">
+                  <thead>
+                    <tr>
+                      <th>SKU</th>
+                      <th>Producto</th>
+                      <th>Cant. actual</th>
+                      <th>Nueva cant.</th>
+                      <th>Precio</th>
+                      <th>Total</th>
+                      <th>Quitar</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {invoiceChangePricedItems.map((item) => {
+                      const originalItem = invoiceChangeOrder.items.find((entry) => entry.productId === item.productId);
+
+                      return (
+                        <tr key={`invoice-change-${item.productId}`}>
+                          <td>{item.productSku}</td>
+                          <td>{item.productName}</td>
+                          <td>{originalItem?.quantity ?? item.quantity}</td>
+                          <td>
+                            <input
+                              className="warehouse-order-qty-input"
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={invoiceChangeItemDraft[item.productId] ?? String(item.quantity)}
+                              onChange={(event) => {
+                                setInvoiceChangeItemDraft((current) => ({
+                                  ...current,
+                                  [item.productId]: event.target.value,
+                                }));
+                                setInvoiceChangeStatus(null);
+                              }}
+                            />
+                          </td>
+                          <td>{formatCurrency(item.resolvedSalePrice)}</td>
+                          <td>{formatCurrency(item.lineTotal)}</td>
+                          <td>
+                            <button
+                              className="ghost-button warehouse-order-remove-item"
+                              type="button"
+                              onClick={() => removeInvoiceChangeItem(item.productId)}
+                            >
+                              Quitar
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="import-summary-grid">
+                <div className="import-summary-card">
+                  <p>Total actual estimado</p>
+                  <strong>{formatCurrency(invoiceChangeOrder.items.reduce((sum, item) => {
+                    const invRow = inventoryRowsByProductId.get(item.productId);
+                    const productOption = productOptionsById.get(item.productId);
+                    const price = Number(invRow?.salePrice ?? productOption?.salePrice ?? 0);
+                    return sum + price * Number(item.quantity ?? 0);
+                  }, 0))}</strong>
+                </div>
+                <div className="import-summary-card">
+                  <p>Total propuesto</p>
+                  <strong>{formatCurrency(invoiceChangeTotal)}</strong>
+                </div>
+              </div>
+
+              <label className="field">
+                <span>Motivo del cambio (opcional)</span>
+                <textarea
+                  value={invoiceChangeNotes}
+                  rows={3}
+                  placeholder="Ejemplo: el cliente devolvio 2 unidades por error de conteo."
+                  onChange={(event) => setInvoiceChangeNotes(event.target.value)}
+                />
+              </label>
+
+              {invoiceChangeStatus ? (
+                <p className={`form-feedback ${invoiceChangeStatus.tone === "error" ? "error" : "success"}`}>
+                  {invoiceChangeStatus.message}
+                </p>
+              ) : null}
+
+              <div className="catalog-form-actions inventory-adjustment-actions">
+                <button className="ghost-button" type="button" onClick={closeInvoiceChangeModal}>Cancelar</button>
+                <button
+                  className="submit-button"
+                  type="button"
+                  disabled={isSubmittingInvoiceChangeRequest || !invoiceChangeItemsDirty}
+                  onClick={() => void handleSubmitInvoiceChangeRequest()}
+                >
+                  {isSubmittingInvoiceChangeRequest ? "Enviando solicitud..." : "Solicitar cambio"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {isCreationSection && isCreationModalOpen ? (
           <div className="modal-overlay" role="presentation" onClick={closeCreationModal}>

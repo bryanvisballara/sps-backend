@@ -10,8 +10,8 @@ export declare const ExportRequest: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     };
-    requestedUnits: number;
     requestedByRole: "colombia-ops" | "management" | "warehouse";
+    requestedUnits: number;
 } & import("mongoose").DefaultTimestampProps, {}, {}, {}, import("mongoose").Document<unknown, {}, {
     status: "received" | "pending" | "approved" | "in-transit";
     productId: {
@@ -23,8 +23,8 @@ export declare const ExportRequest: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     };
-    requestedUnits: number;
     requestedByRole: "colombia-ops" | "management" | "warehouse";
+    requestedUnits: number;
 } & import("mongoose").DefaultTimestampProps, {}, {
     timestamps: true;
 }> & {
@@ -38,8 +38,8 @@ export declare const ExportRequest: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     };
-    requestedUnits: number;
     requestedByRole: "colombia-ops" | "management" | "warehouse";
+    requestedUnits: number;
 } & import("mongoose").DefaultTimestampProps & {
     _id: Types.ObjectId;
 } & {
@@ -57,8 +57,8 @@ export declare const ExportRequest: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     };
-    requestedUnits: number;
     requestedByRole: "colombia-ops" | "management" | "warehouse";
+    requestedUnits: number;
 } & import("mongoose").DefaultTimestampProps, import("mongoose").Document<unknown, {}, import("mongoose").FlatRecord<{
     status: "received" | "pending" | "approved" | "in-transit";
     productId: {
@@ -70,8 +70,8 @@ export declare const ExportRequest: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     };
-    requestedUnits: number;
     requestedByRole: "colombia-ops" | "management" | "warehouse";
+    requestedUnits: number;
 } & import("mongoose").DefaultTimestampProps>, {}, import("mongoose").MergeType<import("mongoose").DefaultSchemaOptions, {
     timestamps: true;
 }>> & import("mongoose").FlatRecord<{
@@ -85,8 +85,8 @@ export declare const ExportRequest: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     };
-    requestedUnits: number;
     requestedByRole: "colombia-ops" | "management" | "warehouse";
+    requestedUnits: number;
 } & import("mongoose").DefaultTimestampProps> & {
     _id: Types.ObjectId;
 } & {
