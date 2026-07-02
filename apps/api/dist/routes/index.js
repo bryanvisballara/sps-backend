@@ -2383,11 +2383,15 @@ async function cleanupOrphanCarteraEntries() {
         return;
     }
     const orderIds = Array.from(new Set(activeEntries.map((entry) => String(entry.orderId ?? "")).filter(Boolean)));
-    const existingOrders = await Order.find({ _id: { $in: orderIds } }).select({ _id: 1 }).lean();
-    const existingOrderIds = new Set(existingOrders.map((order) => String(order._id)));
+    const existingOrders = await Order.find({ _id: { $in: orderIds } }).select({ _id: 1, status: 1 }).lean();
+    const orderStatusById = new Map(existingOrders.map((order) => [String(order._id), String(order.status ?? "")]));
     for (const entry of activeEntries) {
         const orderId = String(entry.orderId ?? "");
-        if (orderId && !existingOrderIds.has(orderId)) {
+        if (!orderId) {
+            continue;
+        }
+        const orderStatus = orderStatusById.get(orderId);
+        if (!orderStatus || orderStatus !== "delivered") {
             await deactivateCarteraForOrder(orderId);
         }
     }
@@ -2450,7 +2454,6 @@ apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
             return;
         }
         if (order.status === "dispatched") {
-            const existingEntry = await CarteraEntry.findOne({ orderId: String(order._id), active: { $ne: false } }).lean();
             response.json({
                 message: "El pedido ya estaba en despacho.",
                 order: {
@@ -2458,7 +2461,7 @@ apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
                     status: order.status,
                     updatedAt: order.updatedAt,
                 },
-                invoiceNumber: Number(existingEntry?.invoiceNumber ?? 0) || null,
+                invoiceNumber: null,
             });
             return;
         }
@@ -2466,9 +2469,6 @@ apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
             response.status(400).json({ message: "Solo puedes enviar a despacho pedidos recibidos en bodega." });
             return;
         }
-        const invoiceAmountAwg = normalizeCarteraInvoiceAmount(request.body?.invoiceAmountAwg);
-        const invoiceNumber = await getNextInvoiceNumber();
-        const invoicedAt = resolveOrderInvoiceDate(order);
         const orderItems = Array.isArray(order.items) ? order.items : [];
         const itemsWithPrices = mergeOrderItemPrices(orderItems, request.body?.items);
         const updatedOrder = await Order.findByIdAndUpdate(request.params.id, { status: "dispatched", items: itemsWithPrices }, { new: true, runValidators: true }).lean();
@@ -2476,24 +2476,7 @@ apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
             response.status(404).json({ message: "El pedido no existe." });
             return;
         }
-        await CarteraEntry.findOneAndUpdate({ orderId: String(updatedOrder._id) }, {
-            orderId: String(updatedOrder._id),
-            storeId: String(updatedOrder.storeId ?? ""),
-            storeName: String(updatedOrder.storeName ?? ""),
-            salesRepId: String(updatedOrder.salesRepId ?? ""),
-            salesRepName: String(updatedOrder.salesRepName ?? ""),
-            routeId: String(updatedOrder.routeId ?? ""),
-            routeName: String(updatedOrder.routeName ?? ""),
-            routeDay: String(updatedOrder.routeDay ?? ""),
-            deliveryZone: String(updatedOrder.deliveryZone ?? ""),
-            paymentMethod: "credito",
-            invoiceAmountAwg,
-            invoiceNumber,
-            collectedAmountAwg: 0,
-            outstandingAmountAwg: invoiceAmountAwg,
-            invoicedAt,
-            active: true,
-        }, { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true });
+        await deactivateCarteraForOrder(String(updatedOrder._id));
         response.json({
             message: "Pedido enviado a despacho correctamente.",
             order: {
@@ -2501,14 +2484,13 @@ apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
                 status: updatedOrder.status,
                 updatedAt: updatedOrder.updatedAt,
             },
-            invoiceNumber,
+            invoiceNumber: null,
         });
         void notifyContabilidadOrderDispatched({
             _id: updatedOrder._id,
             storeName: updatedOrder.storeName,
             salesRepName: updatedOrder.salesRepName,
             routeName: updatedOrder.routeName,
-            invoiceNumber,
         });
     }
     catch (error) {
@@ -2545,8 +2527,7 @@ apiRouter.put("/warehouse/orders/:id/complete", async (request, response) => {
         const isCreditInvoice = paymentMethod === "credito";
         const initialCollectedAmountAwg = isCreditInvoice ? 0 : invoiceAmountAwg;
         const initialOutstandingAmountAwg = isCreditInvoice ? invoiceAmountAwg : 0;
-        const existingCarteraEntry = await CarteraEntry.findOne({ orderId: String(order._id), active: { $ne: false } }).lean();
-        const invoiceNumber = Number(existingCarteraEntry?.invoiceNumber ?? 0) || await getNextInvoiceNumber();
+        const invoiceNumber = await getNextInvoiceNumber();
         const orderItems = Array.isArray(order.items) ? order.items : [];
         const itemsWithPrices = mergeOrderItemPrices(orderItems, request.body?.items);
         await applyOrderInventoryDeduction({
@@ -5643,6 +5624,7 @@ apiRouter.get("/warehouse/cartera/pending-credit", async (request, response) => 
         response.status(400).json({ message: "Indica el cliente para consultar su credito pendiente." });
         return;
     }
+    await cleanupOrphanCarteraEntries();
     const entries = await CarteraEntry.find({
         storeId,
         active: { $ne: false },
