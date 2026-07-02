@@ -735,6 +735,7 @@ type SellerOrderRecord = {
     stockCurrent: number | null;
     quantity: number;
     notes: string;
+    salePriceAwg?: number;
     productName: string;
     productSku: string;
   }>;
@@ -2516,6 +2517,17 @@ function getOrderDeliveryDateKey(order: SellerOrderRecord) {
   return order.deliveryDate || order.createdAt.slice(0, 10);
 }
 
+function getOrderInvoiceDate(order: SellerOrderRecord) {
+  const deliveryKey = getOrderDeliveryDateKey(order);
+  const parsed = new Date(`${deliveryKey}T12:00:00`);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return new Date(order.updatedAt || order.createdAt);
+  }
+
+  return parsed;
+}
+
 function formatDeliveryDateLabel(dateKey: string) {
   const parsed = new Date(`${dateKey}T12:00:00`);
 
@@ -3901,6 +3913,9 @@ export default function App() {
   const [warehousePendingCreditError, setWarehousePendingCreditError] = useState("");
   const [warehouseOrderItemDraft, setWarehouseOrderItemDraft] = useState<Record<string, string>>({});
   const [warehouseOrderPriceDraft, setWarehouseOrderPriceDraft] = useState<Record<string, string>>({});
+  const [accountingOrderPriceDraft, setAccountingOrderPriceDraft] = useState<Record<string, string>>({});
+  const [isSavingAccountingOrderPrices, setIsSavingAccountingOrderPrices] = useState(false);
+  const [accountingOrderPriceStatus, setAccountingOrderPriceStatus] = useState<CreationStatus | null>(null);
   const [warehouseOrderDiscountDraft, setWarehouseOrderDiscountDraft] = useState("");
   const [warehouseAddProductModalOpen, setWarehouseAddProductModalOpen] = useState(false);
   const [warehouseAddProductDraft, setWarehouseAddProductDraft] = useState({ productId: "", quantity: "1" });
@@ -4373,7 +4388,10 @@ export default function App() {
     ? warehouseOrderEffectiveItems.map((item) => {
       const catalogItem = catalogPreviewItems.find((previewItem) => previewItem.productId === item.productId);
       const productOption = productOptionsById.get(item.productId);
-      const defaultSalePrice = roundCurrencyValue(Number(catalogItem?.salePrice ?? productOption?.salePrice ?? 0));
+      const storedSalePrice = Number(item.salePriceAwg ?? 0);
+      const hasFrozenPrice = storedSalePrice > 0;
+      const liveSalePrice = roundCurrencyValue(Number(catalogItem?.salePrice ?? productOption?.salePrice ?? 0));
+      const defaultSalePrice = hasFrozenPrice ? roundCurrencyValue(storedSalePrice) : liveSalePrice;
       const quantity = selectedWarehouseOrderDetail.status === "delivered"
         ? Number(item.quantity ?? 0)
         : Number(warehouseOrderItemDraft[item.productId] ?? item.quantity ?? 0);
@@ -4389,11 +4407,13 @@ export default function App() {
         defaultSalePrice,
         resolvedSalePrice,
         lineTotal: roundCurrencyValue(resolvedSalePrice * quantity),
-        priceSource: catalogItem
-          ? "catalog"
-          : productOption?.variableSalePrice
-            ? "variable"
-            : "product",
+        priceSource: hasFrozenPrice
+          ? "frozen"
+          : catalogItem
+            ? "catalog"
+            : productOption?.variableSalePrice
+              ? "variable"
+              : "product",
       };
     })
     : [];
@@ -5934,6 +5954,30 @@ export default function App() {
   }, [selectedWarehouseOrderDetail, sessionUser]);
 
   useEffect(() => {
+    if (sessionUser?.role !== "contabilidad" || !selectedWarehouseOrderDetail) {
+      setAccountingOrderPriceDraft({});
+      setAccountingOrderPriceStatus(null);
+      return;
+    }
+
+    setAccountingOrderPriceDraft(
+      Object.fromEntries(
+        selectedWarehouseOrderDetail.items.map((item) => {
+          const storedPrice = Number(item.salePriceAwg ?? 0);
+          const productOption = productOptions.find((option) => option.value === item.productId);
+          const invRow = inventoryRows.find((row) => row.productId === item.productId);
+          const fallbackPrice = storedPrice > 0
+            ? storedPrice
+            : Number(invRow?.salePrice ?? productOption?.salePrice ?? 0);
+
+          return [item.productId, fallbackPrice > 0 ? String(fallbackPrice) : ""];
+        }),
+      ),
+    );
+    setAccountingOrderPriceStatus(null);
+  }, [selectedWarehouseOrderDetail, sessionUser?.role, productOptions, inventoryRows]);
+
+  useEffect(() => {
     if ((sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "contabilidad") || warehouseActiveSection !== "orders" || !selectedWarehouseOrderDetail) {
       return;
     }
@@ -6399,8 +6443,20 @@ export default function App() {
           ) : (
             <div className="seller-product-thumb seller-product-thumb-placeholder">SIN IMAGEN</div>
           )}
-          <div>
-            <strong>{product.name}</strong>
+          <div className="seller-product-catalog-product-copy">
+            <div className="seller-product-catalog-product-title">
+              <strong>{product.name}</strong>
+              <button
+                className="seller-assigned-product-remove"
+                type="button"
+                aria-label={`Quitar ${product.name}`}
+                title="Quitar producto del cliente"
+                disabled={isRemoving}
+                onClick={() => void handleRemoveProductFromSellerClient(storeId, product.productId)}
+              >
+                {isRemoving ? "..." : "×"}
+              </button>
+            </div>
             <small>SKU {product.sku}{product.category ? ` · ${product.category}` : ""}</small>
           </div>
         </div>
@@ -6456,16 +6512,6 @@ export default function App() {
               />
             </label>
           ) : null}
-          <button
-            className="seller-assigned-product-remove"
-            type="button"
-            aria-label={`Quitar ${product.name}`}
-            title="Quitar producto del cliente"
-            disabled={isRemoving}
-            onClick={() => void handleRemoveProductFromSellerClient(storeId, product.productId)}
-          >
-            {isRemoving ? "..." : "x"}
-          </button>
         </div>
       </article>
     );
@@ -8426,7 +8472,7 @@ export default function App() {
     return buildCommercialInvoicePdf({
       documentKind,
       invoiceNumber: invoiceNumber ?? null,
-      invoiceDate: new Date(),
+      invoiceDate: getOrderInvoiceDate(order),
       billToName: order.storeName,
       billToLocation: order.deliveryZone || order.routeName || "",
       lineItems,
@@ -8609,6 +8655,75 @@ export default function App() {
     }
   }
 
+  async function handleSaveAccountingOrderPrices() {
+    if (!selectedWarehouseOrderDetail || sessionUser?.role !== "contabilidad") {
+      return;
+    }
+
+    if (selectedWarehouseOrderDetail.status !== "submitted") {
+      setAccountingOrderPriceStatus({ tone: "error", message: "Solo puedes ajustar precios en pedidos recibidos." });
+      return;
+    }
+
+    const nextItems = selectedWarehouseOrderDetail.items.map((item) => {
+      const draftValue = accountingOrderPriceDraft[item.productId];
+      const salePriceAwg = roundCurrencyValue(Number(draftValue ?? item.salePriceAwg ?? 0));
+
+      if (!Number.isFinite(salePriceAwg) || salePriceAwg < 0) {
+        throw new Error(`El precio de ${item.productName} no es valido.`);
+      }
+
+      return {
+        productId: item.productId,
+        stockCurrent: item.stockCurrent,
+        quantity: item.quantity,
+        notes: item.notes,
+        salePriceAwg,
+      };
+    });
+
+    try {
+      setIsSavingAccountingOrderPrices(true);
+      setAccountingOrderPriceStatus(null);
+      const response = await fetch(`${apiBaseUrl}/warehouse/orders/${selectedWarehouseOrderDetail._id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: nextItems }),
+      });
+      const data = (await response.json()) as { message?: string; order?: SellerOrderRecord };
+
+      if (!response.ok || !data.order) {
+        throw new Error(data.message ?? "No fue posible guardar los precios del pedido.");
+      }
+
+      const updatedOrder = {
+        ...data.order,
+        items: Array.isArray(data.order.items) ? data.order.items : [],
+      };
+
+      setWarehouseOrders((current) => current.map((order) => (
+        String(order._id) === String(updatedOrder._id) ? updatedOrder : order
+      )));
+      setSelectedWarehouseOrderDetail(updatedOrder);
+      setAccountingOrderPriceDraft(
+        Object.fromEntries(
+          updatedOrder.items.map((item) => [
+            item.productId,
+            Number(item.salePriceAwg ?? 0) > 0 ? String(item.salePriceAwg) : "",
+          ]),
+        ),
+      );
+      setAccountingOrderPriceStatus({ tone: "success", message: data.message ?? "Precios del pedido guardados correctamente." });
+    } catch (error) {
+      setAccountingOrderPriceStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible guardar los precios del pedido.",
+      });
+    } finally {
+      setIsSavingAccountingOrderPrices(false);
+    }
+  }
+
   function validateWarehouseOrderBeforeClosing() {
     if (!selectedWarehouseOrderDetail) {
       return "No hay un pedido seleccionado.";
@@ -8659,6 +8774,10 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           invoiceAmountAwg: warehouseInvoiceTotal,
+          items: warehousePricedItems.map((item) => ({
+            productId: item.productId,
+            salePriceAwg: item.resolvedSalePrice,
+          })),
         }),
       });
       const responseText = await response.text();
@@ -8799,6 +8918,10 @@ export default function App() {
         body: JSON.stringify({
           paymentMethod: warehousePaymentMethodDraft,
           invoiceAmountAwg: warehouseInvoiceTotal,
+          items: warehousePricedItems.map((item) => ({
+            productId: item.productId,
+            salePriceAwg: item.resolvedSalePrice,
+          })),
           creditCollections: warehouseSelectedCreditCollections.map((draft) => ({
             carteraEntryId: draft.carteraEntryId,
             amountAwg: Number(draft.amountAwg || 0),
@@ -8886,7 +9009,7 @@ export default function App() {
         invoiceNumber: data.carteraEntry?.invoiceNumber ?? null,
         invoiceDate: data.carteraEntry?.invoicedAt
           ? new Date(data.carteraEntry.invoicedAt)
-          : new Date(order.updatedAt),
+          : getOrderInvoiceDate(order),
         billToName: order.storeName,
         billToLocation: order.deliveryZone || order.routeName,
         lineItems: data.items.map((item) => ({
@@ -20944,6 +21067,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </div>
                   </div>
 
+                  {selectedWarehouseOrderDetail.status === "submitted" ? (
+                    <p className="route-helper-text">
+                      Ajusta el precio de venta por producto para este pedido. Bodega usara estos valores al generar el despacho y la factura tomara la fecha de entrega programada.
+                    </p>
+                  ) : null}
+
                   <div className="table-wrap">
                     <table className="data-table">
                       <thead>
@@ -20962,8 +21091,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <tbody>
                         {selectedWarehouseOrderDetail.items.map((item) => {
                           const invRow = inventoryRowsByProductId.get(item.productId);
+                          const productOption = productOptionsById.get(item.productId);
                           const unitCostAwg = Number(invRow?.unitCost ?? 0);
-                          const salePriceAwg = Number(invRow?.salePrice ?? 0);
+                          const storedPriceAwg = Number(item.salePriceAwg ?? 0);
+                          const fallbackSalePriceAwg = storedPriceAwg > 0
+                            ? storedPriceAwg
+                            : Number(invRow?.salePrice ?? productOption?.salePrice ?? 0);
+                          const canEditAccountingOrderPrices = selectedWarehouseOrderDetail.status === "submitted";
+                          const salePriceAwg = canEditAccountingOrderPrices
+                            ? roundCurrencyValue(Number(accountingOrderPriceDraft[item.productId] ?? fallbackSalePriceAwg))
+                            : fallbackSalePriceAwg;
                           const unitUtilityAwg = salePriceAwg - unitCostAwg;
                           const totalUtilityAwg = unitUtilityAwg * Number(item.quantity ?? 0);
 
@@ -20974,7 +21111,26 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               <td>{item.stockCurrent ?? "-"}</td>
                               <td className="col-highlight"><strong>{item.quantity}</strong></td>
                               <td>{unitCostAwg > 0 ? formatAwgCurrency2(unitCostAwg) : "-"}</td>
-                              <td>{salePriceAwg > 0 ? formatAwgCurrency2(salePriceAwg) : "-"}</td>
+                              <td>
+                                {canEditAccountingOrderPrices ? (
+                                  <input
+                                    className="warehouse-order-qty-input"
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={accountingOrderPriceDraft[item.productId] ?? String(fallbackSalePriceAwg || "")}
+                                    onChange={(event) => {
+                                      setAccountingOrderPriceDraft((current) => ({
+                                        ...current,
+                                        [item.productId]: event.target.value,
+                                      }));
+                                      setAccountingOrderPriceStatus(null);
+                                    }}
+                                  />
+                                ) : (
+                                  salePriceAwg > 0 ? formatAwgCurrency2(salePriceAwg) : "-"
+                                )}
+                              </td>
                               <td>{unitCostAwg > 0 || salePriceAwg > 0 ? formatAwgCurrency2(unitUtilityAwg) : "-"}</td>
                               <td>{unitCostAwg > 0 || salePriceAwg > 0 ? formatAwgCurrency2(totalUtilityAwg) : "-"}</td>
                               <td>{item.notes || "-"}</td>
@@ -20984,6 +21140,38 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </tbody>
                     </table>
                   </div>
+
+                  {selectedWarehouseOrderDetail.status === "submitted" ? (
+                    <>
+                      {accountingOrderPriceStatus ? (
+                        <p className={`form-feedback ${accountingOrderPriceStatus.tone === "error" ? "error" : "success"}`}>
+                          {accountingOrderPriceStatus.message}
+                        </p>
+                      ) : null}
+                      <div className="catalog-form-actions">
+                        <button
+                          className="submit-button"
+                          type="button"
+                          disabled={
+                            isSavingAccountingOrderPrices
+                            || !selectedWarehouseOrderDetail.items.some((item) => {
+                              const storedPrice = Number(item.salePriceAwg ?? 0);
+                              const productOption = productOptionsById.get(item.productId);
+                              const invRow = inventoryRowsByProductId.get(item.productId);
+                              const savedPrice = storedPrice > 0
+                                ? roundCurrencyValue(storedPrice)
+                                : roundCurrencyValue(Number(invRow?.salePrice ?? productOption?.salePrice ?? 0));
+                              const draftPrice = roundCurrencyValue(Number(accountingOrderPriceDraft[item.productId] ?? savedPrice));
+                              return draftPrice !== savedPrice;
+                            })
+                          }
+                          onClick={() => void handleSaveAccountingOrderPrices()}
+                        >
+                          {isSavingAccountingOrderPrices ? "Guardando precios..." : "Guardar precios del pedido"}
+                        </button>
+                      </div>
+                    </>
+                  ) : null}
                 </div>
               </div>
             ) : null}

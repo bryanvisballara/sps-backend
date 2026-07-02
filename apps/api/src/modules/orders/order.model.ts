@@ -5,6 +5,7 @@ const orderItemSchema = new Schema(
     productId: { type: Types.ObjectId, ref: "Product", required: true },
     stockCurrent: { type: Number, min: 0 },
     quantity: { type: Number, required: true, min: 0 },
+    salePriceAwg: { type: Number, min: 0 },
     notes: { type: String, trim: true },
   },
   { _id: false },

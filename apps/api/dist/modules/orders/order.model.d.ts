@@ -21,6 +21,7 @@ export declare const Order: import("mongoose").Model<{
         };
         quantity: number;
         notes?: string | null | undefined;
+        salePriceAwg?: number | null | undefined;
         stockCurrent?: number | null | undefined;
     }, Types.Subdocument<import("bson").ObjectId, any, {
         productId: {
@@ -34,6 +35,7 @@ export declare const Order: import("mongoose").Model<{
         };
         quantity: number;
         notes?: string | null | undefined;
+        salePriceAwg?: number | null | undefined;
         stockCurrent?: number | null | undefined;
     }> & {
         productId: {
@@ -47,6 +49,7 @@ export declare const Order: import("mongoose").Model<{
         };
         quantity: number;
         notes?: string | null | undefined;
+        salePriceAwg?: number | null | undefined;
         stockCurrent?: number | null | undefined;
     }>;
     deliveryDate: NativeDate;
@@ -74,6 +77,7 @@ export declare const Order: import("mongoose").Model<{
         };
         quantity: number;
         notes?: string | null | undefined;
+        salePriceAwg?: number | null | undefined;
         stockCurrent?: number | null | undefined;
     }, Types.Subdocument<import("bson").ObjectId, any, {
         productId: {
@@ -87,6 +91,7 @@ export declare const Order: import("mongoose").Model<{
         };
         quantity: number;
         notes?: string | null | undefined;
+        salePriceAwg?: number | null | undefined;
         stockCurrent?: number | null | undefined;
     }> & {
         productId: {
@@ -100,6 +105,7 @@ export declare const Order: import("mongoose").Model<{
         };
         quantity: number;
         notes?: string | null | undefined;
+        salePriceAwg?: number | null | undefined;
         stockCurrent?: number | null | undefined;
     }>;
     deliveryDate: NativeDate;
@@ -129,6 +135,7 @@ export declare const Order: import("mongoose").Model<{
         };
         quantity: number;
         notes?: string | null | undefined;
+        salePriceAwg?: number | null | undefined;
         stockCurrent?: number | null | undefined;
     }, Types.Subdocument<import("bson").ObjectId, any, {
         productId: {
@@ -142,6 +149,7 @@ export declare const Order: import("mongoose").Model<{
         };
         quantity: number;
         notes?: string | null | undefined;
+        salePriceAwg?: number | null | undefined;
         stockCurrent?: number | null | undefined;
     }> & {
         productId: {
@@ -155,6 +163,7 @@ export declare const Order: import("mongoose").Model<{
         };
         quantity: number;
         notes?: string | null | undefined;
+        salePriceAwg?: number | null | undefined;
         stockCurrent?: number | null | undefined;
     }>;
     deliveryDate: NativeDate;
@@ -188,6 +197,7 @@ export declare const Order: import("mongoose").Model<{
         };
         quantity: number;
         notes?: string | null | undefined;
+        salePriceAwg?: number | null | undefined;
         stockCurrent?: number | null | undefined;
     }, Types.Subdocument<import("bson").ObjectId, any, {
         productId: {
@@ -201,6 +211,7 @@ export declare const Order: import("mongoose").Model<{
         };
         quantity: number;
         notes?: string | null | undefined;
+        salePriceAwg?: number | null | undefined;
         stockCurrent?: number | null | undefined;
     }> & {
         productId: {
@@ -214,6 +225,7 @@ export declare const Order: import("mongoose").Model<{
         };
         quantity: number;
         notes?: string | null | undefined;
+        salePriceAwg?: number | null | undefined;
         stockCurrent?: number | null | undefined;
     }>;
     deliveryDate: NativeDate;
@@ -241,6 +253,7 @@ export declare const Order: import("mongoose").Model<{
         };
         quantity: number;
         notes?: string | null | undefined;
+        salePriceAwg?: number | null | undefined;
         stockCurrent?: number | null | undefined;
     }, Types.Subdocument<import("bson").ObjectId, any, {
         productId: {
@@ -254,6 +267,7 @@ export declare const Order: import("mongoose").Model<{
         };
         quantity: number;
         notes?: string | null | undefined;
+        salePriceAwg?: number | null | undefined;
         stockCurrent?: number | null | undefined;
     }> & {
         productId: {
@@ -267,6 +281,7 @@ export declare const Order: import("mongoose").Model<{
         };
         quantity: number;
         notes?: string | null | undefined;
+        salePriceAwg?: number | null | undefined;
         stockCurrent?: number | null | undefined;
     }>;
     deliveryDate: NativeDate;
@@ -296,6 +311,7 @@ export declare const Order: import("mongoose").Model<{
         };
         quantity: number;
         notes?: string | null | undefined;
+        salePriceAwg?: number | null | undefined;
         stockCurrent?: number | null | undefined;
     }, Types.Subdocument<import("bson").ObjectId, any, {
         productId: {
@@ -309,6 +325,7 @@ export declare const Order: import("mongoose").Model<{
         };
         quantity: number;
         notes?: string | null | undefined;
+        salePriceAwg?: number | null | undefined;
         stockCurrent?: number | null | undefined;
     }> & {
         productId: {
@@ -322,6 +339,7 @@ export declare const Order: import("mongoose").Model<{
         };
         quantity: number;
         notes?: string | null | undefined;
+        salePriceAwg?: number | null | undefined;
         stockCurrent?: number | null | undefined;
     }>;
     deliveryDate: NativeDate;

@@ -761,6 +761,20 @@ function serializeOrderDeliveryDate(value, fallback) {
     const date = source instanceof Date ? source : new Date(source);
     return getBusinessDateKeyFromDate(Number.isNaN(date.getTime()) ? new Date() : date);
 }
+function resolveOrderInvoiceDate(order) {
+    const deliveryKey = serializeOrderDeliveryDate(order.deliveryDate, order.createdAt ? new Date(order.createdAt) : undefined);
+    const parsed = parseBusinessDateKey(deliveryKey);
+    if (!Number.isNaN(parsed.getTime())) {
+        return parsed;
+    }
+    if (order.updatedAt) {
+        const updatedAt = order.updatedAt instanceof Date ? order.updatedAt : new Date(order.updatedAt);
+        if (!Number.isNaN(updatedAt.getTime())) {
+            return updatedAt;
+        }
+    }
+    return new Date();
+}
 async function ensureOrderDeliveryDates() {
     await Order.updateMany({ $or: [{ deliveryDate: { $exists: false } }, { deliveryDate: null }] }, [{ $set: { deliveryDate: "$createdAt" } }]);
 }
@@ -890,6 +904,11 @@ function normalizeWarehouseOrderItems(rawItems, existingItems) {
         if (quantity <= 0) {
             return [];
         }
+        const payloadSalePriceAwg = Number(currentItem.salePriceAwg ?? NaN);
+        const hasPayloadSalePrice = Number.isFinite(payloadSalePriceAwg) && payloadSalePriceAwg >= 0;
+        const normalizedPayloadSalePrice = hasPayloadSalePrice
+            ? Math.round(payloadSalePriceAwg * 100) / 100
+            : undefined;
         const existingItem = existingByProductId.get(productId);
         if (!existingItem) {
             if (hasStockCurrent && (!Number.isFinite(stockCurrent) || (stockCurrent ?? 0) < 0)) {
@@ -900,8 +919,15 @@ function normalizeWarehouseOrderItems(rawItems, existingItems) {
                     stockCurrent,
                     quantity,
                     notes: notes ?? "",
+                    ...(normalizedPayloadSalePrice !== undefined ? { salePriceAwg: normalizedPayloadSalePrice } : {}),
                 }];
         }
+        const existingSalePriceAwg = Number(existingItem.salePriceAwg ?? NaN);
+        const resolvedSalePriceAwg = normalizedPayloadSalePrice !== undefined
+            ? normalizedPayloadSalePrice
+            : (Number.isFinite(existingSalePriceAwg) && existingSalePriceAwg >= 0
+                ? Math.round(existingSalePriceAwg * 100) / 100
+                : undefined);
         return [{
                 productId,
                 stockCurrent: existingItem.stockCurrent === undefined || existingItem.stockCurrent === null
@@ -909,6 +935,7 @@ function normalizeWarehouseOrderItems(rawItems, existingItems) {
                     : Number(existingItem.stockCurrent),
                 quantity,
                 notes: notes ?? (typeof existingItem.notes === "string" ? existingItem.notes.trim() : ""),
+                ...(resolvedSalePriceAwg !== undefined ? { salePriceAwg: resolvedSalePriceAwg } : {}),
             }];
     });
     if (items.length === 0) {
@@ -945,6 +972,9 @@ async function mapWarehouseOrderRecord(order) {
                 stockCurrent: item.stockCurrent === undefined || item.stockCurrent === null ? null : Number(item.stockCurrent),
                 quantity: Number(item.quantity ?? 0),
                 notes: item.notes ?? "",
+                ...(Number.isFinite(Number(item.salePriceAwg)) && Number(item.salePriceAwg) >= 0
+                    ? { salePriceAwg: Math.round(Number(item.salePriceAwg) * 100) / 100 }
+                    : {}),
                 productName: relatedProduct?.name ?? "Producto eliminado",
                 productSku: relatedProduct?.sku ?? "-",
             };
@@ -1889,6 +1919,7 @@ apiRouter.delete("/sales/orders/:id", async (request, response) => {
             response.status(400).json({ message: "No puedes borrar un pedido ya completado." });
             return;
         }
+        await deactivateCarteraForOrder(String(order._id));
         await Order.findByIdAndDelete(order._id);
         response.json({ message: "Pedido borrado correctamente." });
     }
@@ -2023,8 +2054,9 @@ async function syncDeliveredOrdersIntoCartera() {
         const invoiceAmountAwg = await calculateInvoiceAmountFromItems(items.map((item) => ({
             productId: String(item.productId ?? ""),
             quantity: Number(item.quantity ?? 0),
+            salePriceAwg: item.salePriceAwg,
         })));
-        const invoicedAt = order.updatedAt instanceof Date ? order.updatedAt : new Date(order.updatedAt ?? Date.now());
+        const invoicedAt = resolveOrderInvoiceDate(order);
         const invoiceNumber = await getNextInvoiceNumber();
         await CarteraEntry.create({
             orderId: String(order._id),
@@ -2216,6 +2248,37 @@ async function getNextInvoiceNumber() {
     }
     return candidate;
 }
+function mergeOrderItemPrices(orderItems, rawItems) {
+    const priceByProductId = new Map();
+    if (Array.isArray(rawItems)) {
+        rawItems.forEach((entry) => {
+            if (typeof entry !== "object" || entry === null) {
+                return;
+            }
+            const row = entry;
+            const productId = typeof row.productId === "string" ? row.productId.trim() : "";
+            const salePriceAwg = Number(row.salePriceAwg ?? NaN);
+            if (productId && Number.isFinite(salePriceAwg) && salePriceAwg >= 0) {
+                priceByProductId.set(productId, Math.round(salePriceAwg * 100) / 100);
+            }
+        });
+    }
+    return orderItems.map((item) => {
+        const productId = String(item.productId);
+        const nextPrice = priceByProductId.get(productId);
+        if (nextPrice !== undefined) {
+            return { ...item, salePriceAwg: nextPrice };
+        }
+        return item;
+    });
+}
+function resolveFrozenOrderItemSalePrice(item, productSalePrice = 0) {
+    const frozenPrice = Number(item.salePriceAwg ?? NaN);
+    if (Number.isFinite(frozenPrice) && frozenPrice >= 0) {
+        return Math.round(frozenPrice * 100) / 100;
+    }
+    return Math.round(Math.max(0, Number(productSalePrice ?? 0)) * 100) / 100;
+}
 async function buildWarehouseInvoiceDocumentLines(order) {
     const orderItems = Array.isArray(order.items) ? order.items : [];
     const productIds = orderItems.map((item) => String(item.productId ?? "")).filter(Boolean);
@@ -2226,7 +2289,7 @@ async function buildWarehouseInvoiceDocumentLines(order) {
     return orderItems.map((item) => {
         const product = productsById.get(String(item.productId ?? ""));
         const quantity = Number(item.quantity ?? 0);
-        const rate = Number(product?.salePrice ?? 0);
+        const rate = resolveFrozenOrderItemSalePrice(item, Number(product?.salePrice ?? 0));
         const amount = Math.round(quantity * rate * 100) / 100;
         return {
             productId: String(item.productId ?? ""),
@@ -2405,8 +2468,10 @@ apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
         }
         const invoiceAmountAwg = normalizeCarteraInvoiceAmount(request.body?.invoiceAmountAwg);
         const invoiceNumber = await getNextInvoiceNumber();
-        const invoicedAt = new Date();
-        const updatedOrder = await Order.findByIdAndUpdate(request.params.id, { status: "dispatched" }, { new: true, runValidators: true }).lean();
+        const invoicedAt = resolveOrderInvoiceDate(order);
+        const orderItems = Array.isArray(order.items) ? order.items : [];
+        const itemsWithPrices = mergeOrderItemPrices(orderItems, request.body?.items);
+        const updatedOrder = await Order.findByIdAndUpdate(request.params.id, { status: "dispatched", items: itemsWithPrices }, { new: true, runValidators: true }).lean();
         if (!updatedOrder) {
             response.status(404).json({ message: "El pedido no existe." });
             return;
@@ -2476,17 +2541,19 @@ apiRouter.put("/warehouse/orders/:id/complete", async (request, response) => {
         const paymentMethod = normalizeCarteraPaymentMethod(request.body?.paymentMethod);
         const invoiceAmountAwg = normalizeCarteraInvoiceAmount(request.body?.invoiceAmountAwg);
         const creditCollections = normalizeCreditCollectionsPayload(request.body?.creditCollections);
-        const invoicedAt = new Date();
+        const invoicedAt = resolveOrderInvoiceDate(order);
         const isCreditInvoice = paymentMethod === "credito";
         const initialCollectedAmountAwg = isCreditInvoice ? 0 : invoiceAmountAwg;
         const initialOutstandingAmountAwg = isCreditInvoice ? invoiceAmountAwg : 0;
         const existingCarteraEntry = await CarteraEntry.findOne({ orderId: String(order._id), active: { $ne: false } }).lean();
         const invoiceNumber = Number(existingCarteraEntry?.invoiceNumber ?? 0) || await getNextInvoiceNumber();
+        const orderItems = Array.isArray(order.items) ? order.items : [];
+        const itemsWithPrices = mergeOrderItemPrices(orderItems, request.body?.items);
         await applyOrderInventoryDeduction({
             _id: order._id,
-            items: Array.isArray(order.items) ? order.items : [],
+            items: orderItems,
         });
-        const updatedOrder = await Order.findByIdAndUpdate(request.params.id, { status: "delivered" }, { new: true, runValidators: true }).lean();
+        const updatedOrder = await Order.findByIdAndUpdate(request.params.id, { status: "delivered", items: itemsWithPrices }, { new: true, runValidators: true }).lean();
         if (!updatedOrder) {
             response.status(404).json({ message: "El pedido no existe." });
             return;
@@ -5515,7 +5582,8 @@ async function syncDeliveredOrdersIntoLogisticsInvoices() {
             const clientSalePriceKey = storeId ? `${storeId}:${productId}` : "";
             const catalogSalePrice = clientSalePriceKey ? Number(clientProductSalePriceMap.get(clientSalePriceKey) ?? NaN) : NaN;
             const baseSalePrice = Number(product?.salePrice ?? 0);
-            const salePriceAwg = Math.max(0, Number.isFinite(catalogSalePrice) ? catalogSalePrice : baseSalePrice);
+            const fallbackSalePrice = Math.max(0, Number.isFinite(catalogSalePrice) ? catalogSalePrice : baseSalePrice);
+            const salePriceAwg = resolveFrozenOrderItemSalePrice(item, fallbackSalePrice);
             const arubaPurchaseCostUsd = Number(product?.arubaPurchaseCostUsd ?? 0);
             const arubaUsdToAwgRate = Number(product?.arubaUsdToAwgRate ?? 1.79);
             const arubaCostAwg = arubaPurchaseCostUsd * arubaUsdToAwgRate;
@@ -5540,7 +5608,7 @@ async function syncDeliveredOrdersIntoLogisticsInvoices() {
         const existingInvoice = await LogisticsInvoice.findOne({ orderId })
             .select({ active: 1, syncExcluded: 1 })
             .lean();
-        if (existingInvoice?.syncExcluded || (existingInvoice?.active === false && orderId)) {
+        if (existingInvoice?.syncExcluded || existingInvoice) {
             return;
         }
         const totalRevenueAwg = normalizedItems.reduce((sum, item) => sum + Number(item.lineTotalAwg ?? 0), 0);

@@ -2704,14 +2704,34 @@ h1 {
   color: rgba(17, 17, 17, 0.78);
 }
 
+.seller-product-catalog-product-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.seller-product-catalog-product-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.seller-product-catalog-product-title strong {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .seller-assigned-product-remove {
-  width: 34px;
-  height: 34px;
-  border: 1px solid rgba(17, 17, 17, 0.12);
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(220, 38, 38, 0.28);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.95);
-  color: rgba(17, 17, 17, 0.72);
-  font-size: 1rem;
+  background: rgba(254, 242, 242, 0.95);
+  color: #dc2626;
+  font-size: 1.35rem;
+  font-weight: 600;
   line-height: 1;
   cursor: pointer;
 }
