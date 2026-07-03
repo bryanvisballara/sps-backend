@@ -10,6 +10,7 @@ const storeSchema = new Schema(
     phone: { type: String, trim: true },
     managerName: { type: String, trim: true },
     assignedProductIds: { type: [Types.ObjectId], ref: "Product", default: [] },
+    defaultPaymentMethod: { type: String, trim: true, default: "efectivo" },
     active: { type: Boolean, default: true },
   },
   { timestamps: true },

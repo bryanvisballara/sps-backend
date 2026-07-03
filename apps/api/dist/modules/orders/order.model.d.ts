@@ -81,6 +81,70 @@ export declare const Order: import("mongoose").Model<{
     }>;
     deliveryDate: NativeDate;
     deliveryOverdue: boolean;
+    giftItems: Types.DocumentArray<{
+        notes: string;
+        productId: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        };
+        quantity: number;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
+    }, Types.Subdocument<import("bson").ObjectId, any, {
+        notes: string;
+        productId: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        };
+        quantity: number;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
+    }> & {
+        notes: string;
+        productId: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        };
+        quantity: number;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
+    }>;
     orderNotes: string;
     invoiceNumber?: number | null | undefined;
 } & import("mongoose").DefaultTimestampProps, {}, {}, {}, import("mongoose").Document<unknown, {}, {
@@ -165,6 +229,70 @@ export declare const Order: import("mongoose").Model<{
     }>;
     deliveryDate: NativeDate;
     deliveryOverdue: boolean;
+    giftItems: Types.DocumentArray<{
+        notes: string;
+        productId: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        };
+        quantity: number;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
+    }, Types.Subdocument<import("bson").ObjectId, any, {
+        notes: string;
+        productId: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        };
+        quantity: number;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
+    }> & {
+        notes: string;
+        productId: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        };
+        quantity: number;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
+    }>;
     orderNotes: string;
     invoiceNumber?: number | null | undefined;
 } & import("mongoose").DefaultTimestampProps, {}, {
@@ -251,6 +379,70 @@ export declare const Order: import("mongoose").Model<{
     }>;
     deliveryDate: NativeDate;
     deliveryOverdue: boolean;
+    giftItems: Types.DocumentArray<{
+        notes: string;
+        productId: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        };
+        quantity: number;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
+    }, Types.Subdocument<import("bson").ObjectId, any, {
+        notes: string;
+        productId: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        };
+        quantity: number;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
+    }> & {
+        notes: string;
+        productId: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        };
+        quantity: number;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
+    }>;
     orderNotes: string;
     invoiceNumber?: number | null | undefined;
 } & import("mongoose").DefaultTimestampProps & {
@@ -341,6 +533,70 @@ export declare const Order: import("mongoose").Model<{
     }>;
     deliveryDate: NativeDate;
     deliveryOverdue: boolean;
+    giftItems: Types.DocumentArray<{
+        notes: string;
+        productId: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        };
+        quantity: number;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
+    }, Types.Subdocument<import("bson").ObjectId, any, {
+        notes: string;
+        productId: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        };
+        quantity: number;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
+    }> & {
+        notes: string;
+        productId: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        };
+        quantity: number;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
+    }>;
     orderNotes: string;
     invoiceNumber?: number | null | undefined;
 } & import("mongoose").DefaultTimestampProps, import("mongoose").Document<unknown, {}, import("mongoose").FlatRecord<{
@@ -425,6 +681,70 @@ export declare const Order: import("mongoose").Model<{
     }>;
     deliveryDate: NativeDate;
     deliveryOverdue: boolean;
+    giftItems: Types.DocumentArray<{
+        notes: string;
+        productId: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        };
+        quantity: number;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
+    }, Types.Subdocument<import("bson").ObjectId, any, {
+        notes: string;
+        productId: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        };
+        quantity: number;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
+    }> & {
+        notes: string;
+        productId: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        };
+        quantity: number;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
+    }>;
     orderNotes: string;
     invoiceNumber?: number | null | undefined;
 } & import("mongoose").DefaultTimestampProps>, {}, import("mongoose").MergeType<import("mongoose").DefaultSchemaOptions, {
@@ -511,6 +831,70 @@ export declare const Order: import("mongoose").Model<{
     }>;
     deliveryDate: NativeDate;
     deliveryOverdue: boolean;
+    giftItems: Types.DocumentArray<{
+        notes: string;
+        productId: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        };
+        quantity: number;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
+    }, Types.Subdocument<import("bson").ObjectId, any, {
+        notes: string;
+        productId: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        };
+        quantity: number;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
+    }> & {
+        notes: string;
+        productId: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        };
+        quantity: number;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
+    }>;
     orderNotes: string;
     invoiceNumber?: number | null | undefined;
 } & import("mongoose").DefaultTimestampProps> & {

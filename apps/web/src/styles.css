@@ -2628,6 +2628,28 @@ h1 {
   line-height: 1.6;
 }
 
+.seller-gifts-section {
+  margin-top: 20px;
+}
+
+.seller-gifts-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+}
+
+.seller-order-gifts-detail {
+  margin-top: 18px;
+}
+
+.warehouse-gifts-panel {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(17, 17, 17, 0.08);
+}
+
 .seller-order-submit {
   margin-top: 0;
   width: auto;

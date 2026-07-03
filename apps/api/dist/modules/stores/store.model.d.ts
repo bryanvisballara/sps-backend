@@ -28,6 +28,7 @@ export declare const Store: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     }>;
+    defaultPaymentMethod: string;
     address?: string | null | undefined;
     email?: string | null | undefined;
     phoneCountryCode?: string | null | undefined;
@@ -62,6 +63,7 @@ export declare const Store: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     }>;
+    defaultPaymentMethod: string;
     address?: string | null | undefined;
     email?: string | null | undefined;
     phoneCountryCode?: string | null | undefined;
@@ -98,6 +100,7 @@ export declare const Store: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     }>;
+    defaultPaymentMethod: string;
     address?: string | null | undefined;
     email?: string | null | undefined;
     phoneCountryCode?: string | null | undefined;
@@ -138,6 +141,7 @@ export declare const Store: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     }>;
+    defaultPaymentMethod: string;
     address?: string | null | undefined;
     email?: string | null | undefined;
     phoneCountryCode?: string | null | undefined;
@@ -172,6 +176,7 @@ export declare const Store: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     }>;
+    defaultPaymentMethod: string;
     address?: string | null | undefined;
     email?: string | null | undefined;
     phoneCountryCode?: string | null | undefined;
@@ -208,6 +213,7 @@ export declare const Store: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     }>;
+    defaultPaymentMethod: string;
     address?: string | null | undefined;
     email?: string | null | undefined;
     phoneCountryCode?: string | null | undefined;

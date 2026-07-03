@@ -160,6 +160,7 @@ type StoreOption = {
   phone: string;
   managerName: string;
   assignedProductIds: string[];
+  defaultPaymentMethod: CarteraPaymentMethod | "";
 };
 
 type OperationsClientOption = {
@@ -703,6 +704,7 @@ type StoreManagementSummary = {
     phoneCountryCode: string;
     phone: string;
     managerName: string;
+    defaultPaymentMethod: CarteraPaymentMethod | "";
     active: boolean;
     createdAt: string;
   };
@@ -769,6 +771,22 @@ type SellerActiveSection = "routes" | "orders" | "clients" | "performance";
 
 type SellerOrderDraft = Record<string, { stockCurrent: string; quantity: string; notes: string }>;
 
+type OrderGiftItemRecord = {
+  productId: string;
+  quantity: number;
+  stockRowId: string;
+  notes: string;
+  productName: string;
+  productSku: string;
+};
+
+type SellerGiftDraftItem = {
+  key: string;
+  productId: string;
+  stockRowId: string;
+  quantity: number;
+};
+
 type SellerOrderRecord = {
   _id: string;
   routeId: string;
@@ -796,15 +814,16 @@ type SellerOrderRecord = {
     productName: string;
     productSku: string;
   }>;
+  giftItems: OrderGiftItemRecord[];
 };
 
 type SellerOrderEditDraft = Record<string, string>;
 
 type WarehouseActiveSection = "inventory" | "orders" | "dispatch";
 
-type CarteraPaymentMethod = "credito" | "datafono" | "transferencia" | "efectivo";
+type CarteraPaymentMethod = "credito" | "transferencia" | "efectivo";
 
-type CarteraCollectionPaymentMethod = "datafono" | "transferencia" | "efectivo";
+type CarteraCollectionPaymentMethod = "transferencia" | "efectivo";
 
 type CarteraEntryRecord = {
   _id?: string;
@@ -817,7 +836,7 @@ type CarteraEntryRecord = {
   routeName?: string;
   routeDay?: string;
   deliveryZone?: string;
-  paymentMethod: CarteraPaymentMethod;
+  paymentMethod: CarteraPaymentMethod | "datafono";
   invoiceAmountAwg: number;
   invoiceNumber?: number | null;
   collectedAmountAwg: number;
@@ -907,8 +926,8 @@ type CarteraSummary = {
   facturacion: CarteraPeriodSummary;
   recaudo: CarteraPeriodSummary;
   outstandingTotal: number;
-  facturacionByPaymentMethod: Record<CarteraPaymentMethod, number>;
-  recaudoByPaymentMethod: Record<CarteraCollectionPaymentMethod, number>;
+  facturacionByPaymentMethod: Record<CarteraPaymentMethod, number> & { datafono?: number };
+  recaudoByPaymentMethod: Record<CarteraCollectionPaymentMethod, number> & { datafono?: number };
 };
 
 type WarehouseCreditCollectionDraft = {
@@ -1336,13 +1355,16 @@ const contabilidadAllowedSections = new Set<ActiveSection>([
 
 const carteraPaymentMethodOptions: Array<{ value: CarteraPaymentMethod; label: string }> = [
   { value: "credito", label: "Crédito" },
-  { value: "datafono", label: "Datáfono" },
   { value: "transferencia", label: "Transferencia" },
   { value: "efectivo", label: "Efectivo" },
 ];
 
+const clientDefaultPaymentMethodFieldOptions = [
+  { value: "", label: "Sin predeterminado" },
+  ...carteraPaymentMethodOptions,
+];
+
 const carteraCollectionPaymentMethodOptions: Array<{ value: CarteraCollectionPaymentMethod; label: string }> = [
-  { value: "datafono", label: "Datáfono" },
   { value: "transferencia", label: "Transferencia" },
   { value: "efectivo", label: "Efectivo" },
 ];
@@ -1753,6 +1775,10 @@ function getFormFieldInitialValue(field: FieldConfig, row: Record<string, unknow
 
   if (field.name === "arubaPurchaseCostUsd" && !row) {
     return "0";
+  }
+
+  if (field.name === "defaultPaymentMethod" && !row) {
+    return "efectivo";
   }
 
   if (!row) {
@@ -2181,12 +2207,20 @@ function getCollectionConfigs(
           optional: true,
         },
         { name: "address", label: "Dirección", type: "text", placeholder: "Main Street 12", optional: true },
+        {
+          name: "defaultPaymentMethod",
+          label: "Método de pago predeterminado",
+          type: "select",
+          options: clientDefaultPaymentMethodFieldOptions,
+          optional: true,
+        },
       ],
       tableColumns: [
         { key: "name", label: "Cliente" },
         { key: "managerName", label: "Encargado" },
         { key: "email", label: "Correo" },
         { key: "phone", label: "Telefono" },
+        { key: "defaultPaymentMethod", label: "Pago predeterminado" },
         { key: "assignedProductIds", label: "Productos asignados" },
       ],
     },
@@ -2648,6 +2682,17 @@ function downloadDataTableExcel({
   XLSX.writeFile(workbook, `${fileName}.xlsx`);
 }
 
+function buildOrderGiftItemKey(productId: string, stockRowId: string) {
+  return `${productId}::${stockRowId || "sin-lote"}`;
+}
+
+function formatWarehouseLotOptionLabel(
+  lot: InventorySummaryLot,
+  lotIndex: number,
+) {
+  return `${lot.lotName || "Lote"} · ${lot.expirationDate ? lot.expirationDate.slice(0, 10) : "Sin vencimiento"} · ${lot.quantity} und.${lot.promotion ? ` · promo ${lot.promotion.discountPercent}%` : ""}${lotIndex === 0 ? " · sugerido" : ""}`;
+}
+
 function formatSellerOrderStatus(status: SellerOrderRecord["status"]) {
   const labels: Record<SellerOrderRecord["status"], string> = {
     draft: "Borrador",
@@ -2661,9 +2706,21 @@ function formatSellerOrderStatus(status: SellerOrderRecord["status"]) {
 }
 
 function formatPaymentMethodLabel(paymentMethod: string) {
+  if (paymentMethod === "datafono") {
+    return "Datáfono";
+  }
+
   const match = carteraPaymentMethodOptions.find((option) => option.value === paymentMethod)
     ?? carteraCollectionPaymentMethodOptions.find((option) => option.value === paymentMethod);
   return match?.label ?? paymentMethod;
+}
+
+function resolveStoreDefaultPaymentMethod(value?: string): CarteraPaymentMethod | "" {
+  if (value === "credito" || value === "transferencia" || value === "efectivo") {
+    return value;
+  }
+
+  return "";
 }
 
 function getBusinessMonthKey(date = new Date()) {
@@ -3013,12 +3070,10 @@ function createInitialCarteraSummary(): CarteraSummary {
     outstandingTotal: 0,
     facturacionByPaymentMethod: {
       credito: 0,
-      datafono: 0,
       transferencia: 0,
       efectivo: 0,
     },
     recaudoByPaymentMethod: {
-      datafono: 0,
       transferencia: 0,
       efectivo: 0,
     },
@@ -4243,7 +4298,9 @@ export default function App() {
   const [accountingOrderPriceStatus, setAccountingOrderPriceStatus] = useState<CreationStatus | null>(null);
   const [warehouseOrderDiscountDraft, setWarehouseOrderDiscountDraft] = useState("");
   const [warehouseAddProductModalOpen, setWarehouseAddProductModalOpen] = useState(false);
-  const [warehouseAddProductDraft, setWarehouseAddProductDraft] = useState({ productId: "", quantity: "1" });
+  const [warehouseAddProductDraft, setWarehouseAddProductDraft] = useState({ productId: "", quantity: "1", stockRowId: "" });
+  const [warehouseAddGiftModalOpen, setWarehouseAddGiftModalOpen] = useState(false);
+  const [warehouseAddGiftDraft, setWarehouseAddGiftDraft] = useState({ productId: "", quantity: "1", stockRowId: "" });
   const [warehouseOrderEditStatus, setWarehouseOrderEditStatus] = useState<CreationStatus | null>(null);
   const [isSavingWarehouseOrderEdit, setIsSavingWarehouseOrderEdit] = useState(false);
   const [invoiceChangeOrder, setInvoiceChangeOrder] = useState<SellerOrderRecord | null>(null);
@@ -4264,6 +4321,8 @@ export default function App() {
   const [invoiceChangeReviewNotesDraft, setInvoiceChangeReviewNotesDraft] = useState<Record<string, string>>({});
   const [orderDeleteReviewNotesDraft, setOrderDeleteReviewNotesDraft] = useState<Record<string, string>>({});
   const [sellerOrderDraft, setSellerOrderDraft] = useState<SellerOrderDraft>({});
+  const [sellerGiftDraftItems, setSellerGiftDraftItems] = useState<SellerGiftDraftItem[]>([]);
+  const [sellerGiftDraft, setSellerGiftDraft] = useState({ productId: "", stockRowId: "", quantity: "1" });
   const [sellerOrderNotesDraft, setSellerOrderNotesDraft] = useState("");
   const [sellerDeliveryDateDraft, setSellerDeliveryDateDraft] = useState(() => getBusinessDateKey());
   const [sellerOrderEditDeliveryDate, setSellerOrderEditDeliveryDate] = useState(() => getBusinessDateKey());
@@ -4641,6 +4700,7 @@ export default function App() {
     const unitPrice = Number(product?.promotion?.promotionSalePrice ?? product?.salePrice ?? 0);
     return sum + roundCurrencyValue(unitPrice * item.quantity);
   }, 0);
+  const sellerGiftProductOptions = productOptions.filter((product) => product.shareWithAruba !== false);
   const inventoryRowsByProductId = inventoryRows.reduce((map, row) => {
     const current = map.get(row.productId);
 
@@ -4814,6 +4874,13 @@ export default function App() {
     ? roundCurrencyValue(Math.max(0, Number(warehouseOrderDiscountDraft || 0)))
     : 0;
   const warehouseInvoiceTotal = Math.max(0, roundCurrencyValue(warehouseOrderSubtotal - warehouseOrderDiscountAmount));
+  const warehouseGiftPricedItems = selectedWarehouseOrderDetail
+    ? (selectedWarehouseOrderDetail.giftItems ?? []).map((item) => ({
+      ...item,
+      resolvedSalePrice: 0,
+      lineTotal: 0,
+    }))
+    : [];
   const warehouseFallbackPriceCount = warehousePricedItems.filter((item) => item.priceSource !== "catalog").length;
   const invoiceChangeDraftProductIds = invoiceChangeOrder ? Object.keys(invoiceChangeItemDraft) : [];
   const invoiceChangePricedItems = invoiceChangeOrder
@@ -4890,7 +4957,7 @@ export default function App() {
           String(item.quantity) !== (warehouseOrderItemDraft[item.productId] ?? String(item.quantity))
           || expectedLotId !== String(warehouseOrderLotDraft[item.productId] ?? expectedLotId)
         );
-      });
+      }) || JSON.stringify(savedOrder.giftItems ?? []) !== JSON.stringify(selectedWarehouseOrderDetail.giftItems ?? []);
     })(),
   );
   const warehouseOrderCompletionHints: string[] = [];
@@ -6439,6 +6506,26 @@ export default function App() {
   }, [sessionUser]);
 
   useEffect(() => {
+    if (sessionUser?.role !== "sales-rep-aruba" || sellerActiveSection !== "routes") {
+      return;
+    }
+
+    void refreshInventorySummary();
+  }, [sessionUser, sellerActiveSection]);
+
+  useEffect(() => {
+    if (sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "contabilidad") {
+      return;
+    }
+
+    if (warehouseActiveSection !== "orders" && warehouseActiveSection !== "dispatch") {
+      return;
+    }
+
+    void refreshInventorySummary();
+  }, [sessionUser, warehouseActiveSection]);
+
+  useEffect(() => {
     if (sessionUser?.role !== "sales-rep-aruba") {
       return;
     }
@@ -6519,6 +6606,8 @@ export default function App() {
       setSellerClientProducts([]);
       setSellerClientProductsError("");
       setSellerOrderDraft({});
+      setSellerGiftDraftItems([]);
+      setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
       return;
     }
 
@@ -6531,10 +6620,14 @@ export default function App() {
       setSellerClientProducts([]);
       setSellerClientProductsError("");
       setSellerOrderDraft({});
+      setSellerGiftDraftItems([]);
+      setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
       return;
     }
 
     setSellerOrderDraft({});
+    setSellerGiftDraftItems([]);
+    setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
     void refreshSellerClientProducts(activeStoreId);
   }, [selectedSellerStoreId, selectedSellerClientId, sellerActiveSection, sessionUser]);
 
@@ -6603,6 +6696,7 @@ export default function App() {
         data.map((order) => ({
           ...order,
           items: Array.isArray(order.items) ? order.items : [],
+          giftItems: Array.isArray(order.giftItems) ? order.giftItems : [],
         })),
       );
     } catch {
@@ -6624,7 +6718,11 @@ export default function App() {
         return;
       }
 
-      setWarehouseOrders(data.map((order) => ({ ...order, items: Array.isArray(order.items) ? order.items : [] })));
+      setWarehouseOrders(data.map((order) => ({
+        ...order,
+        items: Array.isArray(order.items) ? order.items : [],
+        giftItems: Array.isArray(order.giftItems) ? order.giftItems : [],
+      })));
     } catch {
       setWarehouseOrdersError("No fue posible conectar con el backend.");
     } finally {
@@ -7022,6 +7120,106 @@ export default function App() {
                 {assignedProducts.map((product) => renderSellerAssignedProductRow(product, storeId, showOrderFields))}
               </div>
               {showOrderFields ? (
+                <section className="seller-product-catalog-section seller-gifts-section">
+                  <div className="seller-product-catalog-section-header">
+                    <p className="section-label">Obsequios</p>
+                    <h4>Productos de regalo</h4>
+                    <p className="seller-product-catalog-count">
+                      Aparecen en la factura a precio 0 y se descuentan del inventario al facturar.
+                    </p>
+                  </div>
+
+                  <div className="seller-gifts-form">
+                    <label className="field field-full">
+                      <span>Producto</span>
+                      <SearchableProductSelect
+                        products={sellerGiftProductOptions}
+                        value={sellerGiftDraft.productId}
+                        onChange={(productId) => setSellerGiftDraft((current) => ({
+                          ...current,
+                          productId,
+                          stockRowId: resolveSuggestedWarehouseLotId(productId),
+                        }))}
+                      />
+                    </label>
+
+                    {sellerGiftDraft.productId ? (
+                      <label className="field field-full">
+                        <span>Lote</span>
+                        {(inventoryLotsByProductId.get(sellerGiftDraft.productId) ?? []).length === 0 ? (
+                          <p className="route-helper-text">Sin lotes registrados para este producto.</p>
+                        ) : (
+                          <select
+                            className="warehouse-order-lot-select"
+                            value={sellerGiftDraft.stockRowId}
+                            onChange={(event) => setSellerGiftDraft((current) => ({
+                              ...current,
+                              stockRowId: event.target.value,
+                            }))}
+                          >
+                            {(inventoryLotsByProductId.get(sellerGiftDraft.productId) ?? []).map((lot, lotIndex) => (
+                              <option key={lot.stockRowId || `${sellerGiftDraft.productId}-${lotIndex}`} value={lot.stockRowId}>
+                                {formatWarehouseLotOptionLabel(lot, lotIndex)}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </label>
+                    ) : null}
+
+                    <label className="field">
+                      <span>Cantidad</span>
+                      <input
+                        className="catalog-price-input seller-order-input"
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={sellerGiftDraft.quantity}
+                        onChange={(event) => setSellerGiftDraft((current) => ({ ...current, quantity: event.target.value }))}
+                      />
+                    </label>
+
+                    <button className="ghost-button" type="button" onClick={addSellerGiftDraftItem}>
+                      Agregar obsequio
+                    </button>
+                  </div>
+
+                  {sellerGiftDraftItems.length > 0 ? (
+                    <div className="table-wrap table-wrap--cards">
+                      <table className="data-table data-table--order-items">
+                        <thead>
+                          <tr>
+                            <th>Producto</th>
+                            <th>Lote</th>
+                            <th>Cantidad</th>
+                            <th>Quitar</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sellerGiftDraftItems.map((gift) => {
+                            const product = sellerGiftProductOptions.find((entry) => entry.value === gift.productId);
+                            const lot = (inventoryLotsByProductId.get(gift.productId) ?? []).find((entry) => entry.stockRowId === gift.stockRowId);
+
+                            return (
+                              <tr key={gift.key}>
+                                <td>{product?.label ?? "Producto"}</td>
+                                <td>{lot ? formatWarehouseLotOptionLabel(lot, 0) : "Sin lote"}</td>
+                                <td>{gift.quantity}</td>
+                                <td>
+                                  <button className="ghost-button" type="button" onClick={() => removeSellerGiftDraftItem(gift.key)}>
+                                    Quitar
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
+              {showOrderFields ? (
                 <div className="seller-order-footer seller-order-footer-inline">
                   <label className="field seller-order-delivery-date">
                     <span>Fecha de entrega</span>
@@ -7216,6 +7414,9 @@ export default function App() {
               email: String(client.email ?? ""),
               phone: String(client.phone ?? ""),
               managerName: String(client.managerName ?? ""),
+              defaultPaymentMethod: resolveStoreDefaultPaymentMethod(
+                typeof client.defaultPaymentMethod === "string" ? client.defaultPaymentMethod : "",
+              ),
               assignedProductIds: Array.isArray(client.assignedProductIds)
                 ? client.assignedProductIds.map((entry) => String(entry)).filter(Boolean)
                 : [],
@@ -9076,27 +9277,46 @@ export default function App() {
     documentKind: "dispatch" | "invoice" = "invoice",
     invoiceNumber?: number | null,
   ) {
-    if (warehousePricedItems.length === 0) {
+    if (warehousePricedItems.length === 0 && warehouseGiftPricedItems.length === 0) {
       throw new Error("Este pedido no tiene productos para facturar.");
     }
 
-    const lineItems: CommercialInvoiceLineItem[] = warehousePricedItems.map((item) => {
-      const productOption = productOptionsById.get(item.productId);
+    const lineItems: CommercialInvoiceLineItem[] = [
+      ...warehousePricedItems.map((item) => {
+        const productOption = productOptionsById.get(item.productId);
 
-      return {
-        productLabel: item.productName,
-        description: resolveProductInvoiceDescription({
-          description: productOption?.description,
-          name: item.productName,
-          displaysPerBox: productOption?.displaysPerBox,
-          unitsPerBox: productOption?.unitsPerBox,
-          unitsPerBoxUnit: productOption?.unitsPerBoxUnit,
-        }),
-        quantity: item.quantity,
-        rate: item.resolvedSalePrice,
-        amount: item.lineTotal,
-      };
-    });
+        return {
+          productLabel: item.productName,
+          description: resolveProductInvoiceDescription({
+            description: productOption?.description,
+            name: item.productName,
+            displaysPerBox: productOption?.displaysPerBox,
+            unitsPerBox: productOption?.unitsPerBox,
+            unitsPerBoxUnit: productOption?.unitsPerBoxUnit,
+          }),
+          quantity: item.quantity,
+          rate: item.resolvedSalePrice,
+          amount: item.lineTotal,
+        };
+      }),
+      ...warehouseGiftPricedItems.map((item) => {
+        const productOption = productOptionsById.get(item.productId);
+
+        return {
+          productLabel: `${item.productName} (Obsequio)`,
+          description: resolveProductInvoiceDescription({
+            description: productOption?.description,
+            name: item.productName,
+            displaysPerBox: productOption?.displaysPerBox,
+            unitsPerBox: productOption?.unitsPerBox,
+            unitsPerBoxUnit: productOption?.unitsPerBoxUnit,
+          }),
+          quantity: item.quantity,
+          rate: 0,
+          amount: 0,
+        };
+      }),
+    ];
 
     return buildCommercialInvoicePdf({
       documentKind,
@@ -9116,13 +9336,18 @@ export default function App() {
   }
 
   function openWarehouseAddProductModal() {
-    setWarehouseAddProductDraft({ productId: "", quantity: "1" });
+    setWarehouseAddProductDraft({ productId: "", quantity: "1", stockRowId: "" });
     setWarehouseAddProductModalOpen(true);
   }
 
   function closeWarehouseAddProductModal() {
     setWarehouseAddProductModalOpen(false);
-    setWarehouseAddProductDraft({ productId: "", quantity: "1" });
+    setWarehouseAddProductDraft({ productId: "", quantity: "1", stockRowId: "" });
+  }
+
+  function resolveSuggestedWarehouseLotId(productId: string) {
+    const lots = inventoryLotsByProductId.get(productId) ?? [];
+    return lots.find((lot) => lot.quantity > 0)?.stockRowId || lots[0]?.stockRowId || "";
   }
 
   function addProductToWarehouseOrder() {
@@ -9149,10 +9374,19 @@ export default function App() {
       return;
     }
 
+    const lots = inventoryLotsByProductId.get(product.value) ?? [];
+    const selectedStockRowId = warehouseAddProductDraft.stockRowId.trim();
+
+    if (lots.length > 0 && !selectedStockRowId) {
+      setWarehouseOrderEditStatus({ tone: "error", message: "Selecciona el lote del producto." });
+      return;
+    }
+
     const newItem = {
       productId: product.value,
       stockCurrent: null,
       quantity,
+      stockRowId: selectedStockRowId,
       notes: "",
       productName: product.label,
       productSku: product.sku,
@@ -9170,15 +9404,93 @@ export default function App() {
       ...current,
       [product.value]: false,
     }));
-    setWarehouseOrderLotDraft((current) => {
-      const lots = inventoryLotsByProductId.get(product.value) ?? [];
-      return {
-        ...current,
-        [product.value]: lots.find((lot) => lot.quantity > 0)?.stockRowId || lots[0]?.stockRowId || "",
-      };
-    });
+    setWarehouseOrderLotDraft((current) => ({
+      ...current,
+      [product.value]: selectedStockRowId || resolveSuggestedWarehouseLotId(product.value),
+    }));
     setWarehouseOrderEditStatus(null);
     closeWarehouseAddProductModal();
+  }
+
+  function openWarehouseAddGiftModal() {
+    setWarehouseAddGiftDraft({ productId: "", quantity: "1", stockRowId: "" });
+    setWarehouseAddGiftModalOpen(true);
+  }
+
+  function closeWarehouseAddGiftModal() {
+    setWarehouseAddGiftModalOpen(false);
+    setWarehouseAddGiftDraft({ productId: "", quantity: "1", stockRowId: "" });
+  }
+
+  function addGiftToWarehouseOrder() {
+    if (!selectedWarehouseOrderDetail || selectedWarehouseOrderDetail.status === "delivered") {
+      return;
+    }
+
+    const product = productOptions.find((entry) => entry.value === warehouseAddGiftDraft.productId);
+
+    if (!product) {
+      setWarehouseOrderEditStatus({ tone: "error", message: "Selecciona un producto valido para el obsequio." });
+      return;
+    }
+
+    const quantity = Number(warehouseAddGiftDraft.quantity);
+    const lots = inventoryLotsByProductId.get(product.value) ?? [];
+    const selectedStockRowId = warehouseAddGiftDraft.stockRowId.trim();
+
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setWarehouseOrderEditStatus({ tone: "error", message: "La cantidad del obsequio debe ser mayor a cero." });
+      return;
+    }
+
+    if (lots.length > 0 && !selectedStockRowId) {
+      setWarehouseOrderEditStatus({ tone: "error", message: "Selecciona el lote del obsequio." });
+      return;
+    }
+
+    const giftKey = buildOrderGiftItemKey(product.value, selectedStockRowId);
+    const existingGift = (selectedWarehouseOrderDetail.giftItems ?? []).find((item) => (
+      buildOrderGiftItemKey(item.productId, item.stockRowId) === giftKey
+    ));
+
+    const nextGiftItems = existingGift
+      ? (selectedWarehouseOrderDetail.giftItems ?? []).map((item) => (
+        buildOrderGiftItemKey(item.productId, item.stockRowId) === giftKey
+          ? { ...item, quantity: item.quantity + quantity }
+          : item
+      ))
+      : [
+        ...(selectedWarehouseOrderDetail.giftItems ?? []),
+        {
+          productId: product.value,
+          stockRowId: selectedStockRowId,
+          quantity,
+          notes: "Obsequio",
+          productName: product.label,
+          productSku: product.sku,
+        },
+      ];
+
+    setSelectedWarehouseOrderDetail({
+      ...selectedWarehouseOrderDetail,
+      giftItems: nextGiftItems,
+    });
+    setWarehouseOrderEditStatus(null);
+    closeWarehouseAddGiftModal();
+  }
+
+  function removeWarehouseGiftItem(giftKey: string) {
+    if (!selectedWarehouseOrderDetail || selectedWarehouseOrderDetail.status === "delivered") {
+      return;
+    }
+
+    setSelectedWarehouseOrderDetail({
+      ...selectedWarehouseOrderDetail,
+      giftItems: (selectedWarehouseOrderDetail.giftItems ?? []).filter((item) => (
+        buildOrderGiftItemKey(item.productId, item.stockRowId) !== giftKey
+      )),
+    });
+    setWarehouseOrderEditStatus(null);
   }
 
   function removeWarehouseOrderItem(productId: string) {
@@ -9259,6 +9571,12 @@ export default function App() {
             stockRowId: item.stockRowId,
             notes: item.notes,
           })),
+          giftItems: (selectedWarehouseOrderDetail.giftItems ?? []).map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+            stockRowId: item.stockRowId,
+            notes: item.notes,
+          })),
         }),
       });
       const data = (await response.json()) as { message?: string; order?: SellerOrderRecord };
@@ -9270,6 +9588,7 @@ export default function App() {
       const updatedOrder = {
         ...data.order,
         items: Array.isArray(data.order.items) ? data.order.items : [],
+        giftItems: Array.isArray(data.order.giftItems) ? data.order.giftItems : [],
       };
 
       setWarehouseOrders((current) => current.map((order) => (
@@ -9296,19 +9615,27 @@ export default function App() {
     }
   }
 
-  async function handleSaveAccountingOrderPrices() {
+  function canAccountingEditOrderDetail(order: SellerOrderRecord) {
+    return order.status === "submitted" || order.status === "dispatched";
+  }
+
+  async function handleSaveAccountingOrderChanges() {
     if (!selectedWarehouseOrderDetail || sessionUser?.role !== "contabilidad") {
       return;
     }
 
-    if (selectedWarehouseOrderDetail.status !== "submitted") {
-      setAccountingOrderPriceStatus({ tone: "error", message: "Solo puedes ajustar precios en pedidos recibidos." });
+    if (!canAccountingEditOrderDetail(selectedWarehouseOrderDetail)) {
+      setAccountingOrderPriceStatus({ tone: "error", message: "Solo puedes ajustar pedidos recibidos o en despacho." });
       return;
     }
 
     const nextItems = selectedWarehouseOrderDetail.items.map((item) => {
-      const draftValue = accountingOrderPriceDraft[item.productId];
-      const salePriceAwg = roundCurrencyValue(Number(draftValue ?? item.salePriceAwg ?? 0));
+      const quantity = Number(warehouseOrderItemDraft[item.productId] ?? item.quantity);
+      const salePriceAwg = roundCurrencyValue(Number(accountingOrderPriceDraft[item.productId] ?? item.salePriceAwg ?? 0));
+
+      if (!Number.isFinite(quantity) || quantity < 0) {
+        throw new Error(`La cantidad de ${item.productName} no es valida.`);
+      }
 
       if (!Number.isFinite(salePriceAwg) || salePriceAwg < 0) {
         throw new Error(`El precio de ${item.productName} no es valido.`);
@@ -9317,12 +9644,17 @@ export default function App() {
       return {
         productId: item.productId,
         stockCurrent: item.stockCurrent,
-        quantity: item.quantity,
-        stockRowId: warehouseOrderLotDraft[item.productId] || item.stockRowId,
+        quantity,
+        stockRowId: warehouseOrderLotDraft[item.productId] || item.stockRowId || "",
         notes: item.notes,
         salePriceAwg,
       };
-    });
+    }).filter((item) => Number.isFinite(item.quantity) && item.quantity > 0);
+
+    if (nextItems.length === 0) {
+      setAccountingOrderPriceStatus({ tone: "error", message: "El pedido debe conservar al menos un producto con cantidad mayor a cero." });
+      return;
+    }
 
     try {
       setIsSavingAccountingOrderPrices(true);
@@ -9330,23 +9662,35 @@ export default function App() {
       const response = await fetch(`${apiBaseUrl}/warehouse/orders/${selectedWarehouseOrderDetail._id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: nextItems }),
+        body: JSON.stringify({
+          items: nextItems,
+          giftItems: (selectedWarehouseOrderDetail.giftItems ?? []).map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+            stockRowId: item.stockRowId,
+            notes: item.notes,
+          })),
+        }),
       });
       const data = (await response.json()) as { message?: string; order?: SellerOrderRecord };
 
       if (!response.ok || !data.order) {
-        throw new Error(data.message ?? "No fue posible guardar los precios del pedido.");
+        throw new Error(data.message ?? "No fue posible guardar los cambios del pedido.");
       }
 
       const updatedOrder = {
         ...data.order,
         items: Array.isArray(data.order.items) ? data.order.items : [],
+        giftItems: Array.isArray(data.order.giftItems) ? data.order.giftItems : [],
       };
 
       setWarehouseOrders((current) => current.map((order) => (
         String(order._id) === String(updatedOrder._id) ? updatedOrder : order
       )));
       setSelectedWarehouseOrderDetail(updatedOrder);
+      setWarehouseOrderItemDraft(
+        Object.fromEntries(updatedOrder.items.map((item) => [item.productId, String(item.quantity)])),
+      );
       setAccountingOrderPriceDraft(
         Object.fromEntries(
           updatedOrder.items.map((item) => [
@@ -9355,11 +9699,11 @@ export default function App() {
           ]),
         ),
       );
-      setAccountingOrderPriceStatus({ tone: "success", message: data.message ?? "Precios del pedido guardados correctamente." });
+      setAccountingOrderPriceStatus({ tone: "success", message: data.message ?? "Cambios del pedido guardados correctamente." });
     } catch (error) {
       setAccountingOrderPriceStatus({
         tone: "error",
-        message: error instanceof Error ? error.message : "No fue posible guardar los precios del pedido.",
+        message: error instanceof Error ? error.message : "No fue posible guardar los cambios del pedido.",
       });
     } finally {
       setIsSavingAccountingOrderPrices(false);
@@ -9495,7 +9839,9 @@ export default function App() {
       return;
     }
 
-    setWarehousePaymentMethodDraft("");
+    setWarehousePaymentMethodDraft(
+      resolveStoreDefaultPaymentMethod(storeOptionsById.get(selectedWarehouseOrderDetail.storeId)?.defaultPaymentMethod),
+    );
     setWarehousePaymentModalStatus(null);
     setWarehousePendingCreditError("");
     setWarehousePaymentModalOpen(true);
@@ -11411,6 +11757,52 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
     }));
   }
 
+  function addSellerGiftDraftItem() {
+    const product = sellerGiftProductOptions.find((entry) => entry.value === sellerGiftDraft.productId);
+
+    if (!product) {
+      setSellerOrderStatus({ tone: "error", message: "Selecciona un producto valido para el obsequio." });
+      return;
+    }
+
+    const quantity = Number(sellerGiftDraft.quantity);
+    const lots = inventoryLotsByProductId.get(product.value) ?? [];
+    const stockRowId = sellerGiftDraft.stockRowId.trim();
+
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setSellerOrderStatus({ tone: "error", message: "La cantidad del obsequio debe ser mayor a cero." });
+      return;
+    }
+
+    if (lots.length > 0 && !stockRowId) {
+      setSellerOrderStatus({ tone: "error", message: "Selecciona el lote del obsequio." });
+      return;
+    }
+
+    const key = buildOrderGiftItemKey(product.value, stockRowId);
+    const existingGift = sellerGiftDraftItems.find((item) => item.key === key);
+
+    if (existingGift) {
+      setSellerGiftDraftItems((current) => current.map((item) => (
+        item.key === key
+          ? { ...item, quantity: item.quantity + quantity }
+          : item
+      )));
+    } else {
+      setSellerGiftDraftItems((current) => [
+        ...current,
+        { key, productId: product.value, stockRowId, quantity },
+      ]);
+    }
+
+    setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
+    setSellerOrderStatus(null);
+  }
+
+  function removeSellerGiftDraftItem(key: string) {
+    setSellerGiftDraftItems((current) => current.filter((item) => item.key !== key));
+  }
+
   function openSellerOrderEdit(order: SellerOrderRecord) {
     if (!canEditSellerOrder(order.createdAt)) {
       setSellerOrderExpiredNotice(order);
@@ -11630,6 +12022,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           deliveryDate: sellerDeliveryDateDraft,
           orderNotes: sellerOrderNotesDraft.trim(),
           items: sellerDraftedItems,
+          giftItems: sellerGiftDraftItems.map((item) => ({
+            productId: item.productId,
+            stockRowId: item.stockRowId,
+            quantity: item.quantity,
+            notes: "Obsequio",
+          })),
         }),
       });
       const data = (await response.json()) as { message?: string };
@@ -11640,6 +12038,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       }
 
       setSellerOrderDraft({});
+      setSellerGiftDraftItems([]);
+      setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
       setSellerOrderNotesDraft("");
       setSellerDeliveryDateDraft(getBusinessDateKey());
       setSelectedSellerStoreId("");
@@ -12531,6 +12931,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               email: String(client.email ?? ""),
               phone: String(client.phone ?? ""),
               managerName: String(client.managerName ?? ""),
+              defaultPaymentMethod: resolveStoreDefaultPaymentMethod(
+                typeof client.defaultPaymentMethod === "string" ? client.defaultPaymentMethod : "",
+              ),
               assignedProductIds: Array.isArray(client.assignedProductIds)
                 ? client.assignedProductIds.map((entry) => String(entry)).filter(Boolean)
                 : [],
@@ -12596,6 +12999,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
   }
 
   function formatCreationCellValue(row: Record<string, unknown>, key: string) {
+    if (key === "defaultPaymentMethod") {
+      const defaultPaymentMethod = typeof row.defaultPaymentMethod === "string" ? row.defaultPaymentMethod : "";
+      return defaultPaymentMethod ? formatPaymentMethodLabel(defaultPaymentMethod) : "Sin predeterminado";
+    }
+
     if (key === "assignedProductIds") {
       const assignedProductIds = Array.isArray(row.assignedProductIds)
         ? row.assignedProductIds.map((entry) => String(entry)).filter(Boolean)
@@ -13983,6 +14391,32 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         </tbody>
                       </table>
                     </div>
+
+                    {(selectedSellerOrderDetail.giftItems ?? []).length > 0 ? (
+                      <div className="seller-order-gifts-detail">
+                        <p className="section-label">Obsequios</p>
+                        <div className="table-wrap table-wrap--cards">
+                          <table className="data-table data-table--order-items">
+                            <thead>
+                              <tr>
+                                <th>SKU</th>
+                                <th>Producto</th>
+                                <th>Cantidad</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(selectedSellerOrderDetail.giftItems ?? []).map((gift) => (
+                                <tr key={`${selectedSellerOrderDetail._id}-gift-${gift.productId}-${gift.stockRowId}`}>
+                                  <td>{gift.productSku}</td>
+                                  <td>{gift.productName}</td>
+                                  <td>{gift.quantity}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
@@ -14619,6 +15053,72 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </table>
                     </div>
 
+                    <div className="warehouse-gifts-panel">
+                      <div className="management-table-header">
+                        <div>
+                          <p className="section-label">Obsequios</p>
+                          <h3>Productos de regalo</h3>
+                          <p>Se muestran en la factura a precio 0 y se descuentan del inventario al facturar.</p>
+                        </div>
+                        {selectedWarehouseOrderDetail.status !== "delivered" ? (
+                          <button
+                            className="ghost-button warehouse-order-add-product-button"
+                            type="button"
+                            disabled={isSavingWarehouseOrderEdit || isCompletingWarehouseOrder || isDispatchingWarehouseOrder}
+                            onClick={openWarehouseAddGiftModal}
+                          >
+                            Añadir obsequio
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {(selectedWarehouseOrderDetail.giftItems ?? []).length > 0 ? (
+                        <div className="table-wrap table-wrap--warehouse-items">
+                          <table className="data-table data-table--warehouse-order-items">
+                            <thead>
+                              <tr>
+                                <th>SKU</th>
+                                <th>Producto</th>
+                                <th>Lote</th>
+                                <th>Cant.</th>
+                                <th>Precio</th>
+                                {selectedWarehouseOrderDetail.status !== "delivered" ? <th>Quitar</th> : null}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(selectedWarehouseOrderDetail.giftItems ?? []).map((gift) => {
+                                const lot = (inventoryLotsByProductId.get(gift.productId) ?? []).find((entry) => entry.stockRowId === gift.stockRowId);
+                                const giftKey = buildOrderGiftItemKey(gift.productId, gift.stockRowId);
+
+                                return (
+                                  <tr key={giftKey}>
+                                    <td>{gift.productSku}</td>
+                                    <td>{gift.productName}</td>
+                                    <td>{lot ? formatWarehouseLotOptionLabel(lot, 0) : (gift.stockRowId ? "Lote seleccionado" : "-")}</td>
+                                    <td>{gift.quantity}</td>
+                                    <td>0 AWG</td>
+                                    {selectedWarehouseOrderDetail.status !== "delivered" ? (
+                                      <td>
+                                        <button
+                                          className="ghost-button warehouse-order-remove-item"
+                                          type="button"
+                                          onClick={() => removeWarehouseGiftItem(giftKey)}
+                                        >
+                                          Quitar
+                                        </button>
+                                      </td>
+                                    ) : null}
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p className="route-helper-text">Este pedido aun no tiene obsequios.</p>
+                      )}
+                    </div>
+
                     <div className="warehouse-order-toolbar">
                       <p>
                         Estado actual: <strong>{formatSellerOrderStatus(selectedWarehouseOrderDetail.status)}</strong>
@@ -15174,9 +15674,37 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <SearchableProductSelect
                     products={productOptions.filter((entry) => !warehouseOrderItemDraft[entry.value])}
                     value={warehouseAddProductDraft.productId}
-                    onChange={(productId) => setWarehouseAddProductDraft((current) => ({ ...current, productId }))}
+                    onChange={(productId) => setWarehouseAddProductDraft((current) => ({
+                      ...current,
+                      productId,
+                      stockRowId: resolveSuggestedWarehouseLotId(productId),
+                    }))}
                   />
                 </label>
+
+                {warehouseAddProductDraft.productId ? (
+                  <label className="field field-full">
+                    <span>Lote</span>
+                    {(inventoryLotsByProductId.get(warehouseAddProductDraft.productId) ?? []).length === 0 ? (
+                      <p className="route-helper-text">Sin lotes registrados para este producto.</p>
+                    ) : (
+                      <select
+                        className="warehouse-order-lot-select"
+                        value={warehouseAddProductDraft.stockRowId}
+                        onChange={(event) => setWarehouseAddProductDraft((current) => ({
+                          ...current,
+                          stockRowId: event.target.value,
+                        }))}
+                      >
+                        {(inventoryLotsByProductId.get(warehouseAddProductDraft.productId) ?? []).map((lot, lotIndex) => (
+                          <option key={lot.stockRowId || `${warehouseAddProductDraft.productId}-${lotIndex}`} value={lot.stockRowId}>
+                            {`${lot.lotName || "Lote"} · ${lot.expirationDate ? lot.expirationDate.slice(0, 10) : "Sin vencimiento"} · ${lot.quantity} und.${lot.promotion ? ` · promo ${lot.promotion.discountPercent}%` : ""}${lotIndex === 0 ? " · sugerido" : ""}`}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </label>
+                ) : null}
 
                 <label className="field">
                   <span>Cantidad</span>
@@ -15191,6 +15719,73 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
                 <button className="submit-button" type="button" onClick={addProductToWarehouseOrder}>
                   Agregar al pedido
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {warehouseAddGiftModalOpen ? (
+            <div className="modal-overlay" role="presentation" onClick={closeWarehouseAddGiftModal}>
+              <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                <div className="modal-header">
+                  <div>
+                    <p className="section-label">Obsequio</p>
+                    <h2>Añadir obsequio</h2>
+                    <p>Selecciona producto, lote y cantidad. Se facturara a precio 0.</p>
+                  </div>
+                  <button className="modal-close-button" type="button" onClick={closeWarehouseAddGiftModal}>Cerrar</button>
+                </div>
+
+                <label className="field field-full">
+                  <span>Producto</span>
+                  <SearchableProductSelect
+                    products={productOptions.filter((entry) => entry.shareWithAruba !== false)}
+                    value={warehouseAddGiftDraft.productId}
+                    onChange={(productId) => setWarehouseAddGiftDraft((current) => ({
+                      ...current,
+                      productId,
+                      stockRowId: resolveSuggestedWarehouseLotId(productId),
+                    }))}
+                  />
+                </label>
+
+                {warehouseAddGiftDraft.productId ? (
+                  <label className="field field-full">
+                    <span>Lote</span>
+                    {(inventoryLotsByProductId.get(warehouseAddGiftDraft.productId) ?? []).length === 0 ? (
+                      <p className="route-helper-text">Sin lotes registrados para este producto.</p>
+                    ) : (
+                      <select
+                        className="warehouse-order-lot-select"
+                        value={warehouseAddGiftDraft.stockRowId}
+                        onChange={(event) => setWarehouseAddGiftDraft((current) => ({
+                          ...current,
+                          stockRowId: event.target.value,
+                        }))}
+                      >
+                        {(inventoryLotsByProductId.get(warehouseAddGiftDraft.productId) ?? []).map((lot, lotIndex) => (
+                          <option key={lot.stockRowId || `${warehouseAddGiftDraft.productId}-${lotIndex}`} value={lot.stockRowId}>
+                            {formatWarehouseLotOptionLabel(lot, lotIndex)}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </label>
+                ) : null}
+
+                <label className="field">
+                  <span>Cantidad</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={warehouseAddGiftDraft.quantity}
+                    onChange={(event) => setWarehouseAddGiftDraft((current) => ({ ...current, quantity: event.target.value }))}
+                  />
+                </label>
+
+                <button className="submit-button" type="button" onClick={addGiftToWarehouseOrder}>
+                  Agregar obsequio
                 </button>
               </div>
             </div>
@@ -19491,6 +20086,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <p><strong>Gerente:</strong> {storeSummary.store.managerName || "Sin gerente"}</p>
                       <p><strong>Correo:</strong> {storeSummary.store.email || "Sin correo"}</p>
                       <p><strong>Telefono:</strong> {[storeSummary.store.phoneCountryCode, storeSummary.store.phone].filter(Boolean).join(" ") || "Sin telefono"}</p>
+                      <p><strong>Pago predeterminado:</strong> {storeSummary.store.defaultPaymentMethod ? formatPaymentMethodLabel(storeSummary.store.defaultPaymentMethod) : "Sin predeterminado"}</p>
                       <p><strong>Alta:</strong> {formatSellerOrderDate(String(storeSummary.store.createdAt))}</p>
                     </div>
 
@@ -22140,9 +22736,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <button className="modal-close-button" type="button" onClick={() => setSelectedWarehouseOrderDetail(null)}>Cerrar</button>
                   </div>
 
-                  {selectedWarehouseOrderDetail.status === "submitted" ? (
+                  {canAccountingEditOrderDetail(selectedWarehouseOrderDetail) && sessionUser?.role === "contabilidad" ? (
                     <p className="route-helper-text">
-                      Ajusta el precio de venta por producto para este pedido. Bodega usara estos valores al generar el despacho y la factura tomara la fecha de entrega programada.
+                      Ajusta precio y cantidad por producto para este pedido. Bodega usara estos valores al generar el despacho y la factura PDF tomara los precios guardados aqui.
                     </p>
                   ) : null}
 
@@ -22170,22 +22766,45 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           const fallbackSalePriceAwg = storedPriceAwg > 0
                             ? storedPriceAwg
                             : Number(invRow?.salePrice ?? productOption?.salePrice ?? 0);
-                          const canEditAccountingOrderPrices = selectedWarehouseOrderDetail.status === "submitted";
-                          const salePriceAwg = canEditAccountingOrderPrices
+                          const canAccountingEditOrder = sessionUser?.role === "contabilidad"
+                            && canAccountingEditOrderDetail(selectedWarehouseOrderDetail);
+                          const quantity = canAccountingEditOrder
+                            ? Number(warehouseOrderItemDraft[item.productId] ?? item.quantity)
+                            : Number(item.quantity ?? 0);
+                          const salePriceAwg = canAccountingEditOrder
                             ? roundCurrencyValue(Number(accountingOrderPriceDraft[item.productId] ?? fallbackSalePriceAwg))
                             : fallbackSalePriceAwg;
                           const unitUtilityAwg = salePriceAwg - unitCostAwg;
-                          const totalUtilityAwg = unitUtilityAwg * Number(item.quantity ?? 0);
+                          const totalUtilityAwg = unitUtilityAwg * quantity;
 
                           return (
                             <tr key={`${selectedWarehouseOrderDetail._id}-${item.productId}`}>
                               <td>{item.productSku}</td>
                               <td>{item.productName}</td>
                               <td>{item.stockCurrent ?? "-"}</td>
-                              <td className="col-highlight"><strong>{item.quantity}</strong></td>
+                              <td className="col-highlight">
+                                {canAccountingEditOrder ? (
+                                  <input
+                                    className="warehouse-order-qty-input"
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    value={warehouseOrderItemDraft[item.productId] ?? String(item.quantity)}
+                                    onChange={(event) => {
+                                      setWarehouseOrderItemDraft((current) => ({
+                                        ...current,
+                                        [item.productId]: event.target.value,
+                                      }));
+                                      setAccountingOrderPriceStatus(null);
+                                    }}
+                                  />
+                                ) : (
+                                  <strong>{item.quantity}</strong>
+                                )}
+                              </td>
                               <td>{unitCostAwg > 0 ? formatAwgCurrency2(unitCostAwg) : "-"}</td>
                               <td>
-                                {canEditAccountingOrderPrices ? (
+                                {canAccountingEditOrder ? (
                                   <input
                                     className="warehouse-order-qty-input"
                                     type="number"
@@ -22214,7 +22833,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </table>
                   </div>
 
-                  {selectedWarehouseOrderDetail.status === "submitted" ? (
+                  {canAccountingEditOrderDetail(selectedWarehouseOrderDetail) && sessionUser?.role === "contabilidad" ? (
                     <>
                       {accountingOrderPriceStatus ? (
                         <p className={`form-feedback ${accountingOrderPriceStatus.tone === "error" ? "error" : "success"}`}>
@@ -22228,6 +22847,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           disabled={
                             isSavingAccountingOrderPrices
                             || !selectedWarehouseOrderDetail.items.some((item) => {
+                              const savedQuantity = String(item.quantity);
+                              const draftQuantity = warehouseOrderItemDraft[item.productId] ?? savedQuantity;
                               const storedPrice = Number(item.salePriceAwg ?? 0);
                               const productOption = productOptionsById.get(item.productId);
                               const invRow = inventoryRowsByProductId.get(item.productId);
@@ -22235,12 +22856,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 ? roundCurrencyValue(storedPrice)
                                 : roundCurrencyValue(Number(invRow?.salePrice ?? productOption?.salePrice ?? 0));
                               const draftPrice = roundCurrencyValue(Number(accountingOrderPriceDraft[item.productId] ?? savedPrice));
-                              return draftPrice !== savedPrice;
+                              return draftQuantity !== savedQuantity || draftPrice !== savedPrice;
                             })
                           }
-                          onClick={() => void handleSaveAccountingOrderPrices()}
+                          onClick={() => void handleSaveAccountingOrderChanges()}
                         >
-                          {isSavingAccountingOrderPrices ? "Guardando precios..." : "Guardar precios del pedido"}
+                          {isSavingAccountingOrderPrices ? "Guardando cambios..." : "Guardar cambios del pedido"}
                         </button>
                       </div>
                     </>

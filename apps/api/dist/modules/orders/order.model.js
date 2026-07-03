@@ -7,6 +7,12 @@ const orderItemSchema = new Schema({
     salePriceAwg: { type: Number, min: 0 },
     notes: { type: String, trim: true },
 }, { _id: false });
+const orderGiftItemSchema = new Schema({
+    productId: { type: Types.ObjectId, ref: "Product", required: true },
+    quantity: { type: Number, required: true, min: 0 },
+    stockRowId: { type: Types.ObjectId, ref: "WarehouseStock" },
+    notes: { type: String, trim: true, default: "" },
+}, { _id: false });
 const orderSchema = new Schema({
     routeId: { type: String, required: true, trim: true },
     routeName: { type: String, required: true, trim: true },
@@ -24,6 +30,7 @@ const orderSchema = new Schema({
         default: "submitted",
     },
     items: { type: [orderItemSchema], default: [] },
+    giftItems: { type: [orderGiftItemSchema], default: [] },
     invoiceNumber: { type: Number, min: 1 },
     orderNotes: { type: String, trim: true, default: "" },
 }, { timestamps: true });
