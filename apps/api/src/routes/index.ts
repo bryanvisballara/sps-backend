@@ -2856,6 +2856,42 @@ apiRouter.get("/warehouse/orders/next-invoice-number", async (request, response)
   }
 });
 
+apiRouter.put("/warehouse/orders/:id/invoice-number", async (request, response) => {
+  try {
+    const order = await Order.findById(request.params.id).lean();
+
+    if (!order) {
+      response.status(404).json({ message: "El pedido no existe." });
+      return;
+    }
+
+    if (order.status === "delivered") {
+      response.status(400).json({ message: "No puedes cambiar el consecutivo de un pedido ya facturado." });
+      return;
+    }
+
+    const invoiceNumber = await resolveRequestedInvoiceNumber(request.body?.invoiceNumber, order);
+    const updatedOrder = await Order.findByIdAndUpdate(
+      order._id,
+      { invoiceNumber },
+      { new: true, runValidators: true },
+    ).lean();
+
+    if (!updatedOrder) {
+      response.status(404).json({ message: "El pedido no existe." });
+      return;
+    }
+
+    response.json({
+      message: `Consecutivo de factura actualizado a #${invoiceNumber}.`,
+      order: await mapWarehouseOrderRecord(updatedOrder),
+      invoiceNumber,
+    });
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
 apiRouter.put("/warehouse/orders/:id", async (request, response) => {
   try {
     const order = await Order.findById(request.params.id);

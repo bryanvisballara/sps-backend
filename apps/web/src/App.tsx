@@ -4417,6 +4417,10 @@ export default function App() {
   const [warehouseOrderLotDraft, setWarehouseOrderLotDraft] = useState<Record<string, string>>({});
   const [accountingOrderLineTotalDraft, setAccountingOrderLineTotalDraft] = useState<Record<string, string>>({});
   const [isSavingAccountingOrderPrices, setIsSavingAccountingOrderPrices] = useState(false);
+  const [accountingOrderInvoiceDraft, setAccountingOrderInvoiceDraft] = useState("");
+  const [isEditingAccountingOrderInvoice, setIsEditingAccountingOrderInvoice] = useState(false);
+  const [isSavingAccountingOrderInvoice, setIsSavingAccountingOrderInvoice] = useState(false);
+  const [accountingOrderInvoiceStatus, setAccountingOrderInvoiceStatus] = useState<CreationStatus | null>(null);
   const [accountingOrderPriceStatus, setAccountingOrderPriceStatus] = useState<CreationStatus | null>(null);
   const [warehouseOrderDiscountDraft, setWarehouseOrderDiscountDraft] = useState("");
   const [warehouseAddProductModalOpen, setWarehouseAddProductModalOpen] = useState(false);
@@ -5051,7 +5055,6 @@ export default function App() {
   );
   const warehouseIncomingOrders = warehouseOrders.filter((order) => order.status === "submitted");
   const warehouseDispatchOrders = warehouseOrders.filter((order) => order.status === "dispatched");
-  const warehouseActiveOrders = warehouseOrders.filter((order) => order.status !== "delivered");
   const warehouseCompletedOrders = warehouseOrders.filter((order) => order.status === "delivered");
   const warehouseAllItemsChecked = warehousePricedItems.length > 0
     && warehousePricedItems.every((item) => Boolean(warehouseOrderChecklist[item.productId]));
@@ -6621,6 +6624,9 @@ export default function App() {
     if (sessionUser?.role !== "contabilidad" || !selectedWarehouseOrderDetail) {
       setAccountingOrderLineTotalDraft({});
       setAccountingOrderPriceStatus(null);
+      setAccountingOrderInvoiceDraft("");
+      setIsEditingAccountingOrderInvoice(false);
+      setAccountingOrderInvoiceStatus(null);
       return;
     }
 
@@ -6641,6 +6647,13 @@ export default function App() {
       ),
     );
     setAccountingOrderPriceStatus(null);
+    setAccountingOrderInvoiceDraft(
+      Number(selectedWarehouseOrderDetail.invoiceNumber ?? 0) > 0
+        ? String(selectedWarehouseOrderDetail.invoiceNumber)
+        : "",
+    );
+    setIsEditingAccountingOrderInvoice(false);
+    setAccountingOrderInvoiceStatus(null);
   }, [selectedWarehouseOrderDetail, sessionUser?.role, productOptions, inventoryRows]);
 
   useEffect(() => {
@@ -9849,6 +9862,98 @@ export default function App() {
 
   function canAccountingEditOrderDetail(order: SellerOrderRecord) {
     return order.status === "submitted" || order.status === "dispatched";
+  }
+
+  async function handleSaveAccountingOrderInvoiceNumber() {
+    if (!selectedWarehouseOrderDetail || sessionUser?.role !== "contabilidad") {
+      return;
+    }
+
+    if (!canAccountingEditOrderDetail(selectedWarehouseOrderDetail)) {
+      setAccountingOrderInvoiceStatus({ tone: "error", message: "Solo puedes ajustar el consecutivo en pedidos recibidos o en despacho." });
+      return;
+    }
+
+    const invoiceNumber = Number(accountingOrderInvoiceDraft || 0);
+
+    if (!Number.isFinite(invoiceNumber) || invoiceNumber < MIN_INVOICE_NUMBER) {
+      setAccountingOrderInvoiceStatus({ tone: "error", message: `Indica un consecutivo valido (${MIN_INVOICE_NUMBER} o superior).` });
+      return;
+    }
+
+    try {
+      setIsSavingAccountingOrderInvoice(true);
+      setAccountingOrderInvoiceStatus(null);
+
+      const response = await fetch(`${apiBaseUrl}/warehouse/orders/${selectedWarehouseOrderDetail._id}/invoice-number`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invoiceNumber }),
+      });
+      const data = (await response.json()) as { message?: string; order?: SellerOrderRecord; invoiceNumber?: number };
+
+      if (!response.ok || !data.order) {
+        throw new Error(data.message ?? "No fue posible actualizar el consecutivo de factura.");
+      }
+
+      const updatedOrder = {
+        ...data.order,
+        items: Array.isArray(data.order.items) ? data.order.items : [],
+        giftItems: Array.isArray(data.order.giftItems) ? data.order.giftItems : [],
+      };
+
+      setWarehouseOrders((current) => current.map((order) => (
+        String(order._id) === String(updatedOrder._id) ? updatedOrder : order
+      )));
+      setSelectedWarehouseOrderDetail(updatedOrder);
+      setAccountingOrderInvoiceDraft(
+        Number(updatedOrder.invoiceNumber ?? 0) > 0 ? String(updatedOrder.invoiceNumber) : "",
+      );
+      setIsEditingAccountingOrderInvoice(false);
+      setAccountingOrderInvoiceStatus({ tone: "success", message: data.message ?? "Consecutivo actualizado correctamente." });
+    } catch (error) {
+      setAccountingOrderInvoiceStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible actualizar el consecutivo de factura.",
+      });
+    } finally {
+      setIsSavingAccountingOrderInvoice(false);
+    }
+  }
+
+  async function beginAccountingOrderInvoiceEdit() {
+    if (!selectedWarehouseOrderDetail) {
+      return;
+    }
+
+    const existingNumber = Number(selectedWarehouseOrderDetail.invoiceNumber ?? 0);
+
+    if (existingNumber >= MIN_INVOICE_NUMBER) {
+      setAccountingOrderInvoiceDraft(String(existingNumber));
+      setIsEditingAccountingOrderInvoice(true);
+      setAccountingOrderInvoiceStatus(null);
+      return;
+    }
+
+    try {
+      setAccountingOrderInvoiceStatus(null);
+      const response = await fetch(
+        `${apiBaseUrl}/warehouse/orders/next-invoice-number?orderId=${encodeURIComponent(String(selectedWarehouseOrderDetail._id ?? ""))}`,
+      );
+      const data = (await response.json()) as { invoiceNumber?: number; message?: string };
+
+      if (!response.ok || !Number.isFinite(Number(data.invoiceNumber))) {
+        throw new Error(data.message ?? "No fue posible consultar el consecutivo de factura.");
+      }
+
+      setAccountingOrderInvoiceDraft(String(data.invoiceNumber));
+      setIsEditingAccountingOrderInvoice(true);
+    } catch (error) {
+      setAccountingOrderInvoiceStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible consultar el consecutivo de factura.",
+      });
+    }
   }
 
   async function handleSaveAccountingOrderChanges() {
@@ -23177,9 +23282,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               <div className="management-table-header">
                 <div>
                   <h2>Pedidos recibidos</h2>
-                  <p>Pedidos activos agrupados por fecha de entrega programada.</p>
+                  <p>Pedidos recibidos en bodega que aun no se han enviado a despacho.</p>
                 </div>
-                <p className="management-table-meta">{warehouseActiveOrders.length} pedidos</p>
+                <p className="management-table-meta">{warehouseIncomingOrders.length} pedidos</p>
               </div>
 
               {warehouseOrdersError ? <p className="form-feedback error">{warehouseOrdersError}</p> : null}
@@ -23190,7 +23295,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               ) : null}
 
               <WarehouseOrderList
-                orders={warehouseActiveOrders}
+                orders={warehouseIncomingOrders}
                 isLoading={isLoadingWarehouseOrders}
                 emptyMessage="Todavia no han llegado pedidos desde el portal de vendedores."
                 loadingMessage="Cargando pedidos recibidos..."
@@ -23326,6 +23431,79 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </div>
                     <button className="modal-close-button" type="button" onClick={() => setSelectedWarehouseOrderDetail(null)}>Cerrar</button>
                   </div>
+
+                  {canAccountingEditOrderDetail(selectedWarehouseOrderDetail) && sessionUser?.role === "contabilidad" ? (
+                    <div className="warehouse-order-invoice-number-panel">
+                      {isEditingAccountingOrderInvoice ? (
+                        <div className="warehouse-order-invoice-number-editor">
+                          <label className="field">
+                            <span>Numero de consecutivo / factura</span>
+                            <input
+                              className="warehouse-order-qty-input"
+                              type="number"
+                              min={MIN_INVOICE_NUMBER}
+                              step="1"
+                              value={accountingOrderInvoiceDraft}
+                              disabled={isSavingAccountingOrderInvoice}
+                              onChange={(event) => {
+                                setAccountingOrderInvoiceDraft(event.target.value);
+                                setAccountingOrderInvoiceStatus(null);
+                              }}
+                            />
+                          </label>
+                          <div className="catalog-form-actions">
+                            <button
+                              className="submit-button"
+                              type="button"
+                              disabled={isSavingAccountingOrderInvoice}
+                              onClick={() => void handleSaveAccountingOrderInvoiceNumber()}
+                            >
+                              {isSavingAccountingOrderInvoice ? "Guardando consecutivo..." : "Guardar consecutivo"}
+                            </button>
+                            <button
+                              className="ghost-button"
+                              type="button"
+                              disabled={isSavingAccountingOrderInvoice}
+                              onClick={() => {
+                                setIsEditingAccountingOrderInvoice(false);
+                                setAccountingOrderInvoiceStatus(null);
+                                setAccountingOrderInvoiceDraft(
+                                  Number(selectedWarehouseOrderDetail.invoiceNumber ?? 0) > 0
+                                    ? String(selectedWarehouseOrderDetail.invoiceNumber)
+                                    : "",
+                                );
+                              }}
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="warehouse-order-invoice-number-summary">
+                          <p>
+                            Consecutivo de factura:{" "}
+                            <strong>
+                              {Number(selectedWarehouseOrderDetail.invoiceNumber ?? 0) > 0
+                                ? `#${selectedWarehouseOrderDetail.invoiceNumber}`
+                                : "Sin asignar"}
+                            </strong>
+                          </p>
+                          <button
+                            className="ghost-button"
+                            type="button"
+                            onClick={() => void beginAccountingOrderInvoiceEdit()}
+                          >
+                            Cambiar consecutivo
+                          </button>
+                        </div>
+                      )}
+                      {accountingOrderInvoiceStatus ? (
+                        <p className={`form-feedback ${accountingOrderInvoiceStatus.tone === "error" ? "error" : "success"}`}>
+                          {accountingOrderInvoiceStatus.message}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   {canAccountingEditOrderDetail(selectedWarehouseOrderDetail) && sessionUser?.role === "contabilidad" ? (
                     <p className="route-helper-text">

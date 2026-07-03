@@ -3029,6 +3029,33 @@ h1 {
   white-space: nowrap;
 }
 
+.warehouse-order-invoice-number-panel {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid rgba(17, 17, 17, 0.1);
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.95);
+}
+
+.warehouse-order-invoice-number-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.warehouse-order-invoice-number-summary p {
+  margin: 0;
+}
+
+.warehouse-order-invoice-number-editor {
+  display: grid;
+  gap: 12px;
+}
+
 .warehouse-order-toolbar .warehouse-order-save-button {
   width: 100%;
   justify-content: center;
