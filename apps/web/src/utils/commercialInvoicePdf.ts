@@ -88,7 +88,7 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
   const pageHeight = pdf.internal.pageSize.getHeight();
   const margin = 40;
   const isDispatch = input.documentKind === "dispatch";
-  const logoImage = await loadImageForPdf("/company-logo.jpeg");
+  const logoImage = await loadImageForPdf("/invoice-logo.png");
 
   const drawPage = (pageNumber: number, totalPages: number) => {
     pdf.setFont("helvetica", "normal");
@@ -97,7 +97,7 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
     pdf.text(`Page ${pageNumber} of ${totalPages}`, pageWidth - margin, 28, { align: "right" });
 
     if (logoImage) {
-      pdf.addImage(logoImage.dataUrl, logoImage.format, margin, 48, 54, 42);
+      pdf.addImage(logoImage.dataUrl, logoImage.format, margin, 44, 164, 48);
     }
 
     pdf.setTextColor(17, 17, 17);
