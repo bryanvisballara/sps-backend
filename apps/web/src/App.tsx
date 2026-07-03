@@ -727,6 +727,7 @@ type SellerOrderRecord = {
   deliveryDate: string;
   deliveryOverdue?: boolean;
   status: "draft" | "submitted" | "picking" | "dispatched" | "delivered";
+  invoiceNumber?: number | null;
   orderNotes?: string;
   createdAt: string;
   updatedAt: string;
@@ -3913,7 +3914,6 @@ export default function App() {
   const [isLoadingWarehousePendingCredit, setIsLoadingWarehousePendingCredit] = useState(false);
   const [warehousePendingCreditError, setWarehousePendingCreditError] = useState("");
   const [warehouseOrderItemDraft, setWarehouseOrderItemDraft] = useState<Record<string, string>>({});
-  const [warehouseOrderPriceDraft, setWarehouseOrderPriceDraft] = useState<Record<string, string>>({});
   const [accountingOrderPriceDraft, setAccountingOrderPriceDraft] = useState<Record<string, string>>({});
   const [isSavingAccountingOrderPrices, setIsSavingAccountingOrderPrices] = useState(false);
   const [accountingOrderPriceStatus, setAccountingOrderPriceStatus] = useState<CreationStatus | null>(null);
@@ -4396,11 +4396,7 @@ export default function App() {
       const quantity = selectedWarehouseOrderDetail.status === "delivered"
         ? Number(item.quantity ?? 0)
         : Number(warehouseOrderItemDraft[item.productId] ?? item.quantity ?? 0);
-      const canEditDispatchPrice = selectedWarehouseOrderDetail.status === "dispatched";
-      const priceDraftValue = warehouseOrderPriceDraft[item.productId];
-      const resolvedSalePrice = canEditDispatchPrice && priceDraftValue !== undefined && priceDraftValue.trim() !== ""
-        ? roundCurrencyValue(Number(priceDraftValue))
-        : defaultSalePrice;
+      const resolvedSalePrice = defaultSalePrice;
 
       return {
         ...item,
@@ -5933,7 +5929,6 @@ export default function App() {
     if ((sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "contabilidad") || !selectedWarehouseOrderDetail) {
       setWarehouseOrderChecklist({});
       setWarehouseOrderItemDraft({});
-      setWarehouseOrderPriceDraft({});
       setWarehouseOrderDiscountDraft("");
       setWarehouseOrderEditStatus(null);
       setWarehouseOrderCompletionStatus(null);
@@ -5950,7 +5945,6 @@ export default function App() {
         selectedWarehouseOrderDetail.items.map((item) => [item.productId, selectedWarehouseOrderDetail.status === "delivered"]),
       ),
     );
-    setWarehouseOrderPriceDraft({});
     setWarehouseOrderDiscountDraft("");
     setWarehouseOrderEditStatus(null);
     setWarehouseOrderCompletionStatus(null);
@@ -8570,11 +8564,6 @@ export default function App() {
       delete next[productId];
       return next;
     });
-    setWarehouseOrderPriceDraft((current) => {
-      const next = { ...current };
-      delete next[productId];
-      return next;
-    });
     setSelectedWarehouseOrderDetail((current) => (
       current
         ? {
@@ -8797,12 +8786,18 @@ export default function App() {
       const dispatchedOrder = {
         ...selectedWarehouseOrderDetail,
         status: data.order.status,
+        invoiceNumber: data.invoiceNumber ?? selectedWarehouseOrderDetail.invoiceNumber ?? null,
         updatedAt: data.order.updatedAt,
       };
 
       setWarehouseOrders((current) => current.map((order) => (
         String(order._id) === String(data.order!._id)
-          ? { ...order, status: data.order!.status, updatedAt: data.order!.updatedAt }
+          ? {
+            ...order,
+            status: data.order!.status,
+            invoiceNumber: data.invoiceNumber ?? order.invoiceNumber ?? null,
+            updatedAt: data.order!.updatedAt,
+          }
           : order
       )));
 
@@ -8948,12 +8943,18 @@ export default function App() {
       const completedOrder = {
         ...selectedWarehouseOrderDetail,
         status: data.order.status,
+        invoiceNumber: data.invoiceNumber ?? selectedWarehouseOrderDetail.invoiceNumber ?? null,
         updatedAt: data.order.updatedAt,
       };
 
       setWarehouseOrders((current) => current.map((order) => (
         String(order._id) === completedOrderId
-          ? { ...order, status: data.order!.status, updatedAt: data.order!.updatedAt }
+          ? {
+            ...order,
+            status: data.order!.status,
+            invoiceNumber: data.invoiceNumber ?? order.invoiceNumber ?? null,
+            updatedAt: data.order!.updatedAt,
+          }
           : order
       )));
 
@@ -8994,6 +8995,8 @@ export default function App() {
       const data = (await response.json()) as {
         message?: string;
         carteraEntry?: { invoiceNumber?: number | null; invoicedAt?: string } | null;
+        invoiceNumber?: number | null;
+        invoicedAt?: string;
         items?: Array<{
           productName: string;
           productSku: string;
@@ -9011,8 +9014,10 @@ export default function App() {
 
       const { pdf, fileName } = await buildCommercialInvoicePdf({
         documentKind: "invoice",
-        invoiceNumber: data.carteraEntry?.invoiceNumber ?? null,
-        invoiceDate: data.carteraEntry?.invoicedAt
+        invoiceNumber: data.invoiceNumber ?? data.carteraEntry?.invoiceNumber ?? order.invoiceNumber ?? null,
+        invoiceDate: data.invoicedAt
+          ? new Date(data.invoicedAt)
+          : data.carteraEntry?.invoicedAt
           ? new Date(data.carteraEntry.invoicedAt)
           : getOrderInvoiceDate(order),
         billToName: order.storeName,
@@ -13870,23 +13875,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 )}
                               </td>
                               <td>
-                                {selectedWarehouseOrderDetail.status === "dispatched" ? (
-                                  <input
-                                    className="warehouse-order-qty-input"
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={warehouseOrderPriceDraft[item.productId] ?? String(item.resolvedSalePrice)}
-                                    onChange={(event) => {
-                                      setWarehouseOrderPriceDraft((current) => ({
-                                        ...current,
-                                        [item.productId]: event.target.value,
-                                      }));
-                                    }}
-                                  />
-                                ) : (
-                                  formatAwgCurrency(item.resolvedSalePrice)
-                                )}
+                                {formatAwgCurrency(item.resolvedSalePrice)}
                               </td>
                               <td>{formatAwgCurrency(item.lineTotal)} AWG</td>
                               <td className="warehouse-order-col-optional">{item.notes || "-"}</td>
@@ -13945,6 +13934,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           onClick={openWarehouseAddProductModal}
                         >
                           Añadir producto
+                        </button>
+                      ) : null}
+                      {selectedWarehouseOrderDetail.status === "dispatched" || selectedWarehouseOrderDetail.status === "delivered" ? (
+                        <button
+                          className="ghost-button warehouse-order-save-button"
+                          type="button"
+                          disabled={warehouseOrderItemsDirty || isSavingWarehouseOrderEdit || isCompletingWarehouseOrder || isDispatchingWarehouseOrder}
+                          onClick={() => void handlePrintCompletedOrderSummary(selectedWarehouseOrderDetail)}
+                        >
+                          Reimprimir factura
                         </button>
                       ) : null}
                       {selectedWarehouseOrderDetail.status === "submitted" ? (
@@ -14017,6 +14016,19 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       emptyMessage="No hay pedidos en despacho."
                       loadingMessage="Cargando pedidos en despacho..."
                       onSelectOrder={setSelectedWarehouseOrderDetail}
+                      renderActions={(order) => (
+                        <button
+                          className="table-action-icon"
+                          type="button"
+                          aria-label="Reimprimir factura"
+                          title="Reimprimir factura"
+                          onClick={() => void handlePrintCompletedOrderSummary(order)}
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
+                          </svg>
+                        </button>
+                      )}
                     />
                   </article>
                 </>
@@ -14070,6 +14082,19 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       loadingMessage="Cargando pedidos completados..."
                       groupByDeliveryDate={false}
                       onSelectOrder={setSelectedWarehouseOrderDetail}
+                      renderActions={(order) => (
+                        <button
+                          className="table-action-icon"
+                          type="button"
+                          aria-label="Reimprimir factura"
+                          title="Reimprimir factura"
+                          onClick={() => void handlePrintCompletedOrderSummary(order)}
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
+                          </svg>
+                        </button>
+                      )}
                     />
                   </article>
                 </>

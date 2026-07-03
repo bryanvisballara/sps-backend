@@ -29,6 +29,7 @@ const orderSchema = new Schema(
       default: "submitted",
     },
     items: { type: [orderItemSchema], default: [] },
+    invoiceNumber: { type: Number, min: 1 },
     orderNotes: { type: String, trim: true, default: "" },
   },
   { timestamps: true },

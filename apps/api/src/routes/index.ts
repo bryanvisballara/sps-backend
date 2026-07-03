@@ -1286,6 +1286,7 @@ async function mapWarehouseOrderRecord(order: {
   deliveryDate?: Date;
   deliveryOverdue?: boolean;
   status: string;
+  invoiceNumber?: unknown;
   orderNotes?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -1310,6 +1311,7 @@ async function mapWarehouseOrderRecord(order: {
     deliveryDate: serializeOrderDeliveryDate(order.deliveryDate, order.createdAt),
     deliveryOverdue: order.deliveryOverdue === true,
     status: order.status,
+    invoiceNumber: Number(order.invoiceNumber ?? 0) || null,
     orderNotes: typeof order.orderNotes === "string" ? order.orderNotes : "",
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
@@ -2973,9 +2975,14 @@ async function getNextInvoiceNumber() {
   })
     .select({ invoiceNumber: 1 })
     .lean();
+  const numberedOrders = await Order.find({
+    invoiceNumber: { $exists: true, $ne: null, $gte: MIN_INVOICE_NUMBER },
+  })
+    .select({ invoiceNumber: 1 })
+    .lean();
 
   const usedNumbers = new Set(
-    activeEntries
+    [...activeEntries, ...numberedOrders]
       .map((entry) => Number(entry.invoiceNumber))
       .filter((number) => Number.isFinite(number) && number >= MIN_INVOICE_NUMBER),
   );
@@ -3116,10 +3123,22 @@ apiRouter.get("/warehouse/orders/:id/invoice-document", async (request, response
     const totalAmount = carteraEntry
       ? Number(carteraEntry.invoiceAmountAwg ?? 0)
       : items.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+    let invoiceNumber = Number(carteraEntry?.invoiceNumber ?? order.invoiceNumber ?? 0) || null;
+
+    if (!invoiceNumber && order.status !== "submitted") {
+      invoiceNumber = await getNextInvoiceNumber();
+      await Order.findByIdAndUpdate(
+        order._id,
+        { invoiceNumber },
+        { new: true, runValidators: true },
+      ).lean();
+    }
 
     response.json({
       order: mappedOrder,
       carteraEntry: carteraEntry ? mapCarteraEntryRecord(carteraEntry) : null,
+      invoiceNumber,
+      invoicedAt: carteraEntry?.invoicedAt ?? resolveOrderInvoiceDate(order),
       items,
       totalAmount,
     });
@@ -3277,14 +3296,23 @@ apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
     }
 
     if (order.status === "dispatched") {
+      const existingInvoiceNumber = Number(order.invoiceNumber ?? 0) || await getNextInvoiceNumber();
+      const currentOrder = Number(order.invoiceNumber ?? 0) > 0
+        ? order
+        : await Order.findByIdAndUpdate(
+          request.params.id,
+          { invoiceNumber: existingInvoiceNumber },
+          { new: true, runValidators: true },
+        ).lean();
+
       response.json({
         message: "El pedido ya estaba en despacho.",
         order: {
-          _id: String(order._id),
-          status: order.status,
-          updatedAt: order.updatedAt,
+          _id: String(currentOrder?._id ?? order._id),
+          status: currentOrder?.status ?? order.status,
+          updatedAt: currentOrder?.updatedAt ?? order.updatedAt,
         },
-        invoiceNumber: null,
+        invoiceNumber: existingInvoiceNumber,
       });
       return;
     }
@@ -3296,10 +3324,11 @@ apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
 
     const orderItems = Array.isArray(order.items) ? order.items : [];
     const itemsWithPrices = mergeOrderItemPrices(orderItems, request.body?.items);
+    const invoiceNumber = Number(order.invoiceNumber ?? 0) || await getNextInvoiceNumber();
 
     const updatedOrder = await Order.findByIdAndUpdate(
       request.params.id,
-      { status: "dispatched", items: itemsWithPrices },
+      { status: "dispatched", items: itemsWithPrices, invoiceNumber },
       { new: true, runValidators: true },
     ).lean();
 
@@ -3317,7 +3346,7 @@ apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
         status: updatedOrder.status,
         updatedAt: updatedOrder.updatedAt,
       },
-      invoiceNumber: null,
+      invoiceNumber,
     });
 
     void notifyContabilidadOrderDispatched({
@@ -3365,7 +3394,7 @@ apiRouter.put("/warehouse/orders/:id/complete", async (request, response) => {
     const isCreditInvoice = paymentMethod === "credito";
     const initialCollectedAmountAwg = isCreditInvoice ? 0 : invoiceAmountAwg;
     const initialOutstandingAmountAwg = isCreditInvoice ? invoiceAmountAwg : 0;
-    const invoiceNumber = await getNextInvoiceNumber();
+    const invoiceNumber = Number(order.invoiceNumber ?? 0) || await getNextInvoiceNumber();
     const orderItems = Array.isArray(order.items) ? order.items : [];
     const itemsWithPrices = mergeOrderItemPrices(orderItems, request.body?.items);
 
@@ -3376,7 +3405,7 @@ apiRouter.put("/warehouse/orders/:id/complete", async (request, response) => {
 
     const updatedOrder = await Order.findByIdAndUpdate(
       request.params.id,
-      { status: "delivered", items: itemsWithPrices },
+      { status: "delivered", items: itemsWithPrices, invoiceNumber },
       { new: true, runValidators: true },
     ).lean();
 

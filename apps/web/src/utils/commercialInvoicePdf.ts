@@ -94,8 +94,7 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8);
     pdf.setTextColor(60, 60, 60);
-    pdf.text(COMPANY.bankLine, pageWidth - margin, 28, { align: "right" });
-    pdf.text(`Page ${pageNumber} of ${totalPages}`, pageWidth - margin, 40, { align: "right" });
+    pdf.text(`Page ${pageNumber} of ${totalPages}`, pageWidth - margin, 28, { align: "right" });
 
     if (logoImage) {
       pdf.addImage(logoImage.dataUrl, logoImage.format, margin, 48, 54, 42);
@@ -104,20 +103,17 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
     pdf.setTextColor(17, 17, 17);
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(11);
-    pdf.text(COMPANY.legalName, margin + (logoImage ? 64 : 0), 58);
+    pdf.text(COMPANY.legalName, pageWidth - margin, 58, { align: "right" });
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(10);
-    const companyX = margin + (logoImage ? 64 : 0);
-    pdf.text(COMPANY.addressLine1, companyX, 72);
-    pdf.text(COMPANY.addressLine2, companyX, 84);
-    pdf.text(COMPANY.phone, companyX, 96);
-    pdf.text(COMPANY.email, companyX, 108);
+    pdf.text(COMPANY.addressLine1, pageWidth - margin, 72, { align: "right" });
+    pdf.text(COMPANY.addressLine2, pageWidth - margin, 84, { align: "right" });
+    pdf.text(COMPANY.phone, pageWidth - margin, 96, { align: "right" });
+    pdf.text(COMPANY.email, pageWidth - margin, 108, { align: "right" });
 
-    if (!isDispatch) {
-      pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(28);
-      pdf.text("INVOICE", pageWidth - margin, 88, { align: "right" });
-    }
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(28);
+    pdf.text("INVOICE", margin, 96);
 
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(10);
@@ -137,8 +133,13 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
 
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(10);
-    pdf.text(`FACTURA ${documentNumber}`, pageWidth - margin, 132, { align: "right" });
+    pdf.text(`INVOICE #${documentNumber}`, pageWidth - margin, 132, { align: "right" });
     pdf.text(`DATE ${formatInvoiceDate(input.invoiceDate)}`, pageWidth - margin, 146, { align: "right" });
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    pdf.setTextColor(60, 60, 60);
+    pdf.text(COMPANY.bankLine, pageWidth / 2, pageHeight - 24, { align: "center" });
   };
 
   const tableBody = input.lineItems.map((item) => [
@@ -152,12 +153,12 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
   autoTable(pdf, {
     startY: 178,
     margin: { top: 178, left: margin, right: margin, bottom: 56 },
-    head: [["PRODUCTO", "DESCRIPTION", "QTY", "RATE", "AMOUNT"]],
+    head: [["PRODUCT", "DESCRIPTION", "QTY", "RATE", "AMOUNT"]],
     body: tableBody,
     showHead: "everyPage",
     styles: {
       font: "helvetica",
-      fontSize: 9,
+      fontSize: 8.4,
       cellPadding: 4,
       overflow: "linebreak",
       valign: "top",
@@ -169,9 +170,12 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
       lineWidth: 0.2,
       lineColor: [17, 17, 17],
     },
+    alternateRowStyles: {
+      fillColor: [243, 244, 246],
+    },
     columnStyles: {
-      0: { cellWidth: 70 },
-      1: { cellWidth: 250 },
+      0: { cellWidth: 210, overflow: "ellipsize" },
+      1: { cellWidth: 150 },
       2: { cellWidth: 42, halign: "right" },
       3: { cellWidth: 52, halign: "right" },
       4: { cellWidth: 62, halign: "right" },
@@ -184,10 +188,11 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
 
   const finalY = (pdf as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 178;
   const footerY = Math.min(finalY + 28, pageHeight - 48);
-  const footerLabel = input.invoiceNumber ? "BALANCE DUE AWG" : "TOTAL REFERENCIAL AWG";
+  const footerLabel = input.invoiceNumber ? "BALANCE DUE AWG" : "REFERENCE TOTAL AWG";
 
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(10);
+  pdf.setTextColor(17, 17, 17);
   pdf.text("Thank you for choosing us", margin, footerY);
   pdf.setFont("helvetica", "bold");
   pdf.text(`${footerLabel} ${formatInvoiceAmount(input.totalAmount)}`, pageWidth - margin, footerY, { align: "right" });
@@ -195,11 +200,11 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
   const dateLabel = formatInvoiceDate(input.invoiceDate).replace(/\//g, "-");
   const fileName = sanitizePdfFileName(
     input.invoiceNumber
-      ? `factura-${input.invoiceNumber}-${input.billToName}`
+      ? `invoice-${input.invoiceNumber}-${input.billToName}`
       : isDispatch
-        ? `guia-${input.billToName}-${dateLabel}`
-        : `factura-${input.billToName}-${dateLabel}`,
-  ) || (input.invoiceNumber ? "factura" : "guia-despacho");
+        ? `dispatch-${input.billToName}-${dateLabel}`
+        : `invoice-${input.billToName}-${dateLabel}`,
+  ) || (input.invoiceNumber ? "invoice" : "dispatch");
 
   return { pdf, fileName };
 }
