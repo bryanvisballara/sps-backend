@@ -22,6 +22,15 @@ export declare const Order: import("mongoose").Model<{
         quantity: number;
         notes?: string | null | undefined;
         salePriceAwg?: number | null | undefined;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
         stockCurrent?: number | null | undefined;
     }, Types.Subdocument<import("bson").ObjectId, any, {
         productId: {
@@ -36,6 +45,15 @@ export declare const Order: import("mongoose").Model<{
         quantity: number;
         notes?: string | null | undefined;
         salePriceAwg?: number | null | undefined;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
         stockCurrent?: number | null | undefined;
     }> & {
         productId: {
@@ -50,6 +68,15 @@ export declare const Order: import("mongoose").Model<{
         quantity: number;
         notes?: string | null | undefined;
         salePriceAwg?: number | null | undefined;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
         stockCurrent?: number | null | undefined;
     }>;
     deliveryDate: NativeDate;
@@ -79,6 +106,15 @@ export declare const Order: import("mongoose").Model<{
         quantity: number;
         notes?: string | null | undefined;
         salePriceAwg?: number | null | undefined;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
         stockCurrent?: number | null | undefined;
     }, Types.Subdocument<import("bson").ObjectId, any, {
         productId: {
@@ -93,6 +129,15 @@ export declare const Order: import("mongoose").Model<{
         quantity: number;
         notes?: string | null | undefined;
         salePriceAwg?: number | null | undefined;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
         stockCurrent?: number | null | undefined;
     }> & {
         productId: {
@@ -107,6 +152,15 @@ export declare const Order: import("mongoose").Model<{
         quantity: number;
         notes?: string | null | undefined;
         salePriceAwg?: number | null | undefined;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
         stockCurrent?: number | null | undefined;
     }>;
     deliveryDate: NativeDate;
@@ -138,6 +192,15 @@ export declare const Order: import("mongoose").Model<{
         quantity: number;
         notes?: string | null | undefined;
         salePriceAwg?: number | null | undefined;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
         stockCurrent?: number | null | undefined;
     }, Types.Subdocument<import("bson").ObjectId, any, {
         productId: {
@@ -152,6 +215,15 @@ export declare const Order: import("mongoose").Model<{
         quantity: number;
         notes?: string | null | undefined;
         salePriceAwg?: number | null | undefined;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
         stockCurrent?: number | null | undefined;
     }> & {
         productId: {
@@ -166,6 +238,15 @@ export declare const Order: import("mongoose").Model<{
         quantity: number;
         notes?: string | null | undefined;
         salePriceAwg?: number | null | undefined;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
         stockCurrent?: number | null | undefined;
     }>;
     deliveryDate: NativeDate;
@@ -201,6 +282,15 @@ export declare const Order: import("mongoose").Model<{
         quantity: number;
         notes?: string | null | undefined;
         salePriceAwg?: number | null | undefined;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
         stockCurrent?: number | null | undefined;
     }, Types.Subdocument<import("bson").ObjectId, any, {
         productId: {
@@ -215,6 +305,15 @@ export declare const Order: import("mongoose").Model<{
         quantity: number;
         notes?: string | null | undefined;
         salePriceAwg?: number | null | undefined;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
         stockCurrent?: number | null | undefined;
     }> & {
         productId: {
@@ -229,6 +328,15 @@ export declare const Order: import("mongoose").Model<{
         quantity: number;
         notes?: string | null | undefined;
         salePriceAwg?: number | null | undefined;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
         stockCurrent?: number | null | undefined;
     }>;
     deliveryDate: NativeDate;
@@ -258,6 +366,15 @@ export declare const Order: import("mongoose").Model<{
         quantity: number;
         notes?: string | null | undefined;
         salePriceAwg?: number | null | undefined;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
         stockCurrent?: number | null | undefined;
     }, Types.Subdocument<import("bson").ObjectId, any, {
         productId: {
@@ -272,6 +389,15 @@ export declare const Order: import("mongoose").Model<{
         quantity: number;
         notes?: string | null | undefined;
         salePriceAwg?: number | null | undefined;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
         stockCurrent?: number | null | undefined;
     }> & {
         productId: {
@@ -286,6 +412,15 @@ export declare const Order: import("mongoose").Model<{
         quantity: number;
         notes?: string | null | undefined;
         salePriceAwg?: number | null | undefined;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
         stockCurrent?: number | null | undefined;
     }>;
     deliveryDate: NativeDate;
@@ -317,6 +452,15 @@ export declare const Order: import("mongoose").Model<{
         quantity: number;
         notes?: string | null | undefined;
         salePriceAwg?: number | null | undefined;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
         stockCurrent?: number | null | undefined;
     }, Types.Subdocument<import("bson").ObjectId, any, {
         productId: {
@@ -331,6 +475,15 @@ export declare const Order: import("mongoose").Model<{
         quantity: number;
         notes?: string | null | undefined;
         salePriceAwg?: number | null | undefined;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
         stockCurrent?: number | null | undefined;
     }> & {
         productId: {
@@ -345,6 +498,15 @@ export declare const Order: import("mongoose").Model<{
         quantity: number;
         notes?: string | null | undefined;
         salePriceAwg?: number | null | undefined;
+        stockRowId?: {
+            prototype?: Types.ObjectId | null | undefined;
+            cacheHexString?: unknown;
+            generate?: {} | null | undefined;
+            createFromTime?: {} | null | undefined;
+            createFromHexString?: {} | null | undefined;
+            createFromBase64?: {} | null | undefined;
+            isValid?: {} | null | undefined;
+        } | null | undefined;
         stockCurrent?: number | null | undefined;
     }>;
     deliveryDate: NativeDate;

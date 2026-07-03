@@ -1,6 +1,7 @@
 import { Schema, Types } from "mongoose";
-export declare const WarehouseStock: import("mongoose").Model<{
-    status: "healthy" | "low" | "critical";
+export declare const LotPromotion: import("mongoose").Model<{
+    notes: string;
+    active: boolean;
     productId: {
         prototype?: Types.ObjectId | null | undefined;
         cacheHexString?: unknown;
@@ -10,17 +11,19 @@ export declare const WarehouseStock: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     };
-    salePriceAwg: number;
-    lotName: string;
-    warehouseCode: string;
-    unitCostUsd: number;
-    usdToAwgRate: number;
-    availableUnits: number;
-    reservedUnits: number;
-    minUnits: number;
-    expirationDate?: NativeDate | null | undefined;
+    stockRowId: {
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    };
+    discountPercent: number;
 } & import("mongoose").DefaultTimestampProps, {}, {}, {}, import("mongoose").Document<unknown, {}, {
-    status: "healthy" | "low" | "critical";
+    notes: string;
+    active: boolean;
     productId: {
         prototype?: Types.ObjectId | null | undefined;
         cacheHexString?: unknown;
@@ -30,19 +33,21 @@ export declare const WarehouseStock: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     };
-    salePriceAwg: number;
-    lotName: string;
-    warehouseCode: string;
-    unitCostUsd: number;
-    usdToAwgRate: number;
-    availableUnits: number;
-    reservedUnits: number;
-    minUnits: number;
-    expirationDate?: NativeDate | null | undefined;
+    stockRowId: {
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    };
+    discountPercent: number;
 } & import("mongoose").DefaultTimestampProps, {}, {
     timestamps: true;
 }> & {
-    status: "healthy" | "low" | "critical";
+    notes: string;
+    active: boolean;
     productId: {
         prototype?: Types.ObjectId | null | undefined;
         cacheHexString?: unknown;
@@ -52,15 +57,16 @@ export declare const WarehouseStock: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     };
-    salePriceAwg: number;
-    lotName: string;
-    warehouseCode: string;
-    unitCostUsd: number;
-    usdToAwgRate: number;
-    availableUnits: number;
-    reservedUnits: number;
-    minUnits: number;
-    expirationDate?: NativeDate | null | undefined;
+    stockRowId: {
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    };
+    discountPercent: number;
 } & import("mongoose").DefaultTimestampProps & {
     _id: Types.ObjectId;
 } & {
@@ -68,7 +74,8 @@ export declare const WarehouseStock: import("mongoose").Model<{
 }, Schema<any, import("mongoose").Model<any, any, any, any, any, any>, {}, {}, {}, {}, {
     timestamps: true;
 }, {
-    status: "healthy" | "low" | "critical";
+    notes: string;
+    active: boolean;
     productId: {
         prototype?: Types.ObjectId | null | undefined;
         cacheHexString?: unknown;
@@ -78,17 +85,19 @@ export declare const WarehouseStock: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     };
-    salePriceAwg: number;
-    lotName: string;
-    warehouseCode: string;
-    unitCostUsd: number;
-    usdToAwgRate: number;
-    availableUnits: number;
-    reservedUnits: number;
-    minUnits: number;
-    expirationDate?: NativeDate | null | undefined;
+    stockRowId: {
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    };
+    discountPercent: number;
 } & import("mongoose").DefaultTimestampProps, import("mongoose").Document<unknown, {}, import("mongoose").FlatRecord<{
-    status: "healthy" | "low" | "critical";
+    notes: string;
+    active: boolean;
     productId: {
         prototype?: Types.ObjectId | null | undefined;
         cacheHexString?: unknown;
@@ -98,19 +107,21 @@ export declare const WarehouseStock: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     };
-    salePriceAwg: number;
-    lotName: string;
-    warehouseCode: string;
-    unitCostUsd: number;
-    usdToAwgRate: number;
-    availableUnits: number;
-    reservedUnits: number;
-    minUnits: number;
-    expirationDate?: NativeDate | null | undefined;
+    stockRowId: {
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    };
+    discountPercent: number;
 } & import("mongoose").DefaultTimestampProps>, {}, import("mongoose").MergeType<import("mongoose").DefaultSchemaOptions, {
     timestamps: true;
 }>> & import("mongoose").FlatRecord<{
-    status: "healthy" | "low" | "critical";
+    notes: string;
+    active: boolean;
     productId: {
         prototype?: Types.ObjectId | null | undefined;
         cacheHexString?: unknown;
@@ -120,18 +131,19 @@ export declare const WarehouseStock: import("mongoose").Model<{
         createFromBase64?: {} | null | undefined;
         isValid?: {} | null | undefined;
     };
-    salePriceAwg: number;
-    lotName: string;
-    warehouseCode: string;
-    unitCostUsd: number;
-    usdToAwgRate: number;
-    availableUnits: number;
-    reservedUnits: number;
-    minUnits: number;
-    expirationDate?: NativeDate | null | undefined;
+    stockRowId: {
+        prototype?: Types.ObjectId | null | undefined;
+        cacheHexString?: unknown;
+        generate?: {} | null | undefined;
+        createFromTime?: {} | null | undefined;
+        createFromHexString?: {} | null | undefined;
+        createFromBase64?: {} | null | undefined;
+        isValid?: {} | null | undefined;
+    };
+    discountPercent: number;
 } & import("mongoose").DefaultTimestampProps> & {
     _id: Types.ObjectId;
 } & {
     __v: number;
 }>>;
-//# sourceMappingURL=warehouse-stock.model.d.ts.map
+//# sourceMappingURL=lot-promotion.model.d.ts.map

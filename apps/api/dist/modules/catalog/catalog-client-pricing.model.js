@@ -1,6 +1,8 @@
 import { Schema, Types, model } from "mongoose";
 const catalogClientPricingItemSchema = new Schema({
     productId: { type: Types.ObjectId, ref: "Product", required: true },
+    stockRowId: { type: String, trim: true, default: "" },
+    lotName: { type: String, trim: true, default: "" },
     productName: { type: String, required: true, trim: true },
     productSku: { type: String, required: true, trim: true },
     cost: { type: Number, required: true, min: 0 },

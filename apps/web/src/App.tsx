@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -38,6 +38,7 @@ type ActiveSection =
   | "accounting"
   | "logistics-accounting"
   | "cartera"
+  | "promotions"
   | "warehouse-dispatch"
   | "warehouse-inventory"
   | "invoice-change-requests"
@@ -220,6 +221,8 @@ type CatalogRecord = {
 
 type CatalogPreviewItem = {
   productId: string;
+  stockRowId: string;
+  lotName: string;
   name: string;
   sku: string;
   category: string;
@@ -235,6 +238,8 @@ type CatalogClientPricingRecord = {
   markupPercent: number;
   items: Array<{
     productId: string;
+    stockRowId: string;
+    lotName: string;
     productName: string;
     productSku: string;
     cost: number;
@@ -287,6 +292,40 @@ type InventorySummaryRow = {
   } | null;
   expirationDate: string | null;
   isExpiringSoon: boolean;
+  lots?: InventorySummaryLot[];
+};
+
+type InventorySummaryLot = {
+  stockRowId: string;
+  lotName: string;
+  warehouseCode: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+  salePrice: number;
+  totalSale: number;
+  expirationDate: string | null;
+  isExpiringSoon: boolean;
+  promotion?: {
+    id: string;
+    discountPercent: number;
+  } | null;
+};
+
+type LotPromotionRecord = {
+  id: string;
+  stockRowId: string;
+  productId: string;
+  productName: string;
+  productSku: string;
+  lotName: string;
+  expirationDate: string | null;
+  availableUnits: number;
+  discountPercent: number;
+  basePrice: number;
+  promotionPrice: number;
+  notes: string;
+  updatedAt: string;
 };
 
 type InventoryExportRow = {
@@ -388,6 +427,7 @@ type InventoryEntryDraftItem = {
   costUsd: string;
   salePriceAwg: string;
   expirationDate: string;
+  lotName: string;
   productWeightKg: string;
 };
 
@@ -403,6 +443,7 @@ type InventoryEditFormState = {
   salePriceAwg: string;
   productWeightKg: string;
   expirationDate: string;
+  lotName: string;
 };
 
 type ContainerImportProductFormState = {
@@ -535,11 +576,23 @@ type SellerClientProduct = {
   category: string;
   imageUrl: string;
   salePrice: number;
+  originalSalePrice?: number | null;
+  promotion?: SellerProductPromotion | null;
   warehouseStock: number;
   displaysPerBox: number;
   unitsPerBox: number;
   unitsPerBoxUnit: string;
   productWeightKg: number;
+};
+
+type SellerProductPromotion = {
+  stockRowId: string;
+  lotName: string;
+  expirationDate: string | null;
+  availableUnits: number;
+  discountPercent: number;
+  originalSalePrice: number;
+  promotionSalePrice: number;
 };
 
 type StoreVisitAssignment = {
@@ -685,6 +738,8 @@ type SellerCatalogProduct = {
   category: string;
   imageUrl: string;
   salePrice: number;
+  originalSalePrice?: number | null;
+  promotion?: SellerProductPromotion | null;
   warehouseStock: number;
   isExpiringSoon: boolean;
   nearestExpirationDate: string | null;
@@ -735,6 +790,7 @@ type SellerOrderRecord = {
     productId: string;
     stockCurrent: number | null;
     quantity: number;
+    stockRowId?: string;
     notes: string;
     salePriceAwg?: number;
     productName: string;
@@ -1185,6 +1241,7 @@ const managementSidebarSections = [
       { key: "orders", label: "Pedidos" },
       { key: "catalog", label: "Catálogo" },
       { key: "cartera", label: "Cartera" },
+      { key: "promotions", label: "Promociones" },
       { key: "invoice-change-requests", label: "Solicitudes factura" },
       { key: "order-delete-requests", label: "Solicitudes borrado" },
     ],
@@ -1243,6 +1300,7 @@ const contabilidadSidebarSections = [
       { key: "orders", label: "Pedidos" },
       { key: "catalog", label: "Catálogo" },
       { key: "cartera", label: "Cartera" },
+      { key: "promotions", label: "Promociones" },
     ],
   },
   {
@@ -1267,6 +1325,7 @@ const contabilidadAllowedSections = new Set<ActiveSection>([
   "orders",
   "catalog",
   "cartera",
+  "promotions",
   "warehouse-dispatch",
   "warehouse-inventory",
   "products",
@@ -1979,6 +2038,52 @@ function countSelectedCatalogProducts(
   )).length;
 }
 
+function getCatalogPreviewItemKey(item: Pick<CatalogPreviewItem, "productId" | "stockRowId">) {
+  return item.stockRowId.trim()
+    ? `${item.productId}::${item.stockRowId}`
+    : item.productId;
+}
+
+function findCatalogPreviewItem(
+  items: CatalogPreviewItem[],
+  productId: string,
+  stockRowId = "",
+) {
+  const normalizedStockRowId = stockRowId.trim();
+
+  if (normalizedStockRowId) {
+    const exactMatch = items.find((item) => (
+      item.productId === productId && item.stockRowId === normalizedStockRowId
+    ));
+
+    if (exactMatch) {
+      return exactMatch;
+    }
+  }
+
+  return items.find((item) => item.productId === productId) ?? null;
+}
+
+function getPrimaryInventoryLot(lots: InventorySummaryLot[] | undefined) {
+  return lots?.find((lot) => lot.quantity > 0 && lot.stockRowId) ?? lots?.find((lot) => lot.stockRowId) ?? null;
+}
+
+function buildCatalogLotPreviewItem(
+  product: ProductOption,
+  lot: InventorySummaryLot | null,
+): CatalogPreviewItem {
+  return {
+    productId: product.value,
+    stockRowId: lot?.stockRowId ?? "",
+    lotName: lot?.lotName ?? buildDefaultInventoryLotName(lot?.expirationDate ? lot.expirationDate.slice(0, 10) : ""),
+    name: product.label,
+    sku: product.sku,
+    category: product.category,
+    cost: roundCurrencyValue(lot?.unitCost ?? product.arubaPurchaseCostUsd * product.arubaUsdToAwgRate),
+    salePrice: roundCurrencyValue(lot?.salePrice ?? product.salePrice),
+  };
+}
+
 function buildCatalogFormPreviewItems(
   form: CatalogFormState,
   products: ProductOption[],
@@ -1992,18 +2097,11 @@ function buildCatalogFormPreviewItems(
     ))
     .map((product) => {
       const inventoryRow = inventoryRowsByProductId.get(product.value);
-      const arubaCostAwg = product.arubaPurchaseCostUsd * product.arubaUsdToAwgRate;
+      const primaryLot = getPrimaryInventoryLot(inventoryRow?.lots);
 
-      return {
-        productId: product.value,
-        name: product.label,
-        sku: product.sku,
-        category: product.category,
-        cost: roundCurrencyValue(inventoryRow?.unitCost ?? (arubaCostAwg > 0 ? arubaCostAwg : 0)),
-        salePrice: roundCurrencyValue(inventoryRow?.salePrice ?? product.salePrice),
-      };
+      return buildCatalogLotPreviewItem(product, primaryLot);
     })
-    .sort((left, right) => left.name.localeCompare(right.name, "es"));
+    .sort((left, right) => left.name.localeCompare(right.name, "es") || left.lotName.localeCompare(right.lotName, "es"));
 }
 
 function createInitialClientProductDraft(): ClientProductDraft {
@@ -2117,6 +2215,7 @@ function getCollectionConfigs(
         { name: "description", label: "Descripción", type: "text", placeholder: "PACK X 12 UN", optional: true },
         { name: "category", label: "Categoría", type: "select", options: categoryOptions },
         { name: "supplier", label: "Proveedor", type: "select", options: supplierOptions },
+        { name: "arubaPurchaseCostUsd", label: "Costo unitario (USD)", type: "number", placeholder: "0.00", width: "third" },
         { name: "salePrice", label: "Precio de venta (AWG)", type: "number", placeholder: "0.00", width: "third" },
         { name: "imageFile", label: "Imagen del producto", type: "file", optional: true },
         { name: "presentation", label: "Presentación", type: "select", options: productPresentationOptions, width: "third" },
@@ -2137,6 +2236,7 @@ function getCollectionConfigs(
         { key: "category", label: "Categoría" },
         { key: "warehouseStock", label: "Stock" },
         { key: "description", label: "Descripción" },
+        { key: "arubaPurchaseCostUsd", label: "Costo (USD)" },
         { key: "salePrice", label: "Venta" },
       ],
     },
@@ -2249,10 +2349,21 @@ type InventorySummaryTableProps = {
   emptyMessage: string;
   onAdjustRow: (row: InventorySummaryRow) => void;
   onEditRow?: (row: InventorySummaryRow) => void;
+  expandedProductIds?: Record<string, boolean>;
+  onToggleProductLots?: (productId: string) => void;
   layout?: "table" | "cards";
 };
 
-function InventorySummaryTable({ rows, isLoading, emptyMessage, onAdjustRow, onEditRow, layout = "cards" }: InventorySummaryTableProps) {
+function InventorySummaryTable({
+  rows,
+  isLoading,
+  emptyMessage,
+  onAdjustRow,
+  onEditRow,
+  expandedProductIds = {},
+  onToggleProductLots,
+  layout = "cards",
+}: InventorySummaryTableProps) {
   const wrapClassName = layout === "table" ? "table-wrap table-wrap--warehouse-items" : "table-wrap table-wrap--cards";
   const isCompactTable = layout === "table";
 
@@ -2277,72 +2388,143 @@ function InventorySummaryTable({ rows, isLoading, emptyMessage, onAdjustRow, onE
               <td colSpan={8} className="empty-table-cell">Cargando inventario...</td>
             </tr>
           ) : rows.length > 0 ? (
-            rows.map((row) => (
-              <tr key={row.stockRowId ?? `${row.productId}-${row.expirationDate ?? "sin-caducidad"}`}>
-                <td>
-                  {isCompactTable ? (
-                    <div className="warehouse-inventory-product">
-                      <strong>{row.name}</strong>
-                      <span>{row.sku}</span>
-                    </div>
-                  ) : (
-                    `${row.name} (${row.sku})`
-                  )}
-                </td>
-                <td>{row.quantity}</td>
-                <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.unitCost)}</td>
-                <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.totalCost)}</td>
-                <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.salePrice)}</td>
-                <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.totalSale)}</td>
-                <td>{row.expirationDate ? String(row.expirationDate).slice(0, 10) : "-"}</td>
-                <td>
-                  <div className="table-action-group">
-                    {onEditRow ? (
-                      <button
-                        className="table-action-icon"
-                        type="button"
-                        aria-label={`Modificar ${row.name}`}
-                        title="Modificar producto"
-                        onClick={() => onEditRow(row)}
-                      >
-                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                          <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zm14.71-9.04a1.003 1.003 0 000-1.42l-2.5-2.5a1.003 1.003 0 00-1.42 0l-1.83 1.83 3.75 3.75 2-1.66z" fill="currentColor" />
-                        </svg>
-                      </button>
-                    ) : null}
-                    {row.quantity > 0 ? (
-                      isCompactTable ? (
+            rows.map((row) => {
+              const lots = row.lots ?? [];
+              const isExpanded = Boolean(expandedProductIds[row.productId]);
+              const primaryLot = lots.find((lot) => lot.quantity > 0) ?? lots[0] ?? null;
+
+              return (
+                <Fragment key={row.stockRowId || `${row.productId}-${row.expirationDate ?? "sin-caducidad"}`}>
+                  <tr>
+                    <td>
+                      {isCompactTable ? (
                         <button
-                          className="warehouse-inventory-out-button"
+                          className="warehouse-inventory-product warehouse-inventory-product-button"
                           type="button"
-                          aria-label={`Sacar unidades de ${row.name}`}
-                          title="Registrar salida de inventario"
-                          onClick={() => onAdjustRow(row)}
+                          onClick={() => onToggleProductLots?.(row.productId)}
+                          aria-expanded={isExpanded}
                         >
-                          Sacar
+                          <strong>{row.name}</strong>
+                          <span>{row.sku} · {lots.length} lote{lots.length === 1 ? "" : "s"}</span>
                         </button>
                       ) : (
                         <button
-                          className="table-action-icon"
+                          className="inventory-product-expand-button"
                           type="button"
-                          aria-label="Sacar unidades del inventario"
-                          title="Registrar salida de inventario"
-                          onClick={() => onAdjustRow(row)}
+                          onClick={() => onToggleProductLots?.(row.productId)}
+                          aria-expanded={isExpanded}
                         >
-                          <svg viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M19 7h-3V6a2 2 0 0 0-2-2H10a2 2 0 0 0-2 2v1H5a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1h1v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9h1a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zM10 6h4v1h-4V6zm2 11a1 1 0 0 1-1-1v-4a1 1 0 1 1 2 0v4a1 1 0 0 1-1 1z" fill="currentColor" />
-                          </svg>
+                          {`${row.name} (${row.sku}) · ${lots.length} lote${lots.length === 1 ? "" : "s"}`}
                         </button>
-                      )
-                    ) : !onEditRow ? (
-                      <span className="warehouse-inventory-no-action" title="Sin unidades disponibles">
-                        {isCompactTable ? "-" : "Sin stock"}
-                      </span>
-                    ) : null}
-                  </div>
-                </td>
-              </tr>
-            ))
+                      )}
+                    </td>
+                    <td>{row.quantity}</td>
+                    <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.unitCost)}</td>
+                    <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.totalCost)}</td>
+                    <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.salePrice)}</td>
+                    <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.totalSale)}</td>
+                    <td>{row.expirationDate ? String(row.expirationDate).slice(0, 10) : "-"}</td>
+                    <td>
+                      <div className="table-action-group">
+                        {onEditRow ? (
+                          <button
+                            className="table-action-icon"
+                            type="button"
+                            aria-label={`Modificar ${row.name}`}
+                            title="Modificar producto"
+                            onClick={() => onEditRow(row)}
+                          >
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                              <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zm14.71-9.04a1.003 1.003 0 000-1.42l-2.5-2.5a1.003 1.003 0 00-1.42 0l-1.83 1.83 3.75 3.75 2-1.66z" fill="currentColor" />
+                            </svg>
+                          </button>
+                        ) : null}
+                        {row.quantity > 0 ? (
+                          isCompactTable ? (
+                            <button
+                              className="warehouse-inventory-out-button"
+                              type="button"
+                              aria-label={`Sacar unidades de ${row.name}`}
+                              title="Registrar salida de inventario"
+                              onClick={() => onAdjustRow({
+                                ...row,
+                                stockRowId: primaryLot?.stockRowId ?? row.stockRowId,
+                                quantity: primaryLot?.quantity ?? row.quantity,
+                                expirationDate: primaryLot?.expirationDate ?? row.expirationDate,
+                              })}
+                            >
+                              Sacar
+                            </button>
+                          ) : (
+                            <button
+                              className="table-action-icon"
+                              type="button"
+                              aria-label="Sacar unidades del inventario"
+                              title="Registrar salida de inventario"
+                              onClick={() => onAdjustRow({
+                                ...row,
+                                stockRowId: primaryLot?.stockRowId ?? row.stockRowId,
+                                quantity: primaryLot?.quantity ?? row.quantity,
+                                expirationDate: primaryLot?.expirationDate ?? row.expirationDate,
+                              })}
+                            >
+                              <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M19 7h-3V6a2 2 0 0 0-2-2H10a2 2 0 0 0-2 2v1H5a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1h1v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9h1a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zM10 6h4v1h-4V6zm2 11a1 1 0 0 1-1-1v-4a1 1 0 1 1 2 0v4a1 1 0 0 1-1 1z" fill="currentColor" />
+                              </svg>
+                            </button>
+                          )
+                        ) : !onEditRow ? (
+                          <span className="warehouse-inventory-no-action" title="Sin unidades disponibles">
+                            {isCompactTable ? "-" : "Sin stock"}
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                  {isExpanded ? (
+                    lots.length > 0 ? (
+                      lots.map((lot, lotIndex) => (
+                        <tr className="inventory-lot-row" key={lot.stockRowId || `${row.productId}-lot-${lotIndex}`}>
+                          <td>
+                            <span className="inventory-lot-label">{lot.lotName || `Lote ${lotIndex + 1}`}</span>
+                            {lot.warehouseCode ? <span className="inventory-lot-warehouse">{lot.warehouseCode}</span> : null}
+                            {lot.promotion ? <span className="inventory-lot-warehouse">Promo {lot.promotion.discountPercent}%</span> : null}
+                          </td>
+                          <td>{lot.quantity}</td>
+                          <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(lot.unitCost)}</td>
+                          <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(lot.totalCost)}</td>
+                          <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(lot.salePrice)}</td>
+                          <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(lot.totalSale)}</td>
+                          <td>{lot.expirationDate ? String(lot.expirationDate).slice(0, 10) : "-"}</td>
+                          <td>
+                            {lot.quantity > 0 ? (
+                              <button
+                                className="warehouse-inventory-out-button"
+                                type="button"
+                                onClick={() => onAdjustRow({
+                                  ...row,
+                                  stockRowId: lot.stockRowId,
+                                  quantity: lot.quantity,
+                                  expirationDate: lot.expirationDate,
+                                })}
+                              >
+                                Sacar
+                              </button>
+                            ) : (
+                              <span className="warehouse-inventory-no-action">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr className="inventory-lot-row">
+                        <td colSpan={8}>Este producto no tiene lotes registrados.</td>
+                      </tr>
+                    )
+                  ) : null}
+                </Fragment>
+              );
+            })
           ) : (
             <tr>
               <td colSpan={8} className="empty-table-cell">{emptyMessage}</td>
@@ -2506,6 +2688,50 @@ function getBusinessDateKey(date = new Date()) {
   const month = parts.find((part) => part.type === "month")?.value ?? "01";
   const day = parts.find((part) => part.type === "day")?.value ?? "01";
   return `${year}-${month}-${day}`;
+}
+
+function getBusinessMonthStartDateKey(date = new Date()) {
+  return `${getBusinessMonthKey(date)}-01`;
+}
+
+function formatCarteraDateRangeLabel(startDate: string, endDate: string) {
+  const normalizedStartDate = startDate.trim();
+  const normalizedEndDate = endDate.trim();
+
+  if (!normalizedStartDate && !normalizedEndDate) {
+    return "Todo el historial";
+  }
+
+  if (normalizedStartDate && normalizedEndDate && normalizedStartDate === normalizedEndDate) {
+    return normalizedStartDate;
+  }
+
+  if (normalizedStartDate && normalizedEndDate) {
+    return `${normalizedStartDate} a ${normalizedEndDate}`;
+  }
+
+  if (normalizedStartDate) {
+    return `Desde ${normalizedStartDate}`;
+  }
+
+  return `Hasta ${normalizedEndDate}`;
+}
+
+function normalizeCarteraDateRange(startDate: string, endDate: string) {
+  const normalizedStartDate = startDate.trim();
+  const normalizedEndDate = endDate.trim();
+
+  if (normalizedStartDate && normalizedEndDate && normalizedStartDate > normalizedEndDate) {
+    return {
+      startDate: normalizedEndDate,
+      endDate: normalizedStartDate,
+    };
+  }
+
+  return {
+    startDate: normalizedStartDate,
+    endDate: normalizedEndDate,
+  };
 }
 
 function addDaysToBusinessDateKey(dateKey: string, days: number) {
@@ -3114,6 +3340,7 @@ function createInitialInventoryEditForm(): InventoryEditFormState {
     salePriceAwg: "",
     productWeightKg: "",
     expirationDate: "",
+    lotName: "",
   };
 }
 
@@ -3150,6 +3377,7 @@ function createInventoryEntryDraftItem(productId = ""): InventoryEntryDraftItem 
     costUsd: "",
     salePriceAwg: "",
     expirationDate: "",
+    lotName: "",
     productWeightKg: "",
   };
 }
@@ -3309,6 +3537,83 @@ function SearchableStoreSelect({
               >
                 <strong>{store.label}</strong>
                 <span>{store.code}{store.address ? ` · ${store.address}` : ""}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+type SearchableLotSelectProps = {
+  options: Array<{ value: string; label: string }>;
+  value: string;
+  onChange: (stockRowId: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+};
+
+function SearchableLotSelect({
+  options,
+  value,
+  onChange,
+  placeholder = "Buscar lote por producto, nombre o vencimiento...",
+  disabled = false,
+}: SearchableLotSelectProps) {
+  const selectedOption = options.find((option) => option.value === value) ?? null;
+  const [query, setQuery] = useState(selectedOption?.label ?? "");
+  const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    const nextSelectedOption = options.find((option) => option.value === value) ?? null;
+    setQuery(nextSelectedOption?.label ?? "");
+  }, [options, value]);
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredOptions = normalizedQuery
+    ? options.filter((option) => option.label.toLowerCase().includes(normalizedQuery)).slice(0, 50)
+    : options.slice(0, 50);
+
+  return (
+    <div className={`searchable-select${isOpen ? " is-open" : ""}`}>
+      <input
+        className="searchable-select-input"
+        type="text"
+        value={query}
+        placeholder={placeholder}
+        disabled={disabled}
+        autoComplete="off"
+        onChange={(event) => {
+          setQuery(event.target.value);
+          setIsOpen(true);
+
+          if (!event.target.value.trim()) {
+            onChange("");
+          }
+        }}
+        onFocus={() => setIsOpen(true)}
+        onBlur={() => {
+          window.setTimeout(() => setIsOpen(false), 120);
+        }}
+      />
+
+      {isOpen && filteredOptions.length > 0 ? (
+        <ul className="searchable-select-menu" role="listbox">
+          {filteredOptions.map((option) => (
+            <li key={option.value}>
+              <button
+                type="button"
+                role="option"
+                className="searchable-select-option"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onChange(option.value);
+                  setQuery(option.label);
+                  setIsOpen(false);
+                }}
+              >
+                <strong>{option.label}</strong>
               </button>
             </li>
           ))}
@@ -3566,8 +3871,17 @@ function formatExportVolumeLabel(volumeCubicFeet: number) {
   return `${normalized} pie3 / und. exportación`;
 }
 
-function buildInventoryEntryLotKey(productId: string, expirationDate: string) {
-  return `${productId.trim()}::${expirationDate.trim() || "no-expiration"}`;
+function buildInventoryEntryLotKey(
+  productId: string,
+  expirationDate: string,
+  unitCostUsd = 0,
+  salePriceAwg = 0,
+) {
+  return `${productId.trim()}::${expirationDate.trim() || "no-expiration"}::${roundCurrencyValue(unitCostUsd)}::${roundCurrencyValue(salePriceAwg)}`;
+}
+
+function buildDefaultInventoryLotName(expirationDate: string) {
+  return expirationDate.trim() ? `Lote vence ${expirationDate.trim()}` : "Lote sin vencimiento";
 }
 
 function isCreationSectionKey(
@@ -3670,6 +3984,7 @@ export default function App() {
   const [databaseRows, setDatabaseRows] = useState<Record<string, Array<Record<string, unknown>>>>({});
   const [inventoryRows, setInventoryRows] = useState<InventorySummaryRow[]>([]);
   const [inventoryHistoryRows, setInventoryHistoryRows] = useState<InventoryHistoryRow[]>([]);
+  const [expandedInventoryProductIds, setExpandedInventoryProductIds] = useState<Record<string, boolean>>({});
   const [selectedInventoryAdjustmentRow, setSelectedInventoryAdjustmentRow] = useState<InventorySummaryRow | null>(null);
   const [selectedInventoryEditRow, setSelectedInventoryEditRow] = useState<InventorySummaryRow | null>(null);
   const [isLoadingInventory, setIsLoadingInventory] = useState(false);
@@ -3693,6 +4008,7 @@ export default function App() {
     costUsd: "",
     salePriceAwg: "",
     expirationDate: "",
+    lotName: "",
     productWeightKg: "",
   });
   const [selectedInventoryEntryHistoryGroupId, setSelectedInventoryEntryHistoryGroupId] = useState("");
@@ -3897,7 +4213,9 @@ export default function App() {
   const [carteraRows, setCarteraRows] = useState<CarteraEntryRecord[]>([]);
   const [carteraCollections, setCarteraCollections] = useState<CarteraCollectionRecord[]>([]);
   const [carteraSummary, setCarteraSummary] = useState<CarteraSummary>(() => createInitialCarteraSummary());
-  const [carteraMonthFilter, setCarteraMonthFilter] = useState(() => getBusinessMonthKey());
+  const [carteraStartDateFilter, setCarteraStartDateFilter] = useState(() => getBusinessMonthStartDateKey());
+  const [carteraEndDateFilter, setCarteraEndDateFilter] = useState(() => getBusinessDateKey());
+  const [carteraPendingOnlyFilter, setCarteraPendingOnlyFilter] = useState(false);
   const [isLoadingCartera, setIsLoadingCartera] = useState(false);
   const [carteraError, setCarteraError] = useState("");
   const [selectedCarteraStoreId, setSelectedCarteraStoreId] = useState("");
@@ -3909,11 +4227,17 @@ export default function App() {
   }));
   const [carteraCollectionStatus, setCarteraCollectionStatus] = useState<CreationStatus | null>(null);
   const [isSavingCarteraCollection, setIsSavingCarteraCollection] = useState(false);
+  const [lotPromotions, setLotPromotions] = useState<LotPromotionRecord[]>([]);
+  const [isLoadingLotPromotions, setIsLoadingLotPromotions] = useState(false);
+  const [lotPromotionStatus, setLotPromotionStatus] = useState<CreationStatus | null>(null);
+  const [isSavingLotPromotion, setIsSavingLotPromotion] = useState(false);
+  const [lotPromotionDraft, setLotPromotionDraft] = useState({ stockRowId: "", discountPercent: "", notes: "" });
   const [warehousePendingCreditEntries, setWarehousePendingCreditEntries] = useState<CarteraEntryRecord[]>([]);
   const [warehouseCreditCollectionDrafts, setWarehouseCreditCollectionDrafts] = useState<Record<string, WarehouseCreditCollectionDraft>>({});
   const [isLoadingWarehousePendingCredit, setIsLoadingWarehousePendingCredit] = useState(false);
   const [warehousePendingCreditError, setWarehousePendingCreditError] = useState("");
   const [warehouseOrderItemDraft, setWarehouseOrderItemDraft] = useState<Record<string, string>>({});
+  const [warehouseOrderLotDraft, setWarehouseOrderLotDraft] = useState<Record<string, string>>({});
   const [accountingOrderPriceDraft, setAccountingOrderPriceDraft] = useState<Record<string, string>>({});
   const [isSavingAccountingOrderPrices, setIsSavingAccountingOrderPrices] = useState(false);
   const [accountingOrderPriceStatus, setAccountingOrderPriceStatus] = useState<CreationStatus | null>(null);
@@ -4306,13 +4630,15 @@ export default function App() {
         productId: product.productId,
         stockCurrent,
         quantity: Number(draft.quantity || 0),
+        stockRowId: product.promotion?.stockRowId,
+        salePriceAwg: product.promotion?.promotionSalePrice ?? product.salePrice,
         notes: draft.notes.trim(),
       };
     })
     .filter((item) => (item.stockCurrent !== null && Number.isFinite(item.stockCurrent) && item.stockCurrent >= 0) || (Number.isFinite(item.quantity) && item.quantity > 0));
   const sellerOrderEstimatedTotal = sellerDraftedItems.reduce((sum, item) => {
     const product = sellerClientProducts.find((entry) => entry.productId === item.productId);
-    const unitPrice = Number(product?.salePrice ?? 0);
+    const unitPrice = Number(product?.promotion?.promotionSalePrice ?? product?.salePrice ?? 0);
     return sum + roundCurrencyValue(unitPrice * item.quantity);
   }, 0);
   const inventoryRowsByProductId = inventoryRows.reduce((map, row) => {
@@ -4334,6 +4660,22 @@ export default function App() {
         expirationDate: current.expirationDate && row.expirationDate
           ? (current.expirationDate <= row.expirationDate ? current.expirationDate : row.expirationDate)
           : current.expirationDate ?? row.expirationDate,
+        lots: [
+          ...(current.lots ?? []),
+          ...(row.lots ?? (row.stockRowId ? [{
+            stockRowId: row.stockRowId,
+            lotName: buildDefaultInventoryLotName(row.expirationDate ? String(row.expirationDate).slice(0, 10) : ""),
+            warehouseCode: "",
+            quantity: row.quantity,
+            unitCost: row.unitCost,
+            totalCost: row.totalCost,
+            salePrice: row.salePrice,
+            totalSale: row.totalSale,
+            expirationDate: row.expirationDate,
+            isExpiringSoon: row.isExpiringSoon,
+            promotion: null,
+          }] : [])),
+        ],
       });
       return map;
     }
@@ -4341,6 +4683,34 @@ export default function App() {
     map.set(row.productId, { ...row });
     return map;
   }, new Map<string, InventorySummaryRow>());
+  const inventoryLotsByProductId = new Map(
+    Array.from(inventoryRowsByProductId.entries()).map(([productId, row]) => [
+      productId,
+      [...(row.lots ?? [])].sort((left, right) => {
+        const leftDate = left.expirationDate ?? "";
+        const rightDate = right.expirationDate ?? "";
+
+        if (leftDate && rightDate && leftDate !== rightDate) {
+          return leftDate.localeCompare(rightDate);
+        }
+
+        if (leftDate) return -1;
+        if (rightDate) return 1;
+        return left.stockRowId.localeCompare(right.stockRowId);
+      }),
+    ]),
+  );
+  const promotionLotOptions = Array.from(inventoryRowsByProductId.values())
+    .flatMap((row) => (row.lots ?? [])
+      .filter((lot) => lot.stockRowId && lot.quantity > 0)
+      .map((lot) => ({
+        value: lot.stockRowId,
+        label: `${row.name} · ${lot.lotName || buildDefaultInventoryLotName(lot.expirationDate ? lot.expirationDate.slice(0, 10) : "")} · ${lot.quantity} und. · costo ${formatCurrencyUpTwoDecimals(lot.unitCost)} · venta ${formatCurrencyUpTwoDecimals(lot.salePrice)} · vence ${lot.expirationDate ? lot.expirationDate.slice(0, 10) : "-"}`,
+        productName: row.name,
+        salePrice: lot.salePrice,
+        lot,
+      })))
+    .sort((left, right) => left.label.localeCompare(right.label, "es"));
   const productOptionsById = new Map(productOptions.map((product) => [product.value, product]));
   const normalizedCatalogDirectProductFilter = catalogDirectProductFilter.trim().toLowerCase();
   const selectedCatalogProductCount = countSelectedCatalogProducts(catalogForm, productOptions, productOptionsById);
@@ -4387,12 +4757,31 @@ export default function App() {
     : [];
   const warehousePricedItems = selectedWarehouseOrderDetail
     ? warehouseOrderEffectiveItems.map((item) => {
-      const catalogItem = catalogPreviewItems.find((previewItem) => previewItem.productId === item.productId);
       const productOption = productOptionsById.get(item.productId);
       const storedSalePrice = Number(item.salePriceAwg ?? 0);
       const hasFrozenPrice = storedSalePrice > 0;
-      const liveSalePrice = roundCurrencyValue(Number(catalogItem?.salePrice ?? productOption?.salePrice ?? 0));
-      const defaultSalePrice = hasFrozenPrice ? roundCurrencyValue(storedSalePrice) : liveSalePrice;
+      const selectedStockRowId = warehouseOrderLotDraft[item.productId] || item.stockRowId || "";
+      const selectedLot = (inventoryLotsByProductId.get(item.productId) ?? []).find((lot) => lot.stockRowId === selectedStockRowId);
+      const catalogItem = findCatalogPreviewItem(
+        catalogPreviewItems,
+        item.productId,
+        selectedStockRowId,
+      );
+      const catalogSalePrice = selectedCatalogId && catalogItem
+        ? roundCurrencyValue(Number(catalogItem.salePrice ?? 0))
+        : null;
+      const liveSalePrice = catalogSalePrice !== null
+        ? catalogSalePrice
+        : roundCurrencyValue(Number(selectedLot?.salePrice ?? productOption?.salePrice ?? 0));
+      const lotPromotionDiscount = Number(selectedLot?.promotion?.discountPercent ?? 0);
+      const hasLotPromotion = Boolean(selectedLot?.promotion && lotPromotionDiscount > 0);
+      const lotPromotionPrice = hasLotPromotion
+        ? roundCurrencyValue(liveSalePrice * (1 - lotPromotionDiscount / 100))
+        : 0;
+      const selectedLotChanged = Boolean(selectedStockRowId && item.stockRowId && selectedStockRowId !== item.stockRowId);
+      const defaultSalePrice = hasLotPromotion
+        ? lotPromotionPrice
+        : (hasFrozenPrice && !selectedLotChanged ? roundCurrencyValue(storedSalePrice) : liveSalePrice);
       const quantity = selectedWarehouseOrderDetail.status === "delivered"
         ? Number(item.quantity ?? 0)
         : Number(warehouseOrderItemDraft[item.productId] ?? item.quantity ?? 0);
@@ -4403,6 +4792,10 @@ export default function App() {
         quantity,
         defaultSalePrice,
         resolvedSalePrice,
+        selectedLot,
+        hasLotPromotion,
+        lotPromotionDiscount,
+        originalSalePrice: hasLotPromotion ? liveSalePrice : null,
         lineTotal: roundCurrencyValue(resolvedSalePrice * quantity),
         priceSource: hasFrozenPrice
           ? "frozen"
@@ -4487,9 +4880,17 @@ export default function App() {
         }
       }
 
-      return savedOrder.items.some((item) => (
-        String(item.quantity) !== (warehouseOrderItemDraft[item.productId] ?? String(item.quantity))
-      ));
+      return savedOrder.items.some((item) => {
+        const lots = inventoryLotsByProductId.get(item.productId) ?? [];
+        const defaultLotId = lots.find((lot) => lot.quantity > 0)?.stockRowId || lots[0]?.stockRowId || "";
+        const savedLotId = String(item.stockRowId ?? "");
+        const expectedLotId = savedLotId || defaultLotId;
+
+        return (
+          String(item.quantity) !== (warehouseOrderItemDraft[item.productId] ?? String(item.quantity))
+          || expectedLotId !== String(warehouseOrderLotDraft[item.productId] ?? expectedLotId)
+        );
+      });
     })(),
   );
   const warehouseOrderCompletionHints: string[] = [];
@@ -4983,11 +5384,14 @@ export default function App() {
     .reduce((sum, ex) => sum + Number(ex.amountAwg ?? 0), 0);
   const logisticsMonthlyAdditionalCosts = logisticsMonthlyFixedCosts + logisticsMonthlyExpenses;
   const logisticsMonthlyNetUtility = logisticsMonthlyUtility - logisticsMonthlyAdditionalCosts;
-  const normalizedCarteraMonthFilter = carteraMonthFilter.trim();
+  const carteraDateRangeLabel = formatCarteraDateRangeLabel(carteraStartDateFilter, carteraEndDateFilter);
   const selectedCarteraStore = storeOptionsById.get(selectedCarteraStoreId) ?? null;
   const filteredCarteraRows = selectedCarteraStoreId
     ? carteraRows.filter((row) => String(row.storeId).trim() === String(selectedCarteraStoreId).trim())
     : carteraRows;
+  const displayedCarteraRows = carteraPendingOnlyFilter
+    ? filteredCarteraRows.filter((row) => getCarteraEntryPaymentStatus(row) === "pendiente")
+    : filteredCarteraRows;
   const filteredCarteraCollections = selectedCarteraStoreId
     ? carteraCollections.filter((row) => String(row.storeId).trim() === String(selectedCarteraStoreId).trim())
     : carteraCollections;
@@ -5545,14 +5949,14 @@ export default function App() {
     }
 
     if (activeSection === "cartera") {
-      void refreshCarteraData(carteraMonthFilter);
+      void refreshCarteraData();
       return;
     }
 
     if (activeSection === "dashboard") {
-      void refreshCarteraData("");
+      void refreshCarteraData({ unfiltered: true });
     }
-  }, [activeSection, carteraMonthFilter, sessionUser]);
+  }, [activeSection, carteraStartDateFilter, carteraEndDateFilter, sessionUser]);
 
   useEffect(() => {
     const canAccessBilling = sessionUser?.role === "management" || sessionUser?.role === "colombia-ops";
@@ -5696,6 +6100,10 @@ export default function App() {
 
     const hasCatalogSelection = catalogForm.categoryNames.length > 0 || catalogForm.productIds.length > 0;
 
+    if (selectedCatalogId) {
+      return;
+    }
+
     if (!hasCatalogSelection) {
       if (!selectedCatalogId) {
         setCatalogPreviewItems([]);
@@ -5706,17 +6114,26 @@ export default function App() {
     const productsById = new Map(productOptions.map((product) => [product.value, product]));
 
     setCatalogPreviewItems((current) => {
-      const priceByProductId = new Map(current.map((item) => [item.productId, item.salePrice]));
+      const existingByKey = new Map(current.map((item) => [getCatalogPreviewItemKey(item), item]));
 
       return buildCatalogFormPreviewItems(
         catalogForm,
         productOptions,
         productsById,
         inventoryRowsByProductId,
-      ).map((item) => ({
-        ...item,
-        salePrice: priceByProductId.get(item.productId) ?? item.salePrice,
-      }));
+      ).map((item) => {
+        const existingItem = existingByKey.get(getCatalogPreviewItemKey(item));
+
+        return existingItem
+          ? {
+              ...item,
+              stockRowId: existingItem.stockRowId || item.stockRowId,
+              lotName: existingItem.lotName || item.lotName,
+              cost: existingItem.cost,
+              salePrice: existingItem.salePrice,
+            }
+          : item;
+      });
     });
   }, [activeSection, catalogForm, inventoryRowsByProductId, productOptions, selectedCatalogId, sessionUser]);
 
@@ -5783,11 +6200,19 @@ export default function App() {
       return;
     }
 
-    if (activeSection !== "inventory" && activeSection !== "catalog" && activeSection !== "dashboard" && activeSection !== "imports" && activeSection !== "orders" && activeSection !== "products") {
+    if (activeSection !== "inventory" && activeSection !== "catalog" && activeSection !== "dashboard" && activeSection !== "imports" && activeSection !== "orders" && activeSection !== "products" && activeSection !== "promotions") {
       return;
     }
 
     void refreshInventorySummary();
+  }, [activeSection, sessionUser]);
+
+  useEffect(() => {
+    if ((sessionUser?.role !== "management" && sessionUser?.role !== "contabilidad") || activeSection !== "promotions") {
+      return;
+    }
+
+    void refreshLotPromotions();
   }, [activeSection, sessionUser]);
 
   useEffect(() => {
@@ -5929,6 +6354,7 @@ export default function App() {
     if ((sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "contabilidad") || !selectedWarehouseOrderDetail) {
       setWarehouseOrderChecklist({});
       setWarehouseOrderItemDraft({});
+      setWarehouseOrderLotDraft({});
       setWarehouseOrderDiscountDraft("");
       setWarehouseOrderEditStatus(null);
       setWarehouseOrderCompletionStatus(null);
@@ -5945,10 +6371,18 @@ export default function App() {
         selectedWarehouseOrderDetail.items.map((item) => [item.productId, selectedWarehouseOrderDetail.status === "delivered"]),
       ),
     );
+    setWarehouseOrderLotDraft(
+      Object.fromEntries(
+        selectedWarehouseOrderDetail.items.map((item) => {
+          const lots = inventoryLotsByProductId.get(item.productId) ?? [];
+          return [item.productId, item.stockRowId || lots.find((lot) => lot.quantity > 0)?.stockRowId || lots[0]?.stockRowId || ""];
+        }),
+      ),
+    );
     setWarehouseOrderDiscountDraft("");
     setWarehouseOrderEditStatus(null);
     setWarehouseOrderCompletionStatus(null);
-  }, [selectedWarehouseOrderDetail, sessionUser]);
+  }, [inventoryRows, selectedWarehouseOrderDetail, sessionUser]);
 
   useEffect(() => {
     if (sessionUser?.role !== "contabilidad" || !selectedWarehouseOrderDetail) {
@@ -6312,6 +6746,24 @@ export default function App() {
     }
   }
 
+  function renderPromotionPrice(product: { salePrice: number; originalSalePrice?: number | null; promotion?: SellerProductPromotion | null }) {
+    if (!product.promotion) {
+      return <span>Precio: {formatAwgCurrency(product.salePrice)} AWG</span>;
+    }
+
+    return (
+      <span className="promo-price-stack">
+        <small>Promo lote: {product.promotion.lotName}</small>
+        <span>
+          <s>{formatAwgCurrency(product.promotion.originalSalePrice || product.originalSalePrice || product.salePrice)} AWG</s>
+          {" "}
+          <strong>{formatAwgCurrency(product.promotion.promotionSalePrice)} AWG</strong>
+        </span>
+        <small>{product.promotion.discountPercent}% dto. · {product.promotion.availableUnits} und.</small>
+      </span>
+    );
+  }
+
   function renderSellerCatalogProductRow(product: SellerCatalogProduct, storeId: string) {
     const isAdding = addingSellerProductId === product.productId;
 
@@ -6332,7 +6784,7 @@ export default function App() {
           </div>
         </div>
         <div className="seller-product-catalog-meta">
-          <span>Precio: {formatAwgCurrency(product.salePrice)} AWG</span>
+          {renderPromotionPrice(product)}
           <strong>Stock: {product.warehouseStock} uds.</strong>
           {formatProductDisplayInfo(product) ? (
             <small>{formatProductDisplayInfo(product)}</small>
@@ -6424,7 +6876,7 @@ export default function App() {
     const draft = sellerOrderDraft[product.productId] ?? { stockCurrent: "", quantity: "", notes: "" };
     const quantityValue = Number(draft.quantity || 0);
     const lineTotal = Number.isFinite(quantityValue) && quantityValue > 0
-      ? roundCurrencyValue(Number(product.salePrice ?? 0) * quantityValue)
+      ? roundCurrencyValue(Number(product.promotion?.promotionSalePrice ?? product.salePrice ?? 0) * quantityValue)
       : 0;
     const catalogMatch = [...sellerProductCatalog.expiringSoon, ...sellerProductCatalog.products]
       .find((entry) => entry.productId === product.productId);
@@ -6458,7 +6910,7 @@ export default function App() {
           </div>
         </div>
         <div className="seller-product-catalog-meta">
-          <span>Precio: {formatAwgCurrency(product.salePrice)} AWG</span>
+          {renderPromotionPrice(product)}
           <strong>Stock bodega: {warehouseStock} uds.</strong>
           {formatProductDisplayInfo(product) ? (
             <small>{formatProductDisplayInfo(product)}</small>
@@ -7175,11 +7627,29 @@ export default function App() {
     }
   }
 
-  async function refreshCarteraData(month = carteraMonthFilter) {
+  async function refreshCarteraData(options?: { startDate?: string; endDate?: string; unfiltered?: boolean }) {
     try {
       setIsLoadingCartera(true);
       setCarteraError("");
-      const query = month.trim().length > 0 ? `?month=${encodeURIComponent(month.trim())}` : "";
+
+      const params = new URLSearchParams();
+
+      if (!options?.unfiltered) {
+        const normalizedRange = normalizeCarteraDateRange(
+          options?.startDate ?? carteraStartDateFilter,
+          options?.endDate ?? carteraEndDateFilter,
+        );
+
+        if (normalizedRange.startDate) {
+          params.set("startDate", normalizedRange.startDate);
+        }
+
+        if (normalizedRange.endDate) {
+          params.set("endDate", normalizedRange.endDate);
+        }
+      }
+
+      const query = params.toString().length > 0 ? `?${params.toString()}` : "";
       const response = await fetch(`${apiBaseUrl}/management/cartera${query}`);
       const data = (await response.json()) as {
         summary?: CarteraSummary;
@@ -7266,7 +7736,7 @@ export default function App() {
         collectedAt: new Date().toISOString().slice(0, 10),
       });
       setCarteraCollectionStatus({ tone: "success", message: data.message ?? "Recaudo registrado correctamente." });
-      await refreshCarteraData(carteraMonthFilter);
+      await refreshCarteraData();
     } catch (error) {
       setCarteraCollectionStatus({
         tone: "error",
@@ -7343,14 +7813,108 @@ export default function App() {
     }
   }
 
+  async function refreshLotPromotions() {
+    try {
+      setIsLoadingLotPromotions(true);
+      const response = await fetch(`${apiBaseUrl}/management/lot-promotions`);
+      const data = (await response.json()) as LotPromotionRecord[] | { message?: string };
+
+      if (!response.ok || !Array.isArray(data)) {
+        setLotPromotionStatus({ tone: "error", message: Array.isArray(data) ? "No fue posible cargar promociones." : data.message ?? "No fue posible cargar promociones." });
+        return;
+      }
+
+      setLotPromotions(data);
+    } catch {
+      setLotPromotionStatus({ tone: "error", message: "No fue posible conectar con el backend." });
+    } finally {
+      setIsLoadingLotPromotions(false);
+    }
+  }
+
+  async function handleLotPromotionSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const stockRowId = lotPromotionDraft.stockRowId.trim();
+    const discountPercent = Number(lotPromotionDraft.discountPercent || 0);
+
+    if (!stockRowId) {
+      setLotPromotionStatus({ tone: "error", message: "Selecciona el lote para promocionar." });
+      return;
+    }
+
+    if (!Number.isFinite(discountPercent) || discountPercent <= 0 || discountPercent > 100) {
+      setLotPromotionStatus({ tone: "error", message: "Ingresa un descuento entre 0.01% y 100%." });
+      return;
+    }
+
+    try {
+      setIsSavingLotPromotion(true);
+      setLotPromotionStatus(null);
+      const response = await fetch(`${apiBaseUrl}/management/lot-promotions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          stockRowId,
+          discountPercent,
+          notes: lotPromotionDraft.notes,
+        }),
+      });
+      const data = (await response.json()) as { message?: string };
+
+      if (!response.ok) {
+        setLotPromotionStatus({ tone: "error", message: data.message ?? "No fue posible guardar la promoción." });
+        return;
+      }
+
+      setLotPromotionDraft({ stockRowId: "", discountPercent: "", notes: "" });
+      setLotPromotionStatus({ tone: "success", message: data.message ?? "Promoción guardada correctamente." });
+      await refreshLotPromotions();
+      await refreshInventorySummary();
+    } catch {
+      setLotPromotionStatus({ tone: "error", message: "No fue posible conectar con el backend." });
+    } finally {
+      setIsSavingLotPromotion(false);
+    }
+  }
+
+  async function handleDeactivateLotPromotion(promotionId: string) {
+    try {
+      setLotPromotionStatus(null);
+      const response = await fetch(`${apiBaseUrl}/management/lot-promotions/${promotionId}`, {
+        method: "DELETE",
+      });
+      const data = (await response.json()) as { message?: string };
+
+      if (!response.ok) {
+        setLotPromotionStatus({ tone: "error", message: data.message ?? "No fue posible desactivar la promoción." });
+        return;
+      }
+
+      setLotPromotionStatus({ tone: "success", message: data.message ?? "Promoción desactivada." });
+      await refreshLotPromotions();
+      await refreshInventorySummary();
+    } catch {
+      setLotPromotionStatus({ tone: "error", message: "No fue posible conectar con el backend." });
+    }
+  }
+
   function openInventoryAdjustmentModal(row: InventorySummaryRow) {
     setSelectedInventoryAdjustmentRow(row);
     setInventoryAdjustmentStatus(null);
     setInventoryAdjustmentForm(createInitialInventoryAdjustmentForm());
   }
 
+  function toggleInventoryProductLots(productId: string) {
+    setExpandedInventoryProductIds((current) => ({
+      ...current,
+      [productId]: !current[productId],
+    }));
+  }
+
   function openInventoryEditModal(row: InventorySummaryRow) {
     const productOption = productOptions.find((product) => product.value === row.productId);
+    const lot = (row.lots ?? []).find((entry) => entry.stockRowId === row.stockRowId) ?? row.lots?.[0];
 
     setSelectedInventoryEditRow(row);
     setInventoryEditStatus(null);
@@ -7360,6 +7924,7 @@ export default function App() {
       salePriceAwg: String(row.salePrice || productOption?.salePrice || ""),
       productWeightKg: String(productOption?.productWeightKg ?? ""),
       expirationDate: row.expirationDate ? String(row.expirationDate).slice(0, 10) : "",
+      lotName: lot?.lotName ?? buildDefaultInventoryLotName(row.expirationDate ? String(row.expirationDate).slice(0, 10) : ""),
     });
   }
 
@@ -7386,6 +7951,7 @@ export default function App() {
       costUsd: "",
       salePriceAwg: "",
       expirationDate: "",
+      lotName: "",
       productWeightKg: "",
     });
     setIsInventoryEntryModalOpen(true);
@@ -7479,6 +8045,7 @@ export default function App() {
       costUsd: String(Number(item.entryCostUsd ?? 0)),
       salePriceAwg: String(productOptions.find((option) => option.value === item.productId)?.salePrice ?? ""),
       expirationDate: "",
+      lotName: "",
       productWeightKg: String(productOptions.find((option) => option.value === item.productId)?.productWeightKg ?? ""),
     })));
     setInventoryEntryStatus({
@@ -7579,13 +8146,15 @@ export default function App() {
 
   function openInventoryEntryItemModal() {
     const initialProductId = productOptions[0]?.value ?? "";
+    const initialProduct = productOptions.find((product) => product.value === initialProductId);
 
     setInventoryEntryItemDraft({
       productId: initialProductId,
       quantity: "",
-      costUsd: "",
-      salePriceAwg: "",
+      costUsd: initialProduct ? String(initialProduct.arubaPurchaseCostUsd) : "",
+      salePriceAwg: initialProduct ? String(initialProduct.salePrice) : "",
       expirationDate: "",
+      lotName: "",
       productWeightKg: "",
     });
     setIsInventoryEntryItemModalOpen(true);
@@ -7598,7 +8167,10 @@ export default function App() {
   function addWarehouseInventoryEntryItem() {
     const productId = inventoryEntryItemDraft.productId.trim();
     const quantity = Number(inventoryEntryItemDraft.quantity || 0);
+    const unitCostUsd = Number(inventoryEntryItemDraft.costUsd || 0);
+    const salePriceAwg = Number(inventoryEntryItemDraft.salePriceAwg || 0);
     const expirationDate = inventoryEntryItemDraft.expirationDate.trim();
+    const lotName = inventoryEntryItemDraft.lotName.trim() || buildDefaultInventoryLotName(expirationDate);
     const selectedProduct = productOptions.find((product) => product.value === productId);
 
     if (!productId || !selectedProduct) {
@@ -7611,6 +8183,16 @@ export default function App() {
       return;
     }
 
+    if (!Number.isFinite(unitCostUsd) || unitCostUsd < 0) {
+      setInventoryEntryStatus({ tone: "error", message: "El costo unitario USD debe ser cero o mayor." });
+      return;
+    }
+
+    if (!Number.isFinite(salePriceAwg) || salePriceAwg < 0) {
+      setInventoryEntryStatus({ tone: "error", message: "El precio de venta AWG debe ser cero o mayor." });
+      return;
+    }
+
     if (expirationDate) {
       const date = new Date(expirationDate);
 
@@ -7620,16 +8202,19 @@ export default function App() {
       }
     }
 
-    const nextLotKey = buildInventoryEntryLotKey(productId, expirationDate);
+    const nextLotKey = buildInventoryEntryLotKey(productId, expirationDate, unitCostUsd, salePriceAwg);
 
     setInventoryEntryItems((current) => {
-      if (current.some((item) => buildInventoryEntryLotKey(item.productId, item.expirationDate) === nextLotKey)) {
+      if (current.some((item) => buildInventoryEntryLotKey(item.productId, item.expirationDate, Number(item.costUsd || 0), Number(item.salePriceAwg || 0)) === nextLotKey)) {
         return current.map((item) => (
-          buildInventoryEntryLotKey(item.productId, item.expirationDate) === nextLotKey
+          buildInventoryEntryLotKey(item.productId, item.expirationDate, Number(item.costUsd || 0), Number(item.salePriceAwg || 0)) === nextLotKey
             ? {
                 ...item,
                 quantity: String(quantity),
+                costUsd: String(unitCostUsd),
+                salePriceAwg: String(salePriceAwg),
                 expirationDate,
+                lotName,
               }
             : item
         ));
@@ -7639,10 +8224,11 @@ export default function App() {
         id: createInventoryEntryDraftItem(productId).id,
         productId,
         quantity: String(quantity),
-        costUsd: "",
-        salePriceAwg: "",
+        costUsd: String(unitCostUsd),
+        salePriceAwg: String(salePriceAwg),
         expirationDate,
-        productWeightKg: "",
+        lotName,
+        productWeightKg: String(selectedProduct.productWeightKg),
       }];
     });
 
@@ -7650,7 +8236,10 @@ export default function App() {
       ...current,
       productId: "",
       quantity: "",
+      costUsd: "",
+      salePriceAwg: "",
       expirationDate: "",
+      lotName: "",
     }));
     setInventoryEntryStatus(null);
   }
@@ -7661,10 +8250,18 @@ export default function App() {
     const productId = inventoryEntryItemDraft.productId.trim();
     const quantity = Number(inventoryEntryItemDraft.quantity || 0);
     const costUsd = Number(inventoryEntryItemDraft.costUsd || 0);
+    const salePriceAwg = Number(inventoryEntryItemDraft.salePriceAwg || 0);
     const expirationDate = inventoryEntryItemDraft.expirationDate.trim();
+    const lotName = inventoryEntryItemDraft.lotName.trim() || buildDefaultInventoryLotName(expirationDate);
     const selectedProduct = productOptions.find((product) => product.value === productId);
-    const salePriceAwg = Number(selectedProduct?.salePrice ?? 0);
     const productWeightKg = Number(selectedProduct?.productWeightKg ?? 0);
+    const resolvedSalePriceAwg = Number.isFinite(salePriceAwg) && salePriceAwg >= 0
+      ? salePriceAwg
+      : Number(selectedProduct?.salePrice ?? 0);
+    const totalCostUsd = Number.isFinite(costUsd) && costUsd >= 0
+      ? costUsd
+      : roundCurrencyValue(Number(selectedProduct?.arubaPurchaseCostUsd ?? 0) * quantity);
+    const unitCostUsd = quantity > 0 ? totalCostUsd / quantity : totalCostUsd;
 
     if (!productId) {
       setInventoryEntryStatus({ tone: "error", message: "Selecciona un producto para agregarlo a la tabla." });
@@ -7676,8 +8273,13 @@ export default function App() {
       return;
     }
 
-    if (!Number.isFinite(costUsd) || costUsd < 0) {
-      setInventoryEntryStatus({ tone: "error", message: "El costo USD debe ser cero o mayor." });
+    if (!Number.isFinite(totalCostUsd) || totalCostUsd < 0) {
+      setInventoryEntryStatus({ tone: "error", message: "El costo USD total debe ser cero o mayor." });
+      return;
+    }
+
+    if (!Number.isFinite(resolvedSalePriceAwg) || resolvedSalePriceAwg < 0) {
+      setInventoryEntryStatus({ tone: "error", message: "El precio de venta AWG debe ser cero o mayor." });
       return;
     }
 
@@ -7690,31 +8292,39 @@ export default function App() {
       }
     }
 
-    const nextLotKey = buildInventoryEntryLotKey(productId, expirationDate);
+    const nextLotKey = buildInventoryEntryLotKey(productId, expirationDate, unitCostUsd, resolvedSalePriceAwg);
 
     setInventoryEntryItems((current) => {
-      if (current.some((item) => buildInventoryEntryLotKey(item.productId, item.expirationDate) === nextLotKey)) {
-        return current.map((item) => (
-          buildInventoryEntryLotKey(item.productId, item.expirationDate) === nextLotKey
+      if (current.some((item) => {
+        const itemQuantity = Number(item.quantity || 0);
+        const itemUnitCostUsd = itemQuantity > 0 ? Number(item.costUsd || 0) / itemQuantity : Number(item.costUsd || 0);
+        return buildInventoryEntryLotKey(item.productId, item.expirationDate, itemUnitCostUsd, Number(item.salePriceAwg || 0)) === nextLotKey;
+      })) {
+        return current.map((item) => {
+          const itemQuantity = Number(item.quantity || 0);
+          const itemUnitCostUsd = itemQuantity > 0 ? Number(item.costUsd || 0) / itemQuantity : Number(item.costUsd || 0);
+          return buildInventoryEntryLotKey(item.productId, item.expirationDate, itemUnitCostUsd, Number(item.salePriceAwg || 0)) === nextLotKey
             ? {
                 ...item,
                 quantity: String(quantity),
-                costUsd: String(costUsd),
-                salePriceAwg: String(salePriceAwg),
+                costUsd: String(totalCostUsd),
+                salePriceAwg: String(resolvedSalePriceAwg),
                 expirationDate,
+                lotName,
                 productWeightKg: String(productWeightKg),
               }
-            : item
-        ));
+            : item;
+        });
       }
 
       return [...current, {
         id: createInventoryEntryDraftItem(productId).id,
         productId,
         quantity: String(quantity),
-        costUsd: String(costUsd),
-        salePriceAwg: String(salePriceAwg),
+        costUsd: String(totalCostUsd),
+        salePriceAwg: String(resolvedSalePriceAwg),
         expirationDate,
+        lotName,
         productWeightKg: String(productWeightKg),
       }];
     });
@@ -8042,6 +8652,7 @@ export default function App() {
           costUsd: String(item.costUsd),
           salePriceAwg: "",
           expirationDate: item.expirationDate ?? "",
+          lotName: buildDefaultInventoryLotName(item.expirationDate ?? ""),
           productWeightKg: "",
         })),
       );
@@ -8113,6 +8724,7 @@ export default function App() {
           salePriceAwg,
           productWeightKg,
           expirationDate: inventoryEditForm.expirationDate,
+          lotName: inventoryEditForm.lotName,
         }),
       });
       const data = (await response.json()) as { message?: string };
@@ -8201,6 +8813,7 @@ export default function App() {
       costUsd: number;
       salePriceAwg: number;
       expirationDate: string;
+      lotName: string;
       productWeightKg: number;
     }>;
 
@@ -8214,7 +8827,10 @@ export default function App() {
         normalizedItems = inventoryEntryItems.map((item, index) => {
           const productId = item.productId.trim();
           const quantity = Number(item.quantity || 0);
+          const unitCostUsd = Number(item.costUsd || 0);
+          const salePriceAwg = Number(item.salePriceAwg || 0);
           const expirationDate = item.expirationDate.trim();
+          const lotName = item.lotName.trim() || buildDefaultInventoryLotName(expirationDate);
           const selectedProduct = productOptions.find((product) => product.value === productId);
 
           if (!productId || !selectedProduct) {
@@ -8225,6 +8841,14 @@ export default function App() {
             throw new Error(`La cantidad de la fila ${index + 1} debe ser mayor a cero.`);
           }
 
+          if (!Number.isFinite(unitCostUsd) || unitCostUsd < 0) {
+            throw new Error(`El costo unitario USD de la fila ${index + 1} debe ser cero o mayor.`);
+          }
+
+          if (!Number.isFinite(salePriceAwg) || salePriceAwg < 0) {
+            throw new Error(`La venta AWG de la fila ${index + 1} debe ser cero o mayor.`);
+          }
+
           if (expirationDate) {
             const date = new Date(expirationDate);
 
@@ -8233,14 +8857,16 @@ export default function App() {
             }
           }
 
-          const unitCostUsd = Number(selectedProduct.arubaPurchaseCostUsd ?? 0);
+          const resolvedUnitCostUsd = unitCostUsd > 0 ? unitCostUsd : Number(selectedProduct.arubaPurchaseCostUsd ?? 0);
+          const resolvedSalePriceAwg = salePriceAwg > 0 ? salePriceAwg : selectedProduct.salePrice;
 
           return {
             productId,
             quantity,
-            costUsd: roundCurrencyValue(unitCostUsd * quantity),
-            salePriceAwg: selectedProduct.salePrice,
+            costUsd: roundCurrencyValue(resolvedUnitCostUsd * quantity),
+            salePriceAwg: resolvedSalePriceAwg,
             expirationDate,
+            lotName,
             productWeightKg: selectedProduct.productWeightKg,
           };
         });
@@ -8263,6 +8889,7 @@ export default function App() {
           const salePriceAwg = Number(item.salePriceAwg || 0);
           const productWeightKg = Number(item.productWeightKg || 0);
           const expirationDate = item.expirationDate.trim();
+          const lotName = item.lotName.trim() || buildDefaultInventoryLotName(expirationDate);
 
           if (!productId) {
             throw new Error(`Selecciona el producto en la fila ${index + 1}.`);
@@ -8292,11 +8919,14 @@ export default function App() {
             }
           }
 
-          return { productId, quantity, costUsd, salePriceAwg, expirationDate, productWeightKg };
+          return { productId, quantity, costUsd, salePriceAwg, expirationDate, lotName, productWeightKg };
         });
       }
 
-      if (new Set(normalizedItems.map((item) => buildInventoryEntryLotKey(item.productId, item.expirationDate))).size !== normalizedItems.length) {
+      if (new Set(normalizedItems.map((item) => {
+        const unitCostUsd = item.quantity > 0 ? item.costUsd / item.quantity : item.costUsd;
+        return buildInventoryEntryLotKey(item.productId, item.expirationDate, unitCostUsd, item.salePriceAwg);
+      })).size !== normalizedItems.length) {
         setInventoryEntryStatus({ tone: "error", message: "No repitas el mismo lote dentro del mismo registro de inventario." });
         return;
       }
@@ -8422,6 +9052,8 @@ export default function App() {
       setCatalogPreviewItems(
         data.items.map((item) => ({
           ...item,
+          stockRowId: String(item.stockRowId ?? ""),
+          lotName: String(item.lotName ?? ""),
           imageUrl: typeof item.imageUrl === "string" ? item.imageUrl : "",
           cost: roundCurrencyValue(Number(item.cost ?? 0)),
           salePrice: roundCurrencyValue(Number(item.salePrice ?? 0)),
@@ -8538,6 +9170,13 @@ export default function App() {
       ...current,
       [product.value]: false,
     }));
+    setWarehouseOrderLotDraft((current) => {
+      const lots = inventoryLotsByProductId.get(product.value) ?? [];
+      return {
+        ...current,
+        [product.value]: lots.find((lot) => lot.quantity > 0)?.stockRowId || lots[0]?.stockRowId || "",
+      };
+    });
     setWarehouseOrderEditStatus(null);
     closeWarehouseAddProductModal();
   }
@@ -8564,6 +9203,11 @@ export default function App() {
       delete next[productId];
       return next;
     });
+    setWarehouseOrderLotDraft((current) => {
+      const next = { ...current };
+      delete next[productId];
+      return next;
+    });
     setSelectedWarehouseOrderDetail((current) => (
       current
         ? {
@@ -8586,6 +9230,7 @@ export default function App() {
         productId: item.productId,
         stockCurrent: item.stockCurrent,
         quantity: Number(warehouseOrderItemDraft[item.productId] ?? item.quantity),
+        stockRowId: warehouseOrderLotDraft[item.productId] || item.stockRowId || "",
         notes: item.notes,
       }))
       .filter((item) => Number.isFinite(item.quantity) && item.quantity > 0);
@@ -8611,6 +9256,7 @@ export default function App() {
             productId: item.productId,
             stockCurrent: item.stockCurrent,
             quantity: item.quantity,
+            stockRowId: item.stockRowId,
             notes: item.notes,
           })),
         }),
@@ -8635,6 +9281,9 @@ export default function App() {
       );
       setWarehouseOrderChecklist(
         Object.fromEntries(updatedOrder.items.map((item) => [item.productId, false])),
+      );
+      setWarehouseOrderLotDraft(
+        Object.fromEntries(updatedOrder.items.map((item) => [item.productId, item.stockRowId ?? ""])),
       );
       setWarehouseOrderEditStatus({ tone: "success", message: data.message ?? "Pedido actualizado correctamente." });
     } catch (error) {
@@ -8669,6 +9318,7 @@ export default function App() {
         productId: item.productId,
         stockCurrent: item.stockCurrent,
         quantity: item.quantity,
+        stockRowId: warehouseOrderLotDraft[item.productId] || item.stockRowId,
         notes: item.notes,
         salePriceAwg,
       };
@@ -8768,6 +9418,9 @@ export default function App() {
           invoiceAmountAwg: warehouseInvoiceTotal,
           items: warehousePricedItems.map((item) => ({
             productId: item.productId,
+            stockRowId: warehouseOrderLotDraft[item.productId]
+              || selectedWarehouseOrderDetail.items.find((orderItem) => orderItem.productId === item.productId)?.stockRowId
+              || "",
             salePriceAwg: item.resolvedSalePrice,
           })),
         }),
@@ -8920,6 +9573,9 @@ export default function App() {
           invoiceAmountAwg: warehouseInvoiceTotal,
           items: warehousePricedItems.map((item) => ({
             productId: item.productId,
+            stockRowId: warehouseOrderLotDraft[item.productId]
+              || selectedWarehouseOrderDetail.items.find((orderItem) => orderItem.productId === item.productId)?.stockRowId
+              || "",
             salePriceAwg: item.resolvedSalePrice,
           })),
           creditCollections: warehouseSelectedCreditCollections.map((draft) => ({
@@ -8962,7 +9618,7 @@ export default function App() {
       await refreshInventorySummary();
 
       if (sessionUser?.role === "management" || sessionUser?.role === "contabilidad") {
-        await refreshCarteraData(carteraMonthFilter);
+        await refreshCarteraData();
       }
 
       const { pdf, fileName } = await buildWarehouseInvoicePdfDocument(completedOrder, "invoice", data.invoiceNumber ?? null);
@@ -9219,7 +9875,7 @@ export default function App() {
           String(order._id) === String(data.order!._id) ? { ...data.order!, items: data.order!.items ?? [] } : order
         )));
         await refreshInventorySummary();
-        await refreshCarteraData(carteraMonthFilter);
+        await refreshCarteraData();
       }
 
       setInvoiceChangeReviewNotesDraft((current) => {
@@ -9337,7 +9993,7 @@ export default function App() {
       setSelectedWarehouseOrderDetail((current) => (current?._id === order._id ? null : current));
 
       if (sessionUser.role === "management" || sessionUser.role === "contabilidad") {
-        await refreshCarteraData(carteraMonthFilter);
+        await refreshCarteraData();
         await refreshInventorySummary();
       }
 
@@ -9388,7 +10044,7 @@ export default function App() {
           current?._id === data.request!.orderId ? null : current
         ));
         await refreshInventorySummary();
-        await refreshCarteraData(carteraMonthFilter);
+        await refreshCarteraData();
       }
 
       setOrderDeleteReviewNotesDraft((current) => {
@@ -9521,19 +10177,48 @@ export default function App() {
     });
   }
 
-  function handleCatalogPricingValueChange(productId: string, value: string) {
+  function handleCatalogPricingValueChange(itemKey: string, field: "cost" | "salePrice", value: string) {
     const normalizedValue = value.trim();
     setCatalogWhatsappAttachment(null);
 
     setCatalogPreviewItems((current) =>
       current.map((item) =>
-        item.productId === productId
+        getCatalogPreviewItemKey(item) === itemKey
           ? {
               ...item,
-              salePrice: normalizedValue.length === 0 ? 0 : roundCurrencyValue(Number(normalizedValue)),
+              [field]: normalizedValue.length === 0 ? 0 : roundCurrencyValue(Number(normalizedValue)),
             }
           : item,
       ),
+    );
+  }
+
+  function handleCatalogLotChange(itemKey: string, stockRowId: string) {
+    setCatalogWhatsappAttachment(null);
+
+    setCatalogPreviewItems((current) =>
+      current.map((item) => {
+        if (getCatalogPreviewItemKey(item) !== itemKey) {
+          return item;
+        }
+
+        const product = productOptionsById.get(item.productId);
+        const selectedLot = (inventoryLotsByProductId.get(item.productId) ?? []).find((lot) => lot.stockRowId === stockRowId);
+
+        if (!product) {
+          return item;
+        }
+
+        if (!selectedLot) {
+          return {
+            ...item,
+            stockRowId: "",
+            lotName: buildDefaultInventoryLotName(""),
+          };
+        }
+
+        return buildCatalogLotPreviewItem(product, selectedLot);
+      }),
     );
   }
 
@@ -9918,6 +10603,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
         markupPercent: Number(catalogPricingMarkup || 0),
         items: catalogPreviewItems.map((item) => ({
           productId: item.productId,
+          stockRowId: item.stockRowId,
+          lotName: item.lotName,
           cost: item.cost,
           salePrice: item.salePrice,
         })),
@@ -11704,7 +12391,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       payload.salePrice = Number(formData.get("salePrice") ?? editingRow?.salePrice ?? 0);
       payload.description = String(formData.get("description") ?? "").trim();
       payload.cost = 0;
-      payload.arubaPurchaseCostUsd = Number(editingRow?.arubaPurchaseCostUsd ?? 0);
+      payload.arubaPurchaseCostUsd = Number(formData.get("arubaPurchaseCostUsd") ?? editingRow?.arubaPurchaseCostUsd ?? 0);
       payload.arubaUsdToAwgRate = Number(editingRow?.arubaUsdToAwgRate ?? 1.79);
       payload.expirationDate = typeof editingRow?.expirationDate === "string" ? editingRow.expirationDate : null;
       payload.presentation = productPresentationDraft;
@@ -12062,37 +12749,37 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
   }
 
   function downloadCarteraPdf() {
-    if (filteredCarteraRows.length === 0) {
+    if (displayedCarteraRows.length === 0) {
       return;
     }
 
     const storeLabel = selectedCarteraStore?.label ?? "todas-las-tiendas";
     downloadDataTablePdf({
-      title: selectedCarteraStore ? `Cartera · ${selectedCarteraStore.label}` : "Cartera · Facturas del mes",
-      fileName: `cartera-${storeLabel.toLowerCase().replace(/\s+/g, "-")}-${carteraMonthFilter}`,
+      title: selectedCarteraStore ? `Cartera · ${selectedCarteraStore.label}` : "Cartera · Facturas del periodo",
+      fileName: `cartera-${storeLabel.toLowerCase().replace(/\s+/g, "-")}-${carteraStartDateFilter}-${carteraEndDateFilter}`,
       subtitleLines: [
-        `Mes: ${carteraMonthFilter}`,
-        `${filteredCarteraRows.length} factura${filteredCarteraRows.length === 1 ? "" : "s"}`,
+        `Periodo: ${carteraDateRangeLabel}`,
+        `${displayedCarteraRows.length} factura${displayedCarteraRows.length === 1 ? "" : "s"}`,
         `Pendiente: ${formatCurrency(carteraMonthlyOutstandingTotal)}`,
       ],
       columns: carteraExportColumns,
-      rows: filteredCarteraRows as Array<Record<string, unknown>>,
+      rows: displayedCarteraRows as Array<Record<string, unknown>>,
       formatCell: formatCarteraExportCell,
       landscape: true,
     });
   }
 
   function downloadCarteraExcel() {
-    if (filteredCarteraRows.length === 0) {
+    if (displayedCarteraRows.length === 0) {
       return;
     }
 
     const storeLabel = selectedCarteraStore?.label ?? "todas-las-tiendas";
     downloadDataTableExcel({
-      title: selectedCarteraStore ? `Cartera · ${selectedCarteraStore.label}` : "Cartera · Facturas del mes",
-      fileName: `cartera-${storeLabel.toLowerCase().replace(/\s+/g, "-")}-${carteraMonthFilter}`,
+      title: selectedCarteraStore ? `Cartera · ${selectedCarteraStore.label}` : "Cartera · Facturas del periodo",
+      fileName: `cartera-${storeLabel.toLowerCase().replace(/\s+/g, "-")}-${carteraStartDateFilter}-${carteraEndDateFilter}`,
       columns: carteraExportColumns,
-      rows: filteredCarteraRows as Array<Record<string, unknown>>,
+      rows: displayedCarteraRows as Array<Record<string, unknown>>,
       formatCell: formatCarteraExportCell,
       sheetName: "Facturas",
       extraSheets: filteredCarteraCollections.length > 0
@@ -12112,10 +12799,10 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
     const storeLabel = selectedCarteraStore?.label ?? "todas-las-tiendas";
     downloadDataTablePdf({
-      title: selectedCarteraStore ? `Recaudos · ${selectedCarteraStore.label}` : "Recaudos del mes",
-      fileName: `recaudos-${storeLabel.toLowerCase().replace(/\s+/g, "-")}-${carteraMonthFilter}`,
+      title: selectedCarteraStore ? `Recaudos · ${selectedCarteraStore.label}` : "Recaudos del periodo",
+      fileName: `recaudos-${storeLabel.toLowerCase().replace(/\s+/g, "-")}-${carteraStartDateFilter}-${carteraEndDateFilter}`,
       subtitleLines: [
-        `Mes: ${carteraMonthFilter}`,
+        `Periodo: ${carteraDateRangeLabel}`,
         `${filteredCarteraCollections.length} movimiento${filteredCarteraCollections.length === 1 ? "" : "s"}`,
         `Total: ${formatCurrency(carteraMonthlyRecaudoTotal)}`,
       ],
@@ -12133,8 +12820,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
     const storeLabel = selectedCarteraStore?.label ?? "todas-las-tiendas";
     downloadDataTableExcel({
-      title: selectedCarteraStore ? `Recaudos · ${selectedCarteraStore.label}` : "Recaudos del mes",
-      fileName: `recaudos-${storeLabel.toLowerCase().replace(/\s+/g, "-")}-${carteraMonthFilter}`,
+      title: selectedCarteraStore ? `Recaudos · ${selectedCarteraStore.label}` : "Recaudos del periodo",
+      fileName: `recaudos-${storeLabel.toLowerCase().replace(/\s+/g, "-")}-${carteraStartDateFilter}-${carteraEndDateFilter}`,
       columns: carteraCollectionExportColumns,
       rows: filteredCarteraCollections as Array<Record<string, unknown>>,
       formatCell: formatCarteraExportCell,
@@ -13828,6 +14515,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             <th>Producto</th>
                             <th className="warehouse-order-col-optional">Stock</th>
                             <th>Cant.</th>
+                            <th>Lote</th>
                             <th>Precio</th>
                             <th>Total</th>
                             <th className="warehouse-order-col-optional">Notas</th>
@@ -13875,7 +14563,42 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 )}
                               </td>
                               <td>
-                                {formatAwgCurrency(item.resolvedSalePrice)}
+                                {selectedWarehouseOrderDetail.status === "delivered" ? (
+                                  item.stockRowId
+                                    ? (inventoryLotsByProductId.get(item.productId) ?? []).find((lot) => lot.stockRowId === item.stockRowId)?.expirationDate?.slice(0, 10) ?? "Lote seleccionado"
+                                    : "-"
+                                ) : (
+                                  <select
+                                    className="warehouse-order-lot-select"
+                                    value={warehouseOrderLotDraft[item.productId] ?? ""}
+                                    onChange={(event) => {
+                                      setWarehouseOrderLotDraft((current) => ({
+                                        ...current,
+                                        [item.productId]: event.target.value,
+                                      }));
+                                      setWarehouseOrderEditStatus(null);
+                                    }}
+                                  >
+                                    {(inventoryLotsByProductId.get(item.productId) ?? []).length === 0 ? (
+                                      <option value="">Sin lotes registrados</option>
+                                    ) : null}
+                                    {(inventoryLotsByProductId.get(item.productId) ?? []).map((lot, lotIndex) => (
+                                      <option key={lot.stockRowId || `${item.productId}-${lotIndex}`} value={lot.stockRowId}>
+                                        {`${lot.lotName || "Lote"} · ${lot.expirationDate ? lot.expirationDate.slice(0, 10) : "Sin vencimiento"} · ${lot.quantity} und.${lot.promotion ? ` · promo ${lot.promotion.discountPercent}%` : ""}${lotIndex === 0 ? " · sugerido" : ""}`}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
+                              </td>
+                              <td>
+                                {item.hasLotPromotion ? (
+                                  <span className="promo-price-stack">
+                                    <s>{formatAwgCurrency(item.originalSalePrice ?? item.resolvedSalePrice)} AWG</s>
+                                    <strong>{formatAwgCurrency(item.resolvedSalePrice)} AWG</strong>
+                                  </span>
+                                ) : (
+                                  formatAwgCurrency(item.resolvedSalePrice)
+                                )}
                               </td>
                               <td>{formatAwgCurrency(item.lineTotal)} AWG</td>
                               <td className="warehouse-order-col-optional">{item.notes || "-"}</td>
@@ -14143,6 +14866,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   isLoading={isLoadingInventory}
                   emptyMessage="No hay productos próximos a vencer dentro de los próximos 2 meses."
                   onAdjustRow={openInventoryAdjustmentModal}
+                  expandedProductIds={expandedInventoryProductIds}
+                  onToggleProductLots={toggleInventoryProductLots}
                   layout="table"
                 />
               </article>
@@ -14171,6 +14896,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   isLoading={isLoadingInventory}
                   emptyMessage="Aún no hay inventario registrado."
                   onAdjustRow={openInventoryAdjustmentModal}
+                  expandedProductIds={expandedInventoryProductIds}
+                  onToggleProductLots={toggleInventoryProductLots}
                   layout="table"
                 />
               </article>
@@ -14259,7 +14986,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <div>
                         <p className="section-label">Entrada de inventario</p>
                         <h2>Registrar inventario</h2>
-                        <p>Agrega productos con cantidad y fecha de caducidad. Los precios y costos se toman de la ficha del producto.</p>
+                        <p>Agrega productos con cantidad, costo, precio de venta y fecha de caducidad. Los valores iniciales salen de la ficha del producto, pero puedes ajustarlos por lote.</p>
                       </div>
                       <button className="modal-close-button" type="button" onClick={closeInventoryEntryModal}>Cerrar</button>
                     </div>
@@ -14286,7 +15013,15 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             <SearchableProductSelect
                               products={productOptions}
                               value={inventoryEntryItemDraft.productId}
-                              onChange={(productId) => setInventoryEntryItemDraft((current) => ({ ...current, productId }))}
+                              onChange={(productId) => {
+                                const selectedProduct = productOptions.find((product) => product.value === productId);
+                                setInventoryEntryItemDraft((current) => ({
+                                  ...current,
+                                  productId,
+                                  costUsd: selectedProduct ? String(selectedProduct.arubaPurchaseCostUsd) : "",
+                                  salePriceAwg: selectedProduct ? String(selectedProduct.salePrice) : "",
+                                }));
+                              }}
                               disabled={productOptions.length === 0}
                             />
                           </label>
@@ -14304,11 +15039,49 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           </label>
 
                           <label className="field">
+                            <span>Costo unitario (USD)</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              value={inventoryEntryItemDraft.costUsd}
+                              placeholder="0.00"
+                              onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, costUsd: event.target.value }))}
+                            />
+                          </label>
+
+                          <label className="field">
+                            <span>Precio de venta (AWG)</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              value={inventoryEntryItemDraft.salePriceAwg}
+                              placeholder="0.00"
+                              onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, salePriceAwg: event.target.value }))}
+                            />
+                          </label>
+
+                          <label className="field">
                             <span>Fecha de caducidad</span>
                             <input
                               type="date"
                               value={inventoryEntryItemDraft.expirationDate}
-                              onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, expirationDate: event.target.value }))}
+                              onChange={(event) => setInventoryEntryItemDraft((current) => ({
+                                ...current,
+                                expirationDate: event.target.value,
+                                lotName: current.lotName.trim() ? current.lotName : buildDefaultInventoryLotName(event.target.value),
+                              }))}
+                            />
+                          </label>
+
+                          <label className="field">
+                            <span>Nombre del lote</span>
+                            <input
+                              type="text"
+                              value={inventoryEntryItemDraft.lotName}
+                              placeholder={buildDefaultInventoryLotName(inventoryEntryItemDraft.expirationDate)}
+                              onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, lotName: event.target.value }))}
                             />
                           </label>
 
@@ -14327,6 +15100,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 <th>Producto</th>
                                 <th>SKU</th>
                                 <th>Cant.</th>
+                                <th>Costo u. (USD)</th>
+                                <th>Venta (AWG)</th>
+                                <th>Lote</th>
                                 <th>Vence</th>
                                 <th>Acc.</th>
                               </tr>
@@ -14341,6 +15117,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                       <td>{selectedProduct?.label ?? "Producto"}</td>
                                       <td>{selectedProduct?.sku ?? "-"}</td>
                                       <td>{item.quantity}</td>
+                                      <td>{item.costUsd || selectedProduct?.arubaPurchaseCostUsd || "0"}</td>
+                                      <td>{item.salePriceAwg || selectedProduct?.salePrice || "0"}</td>
+                                      <td>{item.lotName || buildDefaultInventoryLotName(item.expirationDate)}</td>
                                       <td>{item.expirationDate ? String(item.expirationDate).slice(0, 10) : "-"}</td>
                                       <td>
                                         <button
@@ -14356,7 +15135,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 })
                               ) : (
                                 <tr>
-                                  <td colSpan={5} className="empty-table-cell">Agrega productos con cantidad y caducidad.</td>
+                                  <td colSpan={8} className="empty-table-cell">Agrega productos con cantidad, costo, venta y caducidad.</td>
                                 </tr>
                               )}
                             </tbody>
@@ -14740,6 +15519,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 ? "Catálogo"
               : activeSection === "cartera"
                 ? "Cartera"
+              : activeSection === "promotions"
+                ? "Promociones"
               : activeSection === "invoice-change-requests"
                 ? "Solicitudes de factura"
               : activeSection === "order-delete-requests"
@@ -14779,6 +15560,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 ? "Arma catálogos por categorías o productos, luego define el precio de venta por cliente con un porcentaje global o ajustes manuales."
               : activeSection === "cartera"
                 ? "Consulta los pedidos facturados desde bodega y el metodo de pago registrado por cada cliente."
+              : activeSection === "promotions"
+                ? "Aplica descuentos por lote a productos próximos a vencer para que vendedoras y bodega vean el precio promocional."
               : activeSection === "invoice-change-requests"
                 ? "Revisa y aprueba correcciones solicitadas sobre facturas ya completadas. Al aprobar, se actualizan la factura y el inventario."
               : activeSection === "order-delete-requests"
@@ -15688,6 +16471,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <tr>
                       <th>SKU</th>
                       <th>Producto</th>
+                      <th>Lote</th>
                       <th>Categoria</th>
                       <th>Costo (AWG)</th>
                       <th>Precio de venta (AWG)</th>
@@ -15696,20 +16480,46 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <tbody>
                     {isLoadingCatalogPreview ? (
                       <tr>
-                        <td colSpan={5} className="empty-table-cell">Cargando productos del catálogo...</td>
+                        <td colSpan={6} className="empty-table-cell">Cargando productos del catálogo...</td>
                       </tr>
                     ) : catalogPreviewItems.length > 0 ? (
                       catalogPreviewItems.map((item) => {
-                        const inventoryRow = inventoryRowsByProductId.get(item.productId);
+                        const itemKey = getCatalogPreviewItemKey(item);
                         const productOption = productOptionsById.get(item.productId);
                         const unitLabel = formatUnitsPerBoxUnitLabel(productOption?.unitsPerBoxUnit ?? "unidad");
+                        const lotOptions = (inventoryLotsByProductId.get(item.productId) ?? []).filter((lot) => lot.stockRowId && lot.quantity > 0);
 
                         return (
-                          <tr key={item.productId}>
+                          <tr key={itemKey}>
                             <td>{item.sku}</td>
                             <td>{item.name}</td>
+                            <td>
+                              <select
+                                className="catalog-price-input"
+                                value={item.stockRowId}
+                                onChange={(event) => handleCatalogLotChange(itemKey, event.target.value)}
+                              >
+                                <option value="">{item.lotName || "Sin lote"}</option>
+                                {lotOptions.map((lot) => (
+                                  <option key={lot.stockRowId} value={lot.stockRowId}>
+                                    {`${lot.lotName} · ${lot.quantity} und. · costo ${formatCurrencyUpTwoDecimals(lot.unitCost)} · venta ${formatCurrencyUpTwoDecimals(lot.salePrice)}`}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
                             <td>{item.category || "-"}</td>
-                            <td>{`${formatCurrencyUpTwoDecimals(item.cost)} (${unitLabel})`}</td>
+                            <td>
+                              <input
+                                className="catalog-price-input"
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={item.cost}
+                                placeholder="0.00"
+                                onChange={(event) => handleCatalogPricingValueChange(itemKey, "cost", event.target.value)}
+                              />
+                              <span className="catalog-price-unit-label">{unitLabel}</span>
+                            </td>
                             <td>
                               <input
                                 className="catalog-price-input"
@@ -15718,7 +16528,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 step="any"
                                 value={item.salePrice}
                                 placeholder="0.00"
-                                onChange={(event) => handleCatalogPricingValueChange(item.productId, event.target.value)}
+                                onChange={(event) => handleCatalogPricingValueChange(itemKey, "salePrice", event.target.value)}
                               />
                             </td>
                           </tr>
@@ -15726,7 +16536,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       })
                     ) : (
                       <tr>
-                        <td colSpan={5} className="empty-table-cell">Selecciona categorías o productos arriba, o elige un catálogo guardado.</td>
+                        <td colSpan={6} className="empty-table-cell">Selecciona categorías o productos arriba, o elige un catálogo guardado.</td>
                       </tr>
                     )}
                   </tbody>
@@ -17299,16 +18109,82 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 </article>
               </div>
 
-              <div className="filter-grid">
+              <div className="filter-grid cartera-date-filter-grid">
                 <label className="field">
-                  <span>Mes consultado</span>
+                  <span>Desde</span>
                   <input
-                    type="month"
-                    value={carteraMonthFilter}
-                    onChange={(event) => setCarteraMonthFilter(event.target.value)}
+                    type="date"
+                    value={carteraStartDateFilter}
+                    onChange={(event) => {
+                      const nextRange = normalizeCarteraDateRange(event.target.value, carteraEndDateFilter);
+                      setCarteraStartDateFilter(nextRange.startDate);
+                      setCarteraEndDateFilter(nextRange.endDate);
+                      setCarteraPendingOnlyFilter(false);
+                    }}
                   />
                 </label>
+                <label className="field">
+                  <span>Hasta</span>
+                  <input
+                    type="date"
+                    value={carteraEndDateFilter}
+                    onChange={(event) => {
+                      const nextRange = normalizeCarteraDateRange(carteraStartDateFilter, event.target.value);
+                      setCarteraStartDateFilter(nextRange.startDate);
+                      setCarteraEndDateFilter(nextRange.endDate);
+                      setCarteraPendingOnlyFilter(false);
+                    }}
+                  />
+                </label>
+                <div className="cartera-date-presets">
+                  <button
+                    type="button"
+                    className="secondary-action-button"
+                    onClick={() => {
+                      const today = getBusinessDateKey();
+                      setCarteraStartDateFilter(today);
+                      setCarteraEndDateFilter(today);
+                      setCarteraPendingOnlyFilter(false);
+                    }}
+                  >
+                    Hoy
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-action-button"
+                    onClick={() => {
+                      const today = getBusinessDateKey();
+                      setCarteraStartDateFilter(addDaysToBusinessDateKey(today, -4));
+                      setCarteraEndDateFilter(today);
+                      setCarteraPendingOnlyFilter(false);
+                    }}
+                  >
+                    Ultimos 5 dias
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-action-button"
+                    onClick={() => {
+                      setCarteraStartDateFilter(getBusinessMonthStartDateKey());
+                      setCarteraEndDateFilter(getBusinessDateKey());
+                      setCarteraPendingOnlyFilter(false);
+                    }}
+                  >
+                    Este mes
+                  </button>
+                  <button
+                    type="button"
+                    className={`secondary-action-button${carteraPendingOnlyFilter ? " is-active" : ""}`}
+                    onClick={() => setCarteraPendingOnlyFilter((current) => !current)}
+                  >
+                    Pendiente
+                  </button>
+                </div>
               </div>
+              <p className="management-table-meta">
+                Periodo consultado: {carteraDateRangeLabel}
+                {carteraPendingOnlyFilter ? " · Mostrando solo facturas pendientes" : ""}
+              </p>
 
               <div className="cartera-store-panel">
                 <div className="cartera-store-panel-header">
@@ -17348,11 +18224,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 {selectedCarteraStore ? (
                   <div className="accounting-kpi-grid cartera-store-kpis">
                     <article className="kpi-card tone-cyan">
-                      <p>Facturacion {selectedCarteraStore.label} (mes)</p>
+                      <p>Facturacion {selectedCarteraStore.label} (periodo)</p>
                       <strong>{formatCurrency(carteraMonthlyFacturacionTotal)}</strong>
                     </article>
                     <article className="kpi-card tone-amber">
-                      <p>Recaudo {selectedCarteraStore.label} (mes)</p>
+                      <p>Recaudo {selectedCarteraStore.label} (periodo)</p>
                       <strong>{formatCurrency(carteraMonthlyRecaudoTotal)}</strong>
                     </article>
                     <article className="kpi-card tone-slate">
@@ -17373,15 +18249,15 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
               <div className="management-table-header cartera-table-header">
                 <div>
-                  <h3>Facturas del mes</h3>
+                  <h3>Facturas del periodo</h3>
                   <p>
                     {selectedCarteraStore
-                      ? `Facturas de ${selectedCarteraStore.label} en el mes seleccionado.`
-                      : "Todas las facturas facturadas en bodega durante el mes seleccionado."}
+                      ? `Facturas de ${selectedCarteraStore.label} en el periodo seleccionado.`
+                      : "Todas las facturas facturadas en bodega durante el periodo seleccionado."}
                   </p>
                 </div>
                 <InventoryExportButtons
-                  disabled={isLoadingCartera || filteredCarteraRows.length === 0}
+                  disabled={isLoadingCartera || displayedCarteraRows.length === 0}
                   onDownloadPdf={() => downloadCarteraPdf()}
                   onDownloadExcel={() => downloadCarteraExcel()}
                 />
@@ -17408,8 +18284,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <tr>
                         <td colSpan={selectedCarteraStoreId ? 9 : 10} className="empty-table-cell">Cargando cartera...</td>
                       </tr>
-                    ) : filteredCarteraRows.length > 0 ? (
-                      filteredCarteraRows.flatMap((row) => {
+                    ) : displayedCarteraRows.length > 0 ? (
+                      displayedCarteraRows.flatMap((row) => {
                         const paymentStatus = getCarteraEntryPaymentStatus(row);
                         const isCollectFormOpen = carteraCollectEntryId === row._id;
                         const canCollect = paymentStatus !== "pagada";
@@ -17520,9 +18396,13 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     ) : (
                       <tr>
                         <td colSpan={selectedCarteraStoreId ? 9 : 10} className="empty-table-cell">
-                          {selectedCarteraStore
-                            ? `No hay facturas registradas para ${selectedCarteraStore.label} en este mes.`
-                            : "No hay facturas registradas en cartera para este mes."}
+                          {carteraPendingOnlyFilter
+                            ? selectedCarteraStore
+                              ? `No hay facturas pendientes para ${selectedCarteraStore.label} en este periodo.`
+                              : "No hay facturas pendientes en cartera para este periodo."
+                            : selectedCarteraStore
+                              ? `No hay facturas registradas para ${selectedCarteraStore.label} en este periodo.`
+                              : "No hay facturas registradas en cartera para este periodo."}
                         </td>
                       </tr>
                     )}
@@ -17534,7 +18414,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             <article className="database-card">
               <div className="management-table-header cartera-table-header">
                 <div>
-                  <h2>Recaudos del mes{selectedCarteraStore ? ` · ${selectedCarteraStore.label}` : ""}</h2>
+                  <h2>Recaudos del periodo{selectedCarteraStore ? ` · ${selectedCarteraStore.label}` : ""}</h2>
                   <p>Incluye cobros inmediatos al facturar y pagos de facturas en credito cobradas despues.</p>
                 </div>
                 <InventoryExportButtons
@@ -17575,10 +18455,122 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <tr>
                         <td colSpan={selectedCarteraStoreId ? 4 : 5} className="empty-table-cell">
                           {selectedCarteraStoreId
-                            ? `No hay recaudos registrados para ${selectedCarteraStore?.label ?? "esta tienda"} en este mes.`
-                            : "No hay recaudos registrados para este mes."}
+                            ? `No hay recaudos registrados para ${selectedCarteraStore?.label ?? "esta tienda"} en este periodo.`
+                            : "No hay recaudos registrados para este periodo."}
                         </td>
                       </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          </section>
+        ) : activeSection === "promotions" ? (
+          <section className="accounting-layout">
+            <article className="database-card">
+              <div className="creation-header database-header">
+                <div>
+                  <h2>Promociones por lote</h2>
+                  <p>Selecciona un lote próximo a vencer y aplica un descuento porcentual solo para ese lote.</p>
+                </div>
+                <p className="management-table-meta">{lotPromotions.length} promociones activas</p>
+              </div>
+
+              <form className="inventory-adjustment-form" onSubmit={handleLotPromotionSubmit}>
+                <div className="inventory-adjustment-grid">
+                  <label className="field field-full">
+                    <span>Lote</span>
+                    <SearchableLotSelect
+                      options={promotionLotOptions}
+                      value={lotPromotionDraft.stockRowId}
+                      onChange={(stockRowId) => setLotPromotionDraft((current) => ({ ...current, stockRowId }))}
+                      disabled={promotionLotOptions.length === 0}
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Descuento %</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="any"
+                      value={lotPromotionDraft.discountPercent}
+                      placeholder="15"
+                      onChange={(event) => setLotPromotionDraft((current) => ({ ...current, discountPercent: event.target.value }))}
+                    />
+                  </label>
+
+                  <label className="field inventory-adjustment-notes">
+                    <span>Nota</span>
+                    <textarea
+                      rows={3}
+                      value={lotPromotionDraft.notes}
+                      placeholder="Ejemplo: promoción por vencimiento próximo."
+                      onChange={(event) => setLotPromotionDraft((current) => ({ ...current, notes: event.target.value }))}
+                    />
+                  </label>
+                </div>
+
+                {lotPromotionStatus ? <p className={`form-feedback ${lotPromotionStatus.tone}`}>{lotPromotionStatus.message}</p> : null}
+
+                <button className="submit-button" type="submit" disabled={isSavingLotPromotion || promotionLotOptions.length === 0}>
+                  {isSavingLotPromotion ? "Guardando promoción..." : "Guardar promoción"}
+                </button>
+              </form>
+            </article>
+
+            <article className="database-card">
+              <div className="creation-header database-header">
+                <div>
+                  <h2>Promociones activas</h2>
+                  <p>Estos descuentos se reflejan en vendedoras y bodega para el lote seleccionado.</p>
+                </div>
+              </div>
+
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Producto</th>
+                      <th>Lote</th>
+                      <th>Vence</th>
+                      <th>Stock</th>
+                      <th>Descuento</th>
+                      <th>Precio</th>
+                      <th>Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isLoadingLotPromotions ? (
+                      <tr><td colSpan={7} className="empty-table-cell">Cargando promociones...</td></tr>
+                    ) : lotPromotions.length > 0 ? (
+                      lotPromotions.map((promotion) => (
+                        <tr key={promotion.id}>
+                          <td>{promotion.productName}<br /><small>{promotion.productSku}</small></td>
+                          <td>{promotion.lotName}</td>
+                          <td>{promotion.expirationDate ? promotion.expirationDate.slice(0, 10) : "-"}</td>
+                          <td>{promotion.availableUnits}</td>
+                          <td>{promotion.discountPercent}%</td>
+                          <td>
+                            <span className="promo-price-stack">
+                              <s>{formatAwgCurrency(promotion.basePrice)} AWG</s>
+                              <strong>{formatAwgCurrency(promotion.promotionPrice)} AWG</strong>
+                            </span>
+                          </td>
+                          <td>
+                            <button
+                              className="ghost-button"
+                              type="button"
+                              onClick={() => void handleDeactivateLotPromotion(promotion.id)}
+                            >
+                              Desactivar
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr><td colSpan={7} className="empty-table-cell">No hay promociones activas.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -19516,6 +20508,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 emptyMessage="No hay productos próximos a vencer dentro de los próximos 2 meses."
                 onAdjustRow={openInventoryAdjustmentModal}
                 onEditRow={openInventoryEditModal}
+                expandedProductIds={expandedInventoryProductIds}
+                onToggleProductLots={toggleInventoryProductLots}
               />
             </article>
 
@@ -19541,6 +20535,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 emptyMessage="Aún no hay inventario registrado."
                 onAdjustRow={openInventoryAdjustmentModal}
                 onEditRow={openInventoryEditModal}
+                expandedProductIds={expandedInventoryProductIds}
+                onToggleProductLots={toggleInventoryProductLots}
               />
             </article>
 
@@ -19674,7 +20670,23 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           type="date"
                           value={inventoryEditForm.expirationDate}
                           onChange={(event) =>
-                            setInventoryEditForm((current) => ({ ...current, expirationDate: event.target.value }))
+                            setInventoryEditForm((current) => ({
+                              ...current,
+                              expirationDate: event.target.value,
+                              lotName: current.lotName.trim() ? current.lotName : buildDefaultInventoryLotName(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+
+                      <label className="field">
+                        <span>Nombre del lote</span>
+                        <input
+                          type="text"
+                          value={inventoryEditForm.lotName}
+                          placeholder={buildDefaultInventoryLotName(inventoryEditForm.expirationDate)}
+                          onChange={(event) =>
+                            setInventoryEditForm((current) => ({ ...current, lotName: event.target.value }))
                           }
                         />
                       </label>
@@ -20430,7 +21442,18 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 disabled={isImportingInventoryExcel || isSavingInventoryEntry}
                               />
                             </td>
-                            <td>{item.costUsd || "0"}</td>
+                            <td>
+                              <input
+                                className="inventory-entry-inline-input"
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={item.costUsd}
+                                placeholder="0"
+                                onChange={(event) => updateInventoryEntryRow(item.id, "costUsd", event.target.value)}
+                                disabled={isImportingInventoryExcel || isSavingInventoryEntry}
+                              />
+                            </td>
                             <td>{getInventoryEntryCostAwg(item.costUsd) || "0"}</td>
                             <td>
                               <input
@@ -20643,7 +21666,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <div>
                       <p className="section-label">Agregar producto</p>
                       <h2>Nuevo producto para tabla</h2>
-                      <p>Completa producto, cantidad y costo USD para agregarlo a la tabla.</p>
+                      <p>Completa producto, cantidad, costo y precio de venta para agregarlo a la tabla.</p>
                     </div>
                     <button className="modal-close-button" type="button" onClick={closeInventoryEntryItemModal}>Cerrar</button>
                   </div>
@@ -20655,9 +21678,13 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         <select
                           value={inventoryEntryItemDraft.productId}
                           onChange={(event) => {
+                            const productId = event.target.value;
+                            const selectedProduct = productOptions.find((product) => product.value === productId);
                             setInventoryEntryItemDraft((current) => ({
                               ...current,
-                              productId: event.target.value,
+                              productId,
+                              costUsd: selectedProduct ? String(selectedProduct.arubaPurchaseCostUsd) : "",
+                              salePriceAwg: selectedProduct ? String(selectedProduct.salePrice) : "",
                             }));
                           }}
                         >
@@ -20693,11 +21720,37 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </label>
 
                       <label className="field">
+                        <span>Precio de venta (AWG)</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={inventoryEntryItemDraft.salePriceAwg}
+                          placeholder="0.00"
+                          onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, salePriceAwg: event.target.value }))}
+                        />
+                      </label>
+
+                      <label className="field">
                         <span>Fecha de caducidad</span>
                         <input
                           type="date"
                           value={inventoryEntryItemDraft.expirationDate}
-                          onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, expirationDate: event.target.value }))}
+                          onChange={(event) => setInventoryEntryItemDraft((current) => ({
+                            ...current,
+                            expirationDate: event.target.value,
+                            lotName: current.lotName.trim() ? current.lotName : buildDefaultInventoryLotName(event.target.value),
+                          }))}
+                        />
+                      </label>
+
+                      <label className="field">
+                        <span>Nombre del lote</span>
+                        <input
+                          type="text"
+                          value={inventoryEntryItemDraft.lotName}
+                          placeholder={buildDefaultInventoryLotName(inventoryEntryItemDraft.expirationDate)}
+                          onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, lotName: event.target.value }))}
                         />
                       </label>
                     </div>

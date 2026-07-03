@@ -13,6 +13,8 @@ export declare const CatalogClientPricing: import("mongoose").Model<{
         };
         productName: string;
         productSku: string;
+        stockRowId: string;
+        lotName: string;
         cost: number;
         salePrice: number;
     }, Types.Subdocument<import("bson").ObjectId, any, {
@@ -27,6 +29,8 @@ export declare const CatalogClientPricing: import("mongoose").Model<{
         };
         productName: string;
         productSku: string;
+        stockRowId: string;
+        lotName: string;
         cost: number;
         salePrice: number;
     }> & {
@@ -41,6 +45,8 @@ export declare const CatalogClientPricing: import("mongoose").Model<{
         };
         productName: string;
         productSku: string;
+        stockRowId: string;
+        lotName: string;
         cost: number;
         salePrice: number;
     }>;
@@ -79,6 +85,8 @@ export declare const CatalogClientPricing: import("mongoose").Model<{
         };
         productName: string;
         productSku: string;
+        stockRowId: string;
+        lotName: string;
         cost: number;
         salePrice: number;
     }, Types.Subdocument<import("bson").ObjectId, any, {
@@ -93,6 +101,8 @@ export declare const CatalogClientPricing: import("mongoose").Model<{
         };
         productName: string;
         productSku: string;
+        stockRowId: string;
+        lotName: string;
         cost: number;
         salePrice: number;
     }> & {
@@ -107,6 +117,8 @@ export declare const CatalogClientPricing: import("mongoose").Model<{
         };
         productName: string;
         productSku: string;
+        stockRowId: string;
+        lotName: string;
         cost: number;
         salePrice: number;
     }>;
@@ -147,6 +159,8 @@ export declare const CatalogClientPricing: import("mongoose").Model<{
         };
         productName: string;
         productSku: string;
+        stockRowId: string;
+        lotName: string;
         cost: number;
         salePrice: number;
     }, Types.Subdocument<import("bson").ObjectId, any, {
@@ -161,6 +175,8 @@ export declare const CatalogClientPricing: import("mongoose").Model<{
         };
         productName: string;
         productSku: string;
+        stockRowId: string;
+        lotName: string;
         cost: number;
         salePrice: number;
     }> & {
@@ -175,6 +191,8 @@ export declare const CatalogClientPricing: import("mongoose").Model<{
         };
         productName: string;
         productSku: string;
+        stockRowId: string;
+        lotName: string;
         cost: number;
         salePrice: number;
     }>;
@@ -219,6 +237,8 @@ export declare const CatalogClientPricing: import("mongoose").Model<{
         };
         productName: string;
         productSku: string;
+        stockRowId: string;
+        lotName: string;
         cost: number;
         salePrice: number;
     }, Types.Subdocument<import("bson").ObjectId, any, {
@@ -233,6 +253,8 @@ export declare const CatalogClientPricing: import("mongoose").Model<{
         };
         productName: string;
         productSku: string;
+        stockRowId: string;
+        lotName: string;
         cost: number;
         salePrice: number;
     }> & {
@@ -247,6 +269,8 @@ export declare const CatalogClientPricing: import("mongoose").Model<{
         };
         productName: string;
         productSku: string;
+        stockRowId: string;
+        lotName: string;
         cost: number;
         salePrice: number;
     }>;
@@ -285,6 +309,8 @@ export declare const CatalogClientPricing: import("mongoose").Model<{
         };
         productName: string;
         productSku: string;
+        stockRowId: string;
+        lotName: string;
         cost: number;
         salePrice: number;
     }, Types.Subdocument<import("bson").ObjectId, any, {
@@ -299,6 +325,8 @@ export declare const CatalogClientPricing: import("mongoose").Model<{
         };
         productName: string;
         productSku: string;
+        stockRowId: string;
+        lotName: string;
         cost: number;
         salePrice: number;
     }> & {
@@ -313,6 +341,8 @@ export declare const CatalogClientPricing: import("mongoose").Model<{
         };
         productName: string;
         productSku: string;
+        stockRowId: string;
+        lotName: string;
         cost: number;
         salePrice: number;
     }>;
@@ -353,6 +383,8 @@ export declare const CatalogClientPricing: import("mongoose").Model<{
         };
         productName: string;
         productSku: string;
+        stockRowId: string;
+        lotName: string;
         cost: number;
         salePrice: number;
     }, Types.Subdocument<import("bson").ObjectId, any, {
@@ -367,6 +399,8 @@ export declare const CatalogClientPricing: import("mongoose").Model<{
         };
         productName: string;
         productSku: string;
+        stockRowId: string;
+        lotName: string;
         cost: number;
         salePrice: number;
     }> & {
@@ -381,6 +415,8 @@ export declare const CatalogClientPricing: import("mongoose").Model<{
         };
         productName: string;
         productSku: string;
+        stockRowId: string;
+        lotName: string;
         cost: number;
         salePrice: number;
     }>;

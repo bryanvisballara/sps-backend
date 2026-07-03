@@ -2833,6 +2833,26 @@ h1 {
   gap: 2px;
 }
 
+.warehouse-inventory-product-button,
+.inventory-product-expand-button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.warehouse-inventory-product-button {
+  padding: 0;
+}
+
+.inventory-product-expand-button {
+  padding: 0;
+  font-weight: 700;
+}
+
 .warehouse-inventory-product strong {
   font-size: 0.84rem;
   line-height: 1.3;
@@ -2864,6 +2884,54 @@ h1 {
   border-color: rgba(0, 193, 214, 0.65);
   background: rgba(0, 193, 214, 0.08);
   outline: none;
+}
+
+.inventory-lot-row {
+  background: rgba(0, 193, 214, 0.04);
+}
+
+.inventory-lot-row td {
+  color: rgba(17, 17, 17, 0.72);
+  font-size: 0.82rem;
+}
+
+.inventory-lot-label {
+  display: inline-flex;
+  margin-left: 14px;
+  font-weight: 700;
+}
+
+.inventory-lot-warehouse {
+  display: inline-flex;
+  margin-left: 8px;
+  color: rgba(17, 17, 17, 0.5);
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.warehouse-order-lot-select {
+  width: min(220px, 100%);
+  border: 1px solid rgba(17, 17, 17, 0.16);
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.promo-price-stack {
+  display: inline-grid;
+  gap: 2px;
+}
+
+.promo-price-stack s {
+  color: rgba(17, 17, 17, 0.48);
+  font-size: 0.78rem;
+}
+
+.promo-price-stack strong {
+  color: #047857;
+  font-weight: 800;
 }
 
 .warehouse-inventory-no-action {
@@ -4978,9 +5046,10 @@ h1 {
   .table-wrap--cards .data-table--warehouse-order-items td:nth-child(3)::before { content: "Producto"; }
   .table-wrap--cards .data-table--warehouse-order-items td:nth-child(4)::before { content: "Stock"; }
   .table-wrap--cards .data-table--warehouse-order-items td:nth-child(5)::before { content: "Cantidad"; }
-  .table-wrap--cards .data-table--warehouse-order-items td:nth-child(6)::before { content: "Precio"; }
-  .table-wrap--cards .data-table--warehouse-order-items td:nth-child(7)::before { content: "Total"; }
-  .table-wrap--cards .data-table--warehouse-order-items td:nth-child(8)::before { content: "Notas"; }
+  .table-wrap--cards .data-table--warehouse-order-items td:nth-child(6)::before { content: "Lote"; }
+  .table-wrap--cards .data-table--warehouse-order-items td:nth-child(7)::before { content: "Precio"; }
+  .table-wrap--cards .data-table--warehouse-order-items td:nth-child(8)::before { content: "Total"; }
+  .table-wrap--cards .data-table--warehouse-order-items td:nth-child(9)::before { content: "Notas"; }
 
   .table-wrap--cards .data-table--inventory td:nth-child(1),
   .table-wrap--cards .data-table--order-items td:nth-child(2),
@@ -5279,6 +5348,35 @@ h1 {
   .table-wrap--cards .data-table td::before {
     margin-bottom: 2px;
   }
+}
+
+.catalog-lot-add-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.catalog-price-unit-label {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.78rem;
+  color: rgba(17, 17, 17, 0.55);
+}
+
+.cartera-date-filter-grid {
+  align-items: end;
+}
+
+.cartera-date-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.cartera-date-presets .secondary-action-button.is-active {
+  border-color: rgba(17, 17, 17, 0.28);
+  background: rgba(17, 17, 17, 0.08);
+  color: #111;
 }
 
 .cartera-store-panel {

@@ -16,6 +16,7 @@ import { CatalogClientPricing } from "../modules/catalog/catalog-client-pricing.
 import { CatalogRecord } from "../modules/catalog/catalog-record.model.js";
 import { roleSummary } from "../modules/dashboard/dashboard.service.js";
 import { InventoryAdjustment } from "../modules/inventory/inventory-adjustment.model.js";
+import { LotPromotion } from "../modules/inventory/lot-promotion.model.js";
 import { WarehouseLocation } from "../modules/inventory/warehouse-location.model.js";
 import { WarehouseStock } from "../modules/inventory/warehouse-stock.model.js";
 import { ImportTemplate } from "../modules/imports/import-template.model.js";
@@ -404,6 +405,8 @@ function normalizeCatalogClientPricingPayload(body) {
         }
         const currentItem = item;
         const productId = typeof currentItem.productId === "string" ? currentItem.productId.trim() : "";
+        const stockRowId = typeof currentItem.stockRowId === "string" ? currentItem.stockRowId.trim() : "";
+        const lotName = typeof currentItem.lotName === "string" ? currentItem.lotName.trim() : "";
         const cost = Number(currentItem.cost ?? 0);
         const salePrice = Number(currentItem.salePrice ?? 0);
         if (!productId) {
@@ -412,7 +415,7 @@ function normalizeCatalogClientPricingPayload(body) {
         if (cost < 0 || salePrice < 0) {
             throw new Error("Los costos y precios de venta deben ser valores positivos.");
         }
-        return { productId, cost, salePrice };
+        return { productId, stockRowId, lotName, cost, salePrice };
     });
     return {
         clientIds: normalizedClientIds,
@@ -843,10 +846,12 @@ function normalizeSalesOrderPayload(body) {
         }
         const currentItem = item;
         const productId = typeof currentItem.productId === "string" ? currentItem.productId.trim() : "";
+        const stockRowId = typeof currentItem.stockRowId === "string" ? currentItem.stockRowId.trim() : "";
         const stockCurrentValue = currentItem.stockCurrent;
         const hasStockCurrent = stockCurrentValue !== undefined && stockCurrentValue !== null && String(stockCurrentValue).trim() !== "";
         const stockCurrent = hasStockCurrent ? Number(stockCurrentValue) : null;
         const quantity = Number(currentItem.quantity ?? 0);
+        const salePriceAwg = Number(currentItem.salePriceAwg ?? NaN);
         const notes = typeof currentItem.notes === "string" ? currentItem.notes.trim() : "";
         if (!productId) {
             throw new Error(`El producto #${index + 1} no tiene identificador valido.`);
@@ -864,6 +869,8 @@ function normalizeSalesOrderPayload(body) {
             productId,
             stockCurrent,
             quantity,
+            ...(stockRowId ? { stockRowId } : {}),
+            ...(Number.isFinite(salePriceAwg) && salePriceAwg >= 0 ? { salePriceAwg: Math.round(salePriceAwg * 100) / 100 } : {}),
             notes,
         };
     });
@@ -890,6 +897,7 @@ function normalizeWarehouseOrderItems(rawItems, existingItems) {
         }
         const currentItem = item;
         const productId = typeof currentItem.productId === "string" ? currentItem.productId.trim() : "";
+        const stockRowId = typeof currentItem.stockRowId === "string" ? currentItem.stockRowId.trim() : "";
         const quantity = Number(currentItem.quantity ?? 0);
         const notes = typeof currentItem.notes === "string" ? currentItem.notes.trim() : undefined;
         const stockCurrentValue = currentItem.stockCurrent;
@@ -918,6 +926,7 @@ function normalizeWarehouseOrderItems(rawItems, existingItems) {
                     productId,
                     stockCurrent,
                     quantity,
+                    ...(stockRowId ? { stockRowId } : {}),
                     notes: notes ?? "",
                     ...(normalizedPayloadSalePrice !== undefined ? { salePriceAwg: normalizedPayloadSalePrice } : {}),
                 }];
@@ -934,6 +943,7 @@ function normalizeWarehouseOrderItems(rawItems, existingItems) {
                     ? null
                     : Number(existingItem.stockCurrent),
                 quantity,
+                ...(stockRowId || existingItem.stockRowId ? { stockRowId: stockRowId || String(existingItem.stockRowId) } : {}),
                 notes: notes ?? (typeof existingItem.notes === "string" ? existingItem.notes.trim() : ""),
                 ...(resolvedSalePriceAwg !== undefined ? { salePriceAwg: resolvedSalePriceAwg } : {}),
             }];
@@ -972,6 +982,7 @@ async function mapWarehouseOrderRecord(order) {
                 productId: String(item.productId),
                 stockCurrent: item.stockCurrent === undefined || item.stockCurrent === null ? null : Number(item.stockCurrent),
                 quantity: Number(item.quantity ?? 0),
+                stockRowId: item.stockRowId ? String(item.stockRowId) : "",
                 notes: item.notes ?? "",
                 ...(Number.isFinite(Number(item.salePriceAwg)) && Number(item.salePriceAwg) >= 0
                     ? { salePriceAwg: Math.round(Number(item.salePriceAwg) * 100) / 100 }
@@ -1008,6 +1019,39 @@ function resolveWarehouseStockStatus(availableUnits, minUnits) {
     }
     return "healthy";
 }
+function buildDefaultLotName(expirationDate) {
+    const normalizedExpirationDate = normalizeOptionalDateValue(expirationDate);
+    return normalizedExpirationDate
+        ? `Lote vence ${normalizedExpirationDate.toISOString().slice(0, 10)}`
+        : "Lote sin vencimiento";
+}
+function roundLotPriceValue(value) {
+    return Math.round((Number.isFinite(value) ? value : 0) * 10000) / 10000;
+}
+function resolveLotUnitCostUsd(stockRow, product) {
+    const lotUnitCostUsd = Number(stockRow.unitCostUsd ?? 0);
+    return lotUnitCostUsd > 0 ? lotUnitCostUsd : Number(product.arubaPurchaseCostUsd ?? 0);
+}
+function resolveLotUsdToAwgRate(stockRow, product) {
+    const lotRate = Number(stockRow.usdToAwgRate ?? 0);
+    return lotRate > 0 ? lotRate : Number(product.arubaUsdToAwgRate ?? 1.79) || 1.79;
+}
+function resolveLotSalePriceAwg(stockRow, product) {
+    const lotSalePrice = Number(stockRow.salePriceAwg ?? 0);
+    return lotSalePrice > 0 ? lotSalePrice : Number(product.salePrice ?? 0);
+}
+function applyPromotionDiscount(salePrice, discountPercent) {
+    const boundedDiscount = Math.min(Math.max(Number(discountPercent || 0), 0), 100);
+    return Math.round((salePrice * (1 - boundedDiscount / 100)) * 100) / 100;
+}
+async function getActiveLotPromotionMap(stockRowIds) {
+    const query = { active: { $ne: false } };
+    if (stockRowIds && stockRowIds.length > 0) {
+        query.stockRowId = { $in: stockRowIds };
+    }
+    const promotions = await LotPromotion.find(query).lean();
+    return new Map(promotions.map((promotion) => [String(promotion.stockRowId), promotion]));
+}
 function normalizeOptionalDateValue(value) {
     if (!value) {
         return null;
@@ -1035,8 +1079,9 @@ async function assertSalesRepCanManageStore(salesRepId, storeId) {
 }
 async function aggregateWarehouseStockByProduct() {
     const warehouseStocks = await WarehouseStock.find({})
-        .select({ productId: 1, availableUnits: 1, expirationDate: 1 })
+        .select({ productId: 1, availableUnits: 1, expirationDate: 1, lotName: 1, salePriceAwg: 1 })
         .lean();
+    const activePromotionByStockRowId = await getActiveLotPromotionMap(warehouseStocks.map((row) => String(row._id)));
     const stockByProduct = new Map();
     const now = new Date();
     warehouseStocks.forEach((row) => {
@@ -1048,12 +1093,27 @@ async function aggregateWarehouseStockByProduct() {
         if (!Number.isFinite(availableUnits) || availableUnits <= 0) {
             return;
         }
-        const current = stockByProduct.get(productId) ?? { total: 0, nearestExpiration: null };
+        const current = stockByProduct.get(productId) ?? { total: 0, nearestExpiration: null, preferredLot: null };
         current.total += availableUnits;
         const expirationDate = normalizeOptionalDateValue(row.expirationDate);
+        const promotion = activePromotionByStockRowId.get(String(row._id));
         if (expirationDate && expirationDate >= now) {
             if (!current.nearestExpiration || expirationDate < current.nearestExpiration) {
                 current.nearestExpiration = expirationDate;
+            }
+        }
+        if (promotion) {
+            const promotedLot = {
+                stockRowId: String(row._id),
+                lotName: String(row.lotName ?? "") || buildDefaultLotName(expirationDate),
+                availableUnits,
+                expirationDate,
+                discountPercent: Number(promotion.discountPercent ?? 0),
+                salePriceAwg: Number(row.salePriceAwg ?? 0),
+            };
+            if (!current.preferredLot ||
+                compareWarehouseStockLotsByConsumptionPriority(promotedLot, current.preferredLot) < 0) {
+                current.preferredLot = promotedLot;
             }
         }
         stockByProduct.set(productId, current);
@@ -1074,8 +1134,22 @@ async function buildSalesProductCatalog(storeId) {
     twoMonthsLater.setMonth(twoMonthsLater.getMonth() + 2);
     const rows = products.map((product) => {
         const productId = String(product._id);
-        const stockInfo = stockByProduct.get(productId) ?? { total: 0, nearestExpiration: null };
+        const stockInfo = stockByProduct.get(productId) ?? { total: 0, nearestExpiration: null, preferredLot: null };
         let nearestExpiration = stockInfo.nearestExpiration;
+        const baseSalePrice = stockInfo.preferredLot && Number(stockInfo.preferredLot.salePriceAwg ?? 0) > 0
+            ? Number(stockInfo.preferredLot.salePriceAwg)
+            : Number(product.salePrice ?? 0);
+        const promotion = stockInfo.preferredLot
+            ? {
+                stockRowId: stockInfo.preferredLot.stockRowId,
+                lotName: stockInfo.preferredLot.lotName,
+                expirationDate: stockInfo.preferredLot.expirationDate ? stockInfo.preferredLot.expirationDate.toISOString() : null,
+                availableUnits: stockInfo.preferredLot.availableUnits,
+                discountPercent: stockInfo.preferredLot.discountPercent,
+                originalSalePrice: baseSalePrice,
+                promotionSalePrice: applyPromotionDiscount(baseSalePrice, stockInfo.preferredLot.discountPercent),
+            }
+            : null;
         if (!nearestExpiration && product.expirationDate) {
             const productExpiration = normalizeOptionalDateValue(product.expirationDate);
             if (productExpiration && productExpiration >= now) {
@@ -1091,7 +1165,9 @@ async function buildSalesProductCatalog(storeId) {
             name: product.name,
             category: product.category ?? "",
             imageUrl: product.imageUrl ?? "",
-            salePrice: Number(product.salePrice ?? 0),
+            salePrice: promotion ? promotion.promotionSalePrice : baseSalePrice,
+            originalSalePrice: promotion ? baseSalePrice : null,
+            promotion,
             warehouseStock: stockInfo.total,
             isExpiringSoon,
             nearestExpirationDate: nearestExpiration ? nearestExpiration.toISOString() : null,
@@ -1185,8 +1261,8 @@ function compareWarehouseStockLotsByConsumptionPriority(left, right) {
     }
     return String(left.createdAt ?? "").localeCompare(String(right.createdAt ?? ""));
 }
-function buildInventoryLotKey(productId, expirationDateValue) {
-    return `${productId.trim()}::${expirationDateValue.trim() || "no-expiration"}`;
+function buildInventoryLotKey(productId, expirationDateValue, unitCostUsd = 0, salePriceAwg = 0) {
+    return `${productId.trim()}::${expirationDateValue.trim() || "no-expiration"}::${roundLotPriceValue(unitCostUsd)}::${roundLotPriceValue(salePriceAwg)}`;
 }
 async function applyInventoryRowStockUpdate(params) {
     const stockRow = await WarehouseStock.findOne({ _id: params.stockRowId, productId: params.productId });
@@ -1201,6 +1277,7 @@ async function applyInventoryRowStockUpdate(params) {
     if (sameLot) {
         await WarehouseStock.findByIdAndUpdate(stockRow._id, {
             availableUnits: params.quantity,
+            lotName: params.lotName || buildDefaultLotName(params.expirationDate),
             status: resolveWarehouseStockStatus(params.quantity, minUnits),
         }, { runValidators: true });
         return;
@@ -1214,6 +1291,7 @@ async function applyInventoryRowStockUpdate(params) {
         const nextAvailable = Number(existingTarget.availableUnits ?? 0) + params.quantity;
         await WarehouseStock.findByIdAndUpdate(existingTarget._id, {
             availableUnits: nextAvailable,
+            lotName: params.lotName || String(existingTarget.lotName ?? "") || buildDefaultLotName(params.expirationDate),
             status: resolveWarehouseStockStatus(nextAvailable, Number(existingTarget.minUnits ?? minUnits)),
         }, { runValidators: true });
         await WarehouseStock.findByIdAndDelete(stockRow._id);
@@ -1222,6 +1300,7 @@ async function applyInventoryRowStockUpdate(params) {
     await WarehouseStock.findByIdAndUpdate(stockRow._id, {
         productId: params.nextProductId,
         expirationDate: params.expirationDate,
+        lotName: params.lotName || buildDefaultLotName(params.expirationDate),
         availableUnits: params.quantity,
         status: resolveWarehouseStockStatus(params.quantity, minUnits),
     }, { runValidators: true });
@@ -1230,13 +1309,19 @@ async function applyOrderInventoryDeduction(order) {
     const quantitiesByProductId = order.items.reduce((map, item) => {
         const productId = String(item.productId ?? "").trim();
         const quantity = Number(item.quantity ?? 0);
+        const stockRowId = String(item.stockRowId ?? "").trim();
         if (!productId || !Number.isFinite(quantity) || quantity <= 0) {
             return map;
         }
-        map.set(productId, (map.get(productId) ?? 0) + quantity);
+        const current = map.get(productId) ?? { quantity: 0, stockRowId: "" };
+        map.set(productId, {
+            quantity: current.quantity + quantity,
+            stockRowId: current.stockRowId || stockRowId,
+        });
         return map;
     }, new Map());
-    for (const [productId, quantityToDeduct] of quantitiesByProductId.entries()) {
+    for (const [productId, deduction] of quantitiesByProductId.entries()) {
+        const quantityToDeduct = deduction.quantity;
         const existingAutomaticDeduction = await InventoryAdjustment.findOne({
             productId,
             reason: "Despacho de pedido completado",
@@ -1245,7 +1330,15 @@ async function applyOrderInventoryDeduction(order) {
         if (existingAutomaticDeduction) {
             continue;
         }
-        const stockRows = (await WarehouseStock.find({ productId }).lean()).sort(compareWarehouseStockLotsByConsumptionPriority);
+        const stockRows = (await WarehouseStock.find({ productId }).lean()).sort((left, right) => {
+            if (deduction.stockRowId) {
+                if (String(left._id) === deduction.stockRowId)
+                    return -1;
+                if (String(right._id) === deduction.stockRowId)
+                    return 1;
+            }
+            return compareWarehouseStockLotsByConsumptionPriority(left, right);
+        });
         if (stockRows.length > 0) {
             let remaining = quantityToDeduct;
             for (const stockRow of stockRows) {
@@ -1685,13 +1778,27 @@ apiRouter.get("/sales/stores/:id/products", async (request, response) => {
             products: products.map((product) => {
                 const productId = String(product._id);
                 const stockInfo = stockByProduct.get(productId);
+                const baseSalePrice = Number(product.salePrice ?? 0);
+                const promotion = stockInfo?.preferredLot
+                    ? {
+                        stockRowId: stockInfo.preferredLot.stockRowId,
+                        lotName: stockInfo.preferredLot.lotName,
+                        expirationDate: stockInfo.preferredLot.expirationDate ? stockInfo.preferredLot.expirationDate.toISOString() : null,
+                        availableUnits: stockInfo.preferredLot.availableUnits,
+                        discountPercent: stockInfo.preferredLot.discountPercent,
+                        originalSalePrice: baseSalePrice,
+                        promotionSalePrice: applyPromotionDiscount(baseSalePrice, stockInfo.preferredLot.discountPercent),
+                    }
+                    : null;
                 return {
                     productId,
                     sku: product.sku,
                     name: product.name,
                     category: product.category,
                     imageUrl: product.imageUrl ?? "",
-                    salePrice: Number(product.salePrice ?? 0),
+                    salePrice: promotion ? promotion.promotionSalePrice : baseSalePrice,
+                    originalSalePrice: promotion ? baseSalePrice : null,
+                    promotion,
                     warehouseStock: Number(stockInfo?.total ?? 0),
                     displaysPerBox: Number(product.displaysPerBox ?? 1) || 1,
                     unitsPerBox: Number(product.unitsPerBox ?? 0),
@@ -1788,6 +1895,10 @@ apiRouter.get("/sales/orders", async (request, response) => {
                     productId: String(item.productId),
                     stockCurrent: item.stockCurrent === undefined || item.stockCurrent === null ? null : Number(item.stockCurrent),
                     quantity: Number(item.quantity ?? 0),
+                    stockRowId: item.stockRowId ? String(item.stockRowId) : "",
+                    ...(Number.isFinite(Number(item.salePriceAwg)) && Number(item.salePriceAwg) >= 0
+                        ? { salePriceAwg: Math.round(Number(item.salePriceAwg) * 100) / 100 }
+                        : {}),
                     notes: item.notes ?? "",
                     productName: relatedProduct?.name ?? "Producto eliminado",
                     productSku: relatedProduct?.sku ?? "-",
@@ -2029,6 +2140,45 @@ function buildBusinessMonthMongoFilter(dateField, monthFilter) {
         },
     };
 }
+function buildBusinessDateRangeMongoFilter(dateField, startDate, endDate) {
+    const hasStartDate = /^\d{4}-\d{2}-\d{2}$/.test(startDate);
+    const hasEndDate = /^\d{4}-\d{2}-\d{2}$/.test(endDate);
+    if (!hasStartDate && !hasEndDate) {
+        return null;
+    }
+    const andConditions = [];
+    if (hasStartDate) {
+        andConditions.push({
+            $gte: [
+                { $dateToString: { format: "%Y-%m-%d", date: `$${dateField}`, timezone: BUSINESS_TIMEZONE } },
+                startDate,
+            ],
+        });
+    }
+    if (hasEndDate) {
+        andConditions.push({
+            $lte: [
+                { $dateToString: { format: "%Y-%m-%d", date: `$${dateField}`, timezone: BUSINESS_TIMEZONE } },
+                endDate,
+            ],
+        });
+    }
+    return {
+        $expr: andConditions.length === 1 ? andConditions[0] : { $and: andConditions },
+    };
+}
+function resolveCarteraDateRangeFilters(query) {
+    let startDate = typeof query.startDate === "string" ? query.startDate.trim() : "";
+    let endDate = typeof query.endDate === "string" ? query.endDate.trim() : "";
+    const monthFilter = typeof query.month === "string" ? query.month.trim() : "";
+    if (!startDate && !endDate && /^\d{4}-\d{2}$/.test(monthFilter)) {
+        const [year, month] = monthFilter.split("-").map(Number);
+        const lastDay = new Date(year, month, 0).getDate();
+        startDate = `${monthFilter}-01`;
+        endDate = `${monthFilter}-${String(lastDay).padStart(2, "0")}`;
+    }
+    return { startDate, endDate };
+}
 async function syncDeliveredOrdersIntoCartera() {
     const [deliveredOrders, existingEntries] = await Promise.all([
         Order.find({ status: "delivered" })
@@ -2256,6 +2406,7 @@ async function getNextInvoiceNumber() {
 }
 function mergeOrderItemPrices(orderItems, rawItems) {
     const priceByProductId = new Map();
+    const stockRowIdByProductId = new Map();
     if (Array.isArray(rawItems)) {
         rawItems.forEach((entry) => {
             if (typeof entry !== "object" || entry === null) {
@@ -2264,18 +2415,24 @@ function mergeOrderItemPrices(orderItems, rawItems) {
             const row = entry;
             const productId = typeof row.productId === "string" ? row.productId.trim() : "";
             const salePriceAwg = Number(row.salePriceAwg ?? NaN);
+            const stockRowId = typeof row.stockRowId === "string" ? row.stockRowId.trim() : "";
             if (productId && Number.isFinite(salePriceAwg) && salePriceAwg >= 0) {
                 priceByProductId.set(productId, Math.round(salePriceAwg * 100) / 100);
+            }
+            if (productId && stockRowId) {
+                stockRowIdByProductId.set(productId, stockRowId);
             }
         });
     }
     return orderItems.map((item) => {
         const productId = String(item.productId);
         const nextPrice = priceByProductId.get(productId);
+        const stockRowId = stockRowIdByProductId.get(productId);
+        const nextItem = stockRowId ? { ...item, stockRowId } : item;
         if (nextPrice !== undefined) {
-            return { ...item, salePriceAwg: nextPrice };
+            return { ...nextItem, salePriceAwg: nextPrice };
         }
-        return item;
+        return nextItem;
     });
 }
 function resolveFrozenOrderItemSalePrice(item, productSalePrice = 0) {
@@ -3777,20 +3934,39 @@ apiRouter.get("/management/catalogs/:id/preview", async (request, response) => {
         }
         const catalogId = catalog._id;
         const clientId = typeof request.query.clientId === "string" ? request.query.clientId.trim() : "";
-        const [items, clientPricing] = await Promise.all([
+        const [catalogProducts, clientPricing] = await Promise.all([
             resolveCatalogProducts(catalog),
             clientId
                 ? CatalogClientPricing.findOne({ catalogId: catalog._id, clientId }).lean()
                 : CatalogClientPricing.findOne({ catalogId: catalog._id, active: { $ne: false } }).sort({ updatedAt: -1 }).lean(),
         ]);
-        const savedPricingMap = new Map((clientPricing?.items ?? []).map((item) => [String(item.productId), Number(item.salePrice ?? 0)]));
+        const catalogProductMap = new Map(catalogProducts.map((item) => [item.productId, item]));
+        const savedItems = Array.isArray(clientPricing?.items) ? clientPricing.items : [];
+        const previewItems = savedItems.length > 0
+            ? savedItems.map((savedItem) => {
+                const productId = String(savedItem.productId ?? "");
+                const product = catalogProductMap.get(productId);
+                return {
+                    productId,
+                    stockRowId: String(savedItem.stockRowId ?? ""),
+                    lotName: String(savedItem.lotName ?? ""),
+                    name: String(savedItem.productName ?? product?.name ?? "Producto"),
+                    sku: String(savedItem.productSku ?? product?.sku ?? ""),
+                    category: String(product?.category ?? ""),
+                    imageUrl: String(product?.imageUrl ?? ""),
+                    cost: Number(savedItem.cost ?? product?.cost ?? 0),
+                    salePrice: Number(savedItem.salePrice ?? product?.salePrice ?? 0),
+                };
+            })
+            : catalogProducts.map((item) => ({
+                ...item,
+                stockRowId: "",
+                lotName: "",
+            }));
         response.json({
             catalog,
             clientPricing,
-            items: items.map((item) => ({
-                ...item,
-                salePrice: savedPricingMap.get(item.productId) ?? item.salePrice,
-            })),
+            items: previewItems,
         });
     }
     catch (error) {
@@ -3825,7 +4001,7 @@ apiRouter.get("/management/inventory-summary", async (request, response) => {
     const businessUnit = typeof request.query.businessUnit === "string" && request.query.businessUnit.trim().toLowerCase() === "aruba"
         ? "aruba"
         : "colombia";
-    const [products, importCosts, warehouseStocks, inventoryAdjustments] = await Promise.all([
+    const [products, importCosts, warehouseStocks, inventoryAdjustments, activePromotions] = await Promise.all([
         Product.find({
             active: { $ne: false },
             ...(businessUnit === "aruba" ? { shareWithAruba: { $ne: false } } : {}),
@@ -3833,7 +4009,9 @@ apiRouter.get("/management/inventory-summary", async (request, response) => {
         ImportCost.find({ active: { $ne: false } }).sort({ importDate: -1, createdAt: -1 }).lean(),
         WarehouseStock.find().lean(),
         InventoryAdjustment.find().lean(),
+        LotPromotion.find({ active: { $ne: false } }).lean(),
     ]);
+    const activePromotionByStockRowId = new Map(activePromotions.map((promotion) => [String(promotion.stockRowId), promotion]));
     const importCostRowsByProduct = new Map();
     importCosts.forEach((row) => {
         const productId = String(row.productId);
@@ -3926,32 +4104,80 @@ apiRouter.get("/management/inventory-summary", async (request, response) => {
                     unitCostBreakdown,
                     expirationDate: expirationDate ? expirationDate.toISOString() : null,
                     isExpiringSoon,
+                    lots: quantity > 0
+                        ? [{
+                                stockRowId: "",
+                                lotName: buildDefaultLotName(expirationDate),
+                                warehouseCode: "",
+                                quantity,
+                                unitCost,
+                                totalCost: quantity * unitCost,
+                                salePrice,
+                                totalSale: quantity * salePrice,
+                                expirationDate: expirationDate ? expirationDate.toISOString() : null,
+                                isExpiringSoon,
+                                promotion: null,
+                            }]
+                        : [],
                 }];
         }
         const sortedStockRows = [...productStockRows].sort(compareWarehouseStockLotsByConsumptionPriority);
         const positiveStockRows = sortedStockRows.filter((stockRow) => Number(stockRow.availableUnits ?? 0) > 0);
         const stockRowsToRender = positiveStockRows.length > 0 ? positiveStockRows : sortedStockRows.slice(0, 1);
-        return stockRowsToRender.map((stockRow) => {
+        const lots = stockRowsToRender.map((stockRow) => {
             const quantity = Number(stockRow.availableUnits ?? 0);
             const expirationDate = normalizeOptionalDateValue(stockRow.expirationDate ?? product.expirationDate);
+            const promotion = activePromotionByStockRowId.get(String(stockRow._id));
             const isExpiringSoon = Boolean(expirationDate &&
                 expirationDate >= now &&
                 expirationDate <= twoMonthsLater);
+            const lotUnitCostUsd = resolveLotUnitCostUsd(stockRow, product);
+            const lotUsdToAwgRate = resolveLotUsdToAwgRate(stockRow, product);
+            const lotUnitCost = businessUnit === "aruba"
+                ? lotUnitCostUsd * lotUsdToAwgRate
+                : Number(latestImportRow?.landedUnitCost ?? product.cost ?? 0);
+            const lotSalePrice = resolveLotSalePriceAwg(stockRow, product);
             return {
                 stockRowId: String(stockRow._id ?? ""),
+                lotName: String(stockRow.lotName ?? "") || buildDefaultLotName(expirationDate),
+                warehouseCode: String(stockRow.warehouseCode ?? ""),
+                quantity,
+                unitCost: lotUnitCost,
+                totalCost: quantity * lotUnitCost,
+                salePrice: lotSalePrice,
+                totalSale: quantity * lotSalePrice,
+                expirationDate: expirationDate ? expirationDate.toISOString() : null,
+                isExpiringSoon,
+                promotion: promotion
+                    ? {
+                        id: String(promotion._id),
+                        discountPercent: Number(promotion.discountPercent ?? 0),
+                    }
+                    : null,
+            };
+        });
+        const quantity = lots.reduce((sum, lot) => sum + lot.quantity, 0);
+        const totalCost = lots.reduce((sum, lot) => sum + lot.totalCost, 0);
+        const totalSale = lots.reduce((sum, lot) => sum + lot.totalSale, 0);
+        const weightedUnitCost = quantity > 0 ? totalCost / quantity : unitCost;
+        const weightedSalePrice = quantity > 0 ? totalSale / quantity : salePrice;
+        const nearestLot = lots.find((lot) => lot.quantity > 0) ?? lots[0] ?? null;
+        const isExpiringSoon = lots.some((lot) => lot.isExpiringSoon);
+        return [{
+                stockRowId: nearestLot?.stockRowId ?? "",
                 productId,
                 sku: product.sku,
                 name: product.name,
                 quantity,
-                unitCost,
-                totalCost: quantity * unitCost,
-                salePrice,
-                totalSale: quantity * salePrice,
+                unitCost: weightedUnitCost,
+                totalCost,
+                salePrice: weightedSalePrice,
+                totalSale,
                 unitCostBreakdown,
-                expirationDate: expirationDate ? expirationDate.toISOString() : null,
+                expirationDate: nearestLot?.expirationDate ?? null,
                 isExpiringSoon,
-            };
-        });
+                lots,
+            }];
     });
     const kpis = {
         totalProducts: new Set(rows.map((row) => row.productId)).size,
@@ -3989,6 +4215,92 @@ apiRouter.get("/management/inventory-summary", async (request, response) => {
         };
     });
     response.json({ rows, kpis, history });
+});
+apiRouter.get("/management/lot-promotions", async (_request, response) => {
+    try {
+        const promotions = await LotPromotion.find({ active: { $ne: false } }).sort({ updatedAt: -1 }).lean();
+        const stockRowIds = promotions.map((promotion) => promotion.stockRowId);
+        const productIds = promotions.map((promotion) => promotion.productId);
+        const [stockRows, products] = await Promise.all([
+            WarehouseStock.find({ _id: { $in: stockRowIds } }).lean(),
+            Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1, salePrice: 1 }).lean(),
+        ]);
+        const stockById = new Map(stockRows.map((stockRow) => [String(stockRow._id), stockRow]));
+        const productById = new Map(products.map((product) => [String(product._id), product]));
+        response.json(promotions.map((promotion) => {
+            const stockRow = stockById.get(String(promotion.stockRowId));
+            const product = productById.get(String(promotion.productId));
+            const basePrice = stockRow
+                ? resolveLotSalePriceAwg(stockRow, product ?? {})
+                : Number(product?.salePrice ?? 0);
+            const discountPercent = Number(promotion.discountPercent ?? 0);
+            return {
+                id: String(promotion._id),
+                stockRowId: String(promotion.stockRowId),
+                productId: String(promotion.productId),
+                productName: String(product?.name ?? "Producto"),
+                productSku: String(product?.sku ?? ""),
+                lotName: String(stockRow?.lotName ?? "") || buildDefaultLotName(stockRow?.expirationDate),
+                expirationDate: stockRow?.expirationDate ? new Date(stockRow.expirationDate).toISOString() : null,
+                availableUnits: Number(stockRow?.availableUnits ?? 0),
+                discountPercent,
+                basePrice,
+                promotionPrice: applyPromotionDiscount(basePrice, discountPercent),
+                notes: String(promotion.notes ?? ""),
+                updatedAt: String(promotion.updatedAt ?? ""),
+            };
+        }));
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
+apiRouter.post("/management/lot-promotions", async (request, response) => {
+    try {
+        const stockRowId = typeof request.body?.stockRowId === "string" ? request.body.stockRowId.trim() : "";
+        const discountPercent = Number(request.body?.discountPercent ?? NaN);
+        const notes = typeof request.body?.notes === "string" ? request.body.notes.trim() : "";
+        if (!stockRowId) {
+            response.status(400).json({ message: "Selecciona el lote para la promoción." });
+            return;
+        }
+        if (!Number.isFinite(discountPercent) || discountPercent <= 0 || discountPercent > 100) {
+            response.status(400).json({ message: "Ingresa un descuento mayor a 0% y menor o igual a 100%." });
+            return;
+        }
+        const stockRow = await WarehouseStock.findById(stockRowId).lean();
+        if (!stockRow) {
+            response.status(404).json({ message: "El lote no existe." });
+            return;
+        }
+        const promotion = await LotPromotion.findOneAndUpdate({ stockRowId }, {
+            stockRowId: stockRow._id,
+            productId: stockRow.productId,
+            discountPercent,
+            notes,
+            active: true,
+        }, { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }).lean();
+        response.status(201).json({
+            message: "Promoción de lote guardada correctamente.",
+            promotion,
+        });
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
+apiRouter.delete("/management/lot-promotions/:id", async (request, response) => {
+    try {
+        const promotion = await LotPromotion.findByIdAndUpdate(request.params.id, { active: false }, { new: true }).lean();
+        if (!promotion) {
+            response.status(404).json({ message: "La promoción no existe." });
+            return;
+        }
+        response.json({ message: "Promoción desactivada correctamente." });
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
 });
 apiRouter.post("/management/inventory-adjustments", async (request, response) => {
     try {
@@ -4073,6 +4385,7 @@ apiRouter.put("/management/inventory-rows", async (request, response) => {
         const expirationDateValue = typeof request.body?.expirationDate === "string"
             ? request.body.expirationDate.trim()
             : undefined;
+        const lotName = typeof request.body?.lotName === "string" ? request.body.lotName.trim() : "";
         if (!productId) {
             response.status(400).json({ message: "Selecciona un producto del inventario." });
             return;
@@ -4105,6 +4418,7 @@ apiRouter.put("/management/inventory-rows", async (request, response) => {
                 nextProductId,
                 quantity,
                 expirationDate: normalizedExpiration,
+                lotName: lotName || String(stockRow.lotName ?? "") || buildDefaultLotName(normalizedExpiration),
             });
         }
         else if (expirationDateValue !== undefined) {
@@ -4176,6 +4490,7 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
             const costUsd = Number(item.costUsd ?? 0);
             const salePriceAwg = Number(item.salePriceAwg ?? 0);
             const expirationDateValue = typeof item.expirationDate === "string" ? item.expirationDate.trim() : "";
+            const lotName = typeof item.lotName === "string" ? item.lotName.trim() : "";
             const productWeightKg = Number(item.productWeightKg ?? 0);
             if (!productId) {
                 throw new Error(`El producto #${index + 1} no tiene identificador valido.`);
@@ -4198,16 +4513,20 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
                     throw new Error(`La fecha de caducidad del producto #${index + 1} no es valida.`);
                 }
             }
-            return { productId, quantity, costUsd, salePriceAwg, expirationDateValue, productWeightKg };
+            return { productId, quantity, costUsd, salePriceAwg, expirationDateValue, lotName, productWeightKg };
         });
-        if (new Set(items.map((item) => buildInventoryLotKey(item.productId, item.expirationDateValue))).size !== items.length) {
-            response.status(400).json({ message: "No repitas el mismo lote dentro del mismo registro de inventario." });
-            return;
-        }
         // Calculate total quantity across all items for distributing additional expenses
         const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
         const additionalExpensePerUnitAwg = totalQuantity > 0 ? totalAdditionalExpensesAwg / totalQuantity : 0;
         const additionalExpensePerUnitUsd = usdToAwgRate > 0 ? additionalExpensePerUnitAwg / usdToAwgRate : 0;
+        if (new Set(items.map((item) => {
+            const unitCostUsd = item.quantity > 0 ? item.costUsd / item.quantity : item.costUsd;
+            const totalUnitCostUsd = unitCostUsd + additionalExpensePerUnitUsd;
+            return buildInventoryLotKey(item.productId, item.expirationDateValue, totalUnitCostUsd, item.salePriceAwg);
+        })).size !== items.length) {
+            response.status(400).json({ message: "No repitas el mismo lote dentro del mismo registro de inventario." });
+            return;
+        }
         const uniqueProductIds = Array.from(new Set(items.map((item) => item.productId)));
         const warehouse = warehouseId
             ? await Warehouse.findById(warehouseId).lean()
@@ -4226,10 +4545,15 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
                 return;
             }
             const normalizedExpirationDate = normalizeOptionalDateValue(item.expirationDateValue);
+            const lotName = item.lotName || buildDefaultLotName(normalizedExpirationDate);
+            const unitCostUsd = item.quantity > 0 ? item.costUsd / item.quantity : item.costUsd;
+            const totalUnitCostUsd = unitCostUsd + additionalExpensePerUnitUsd;
             const existingStockRow = await WarehouseStock.findOne({
                 productId: product._id,
                 warehouseCode: warehouse.code,
                 expirationDate: normalizedExpirationDate,
+                unitCostUsd: roundLotPriceValue(totalUnitCostUsd),
+                salePriceAwg: roundLotPriceValue(item.salePriceAwg),
             }).lean();
             const currentAvailableUnits = Number(existingStockRow?.availableUnits ?? 0);
             const nextAvailableUnits = currentAvailableUnits + item.quantity;
@@ -4238,10 +4562,16 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
                 productId: product._id,
                 warehouseCode: warehouse.code,
                 expirationDate: normalizedExpirationDate,
+                unitCostUsd: roundLotPriceValue(totalUnitCostUsd),
+                salePriceAwg: roundLotPriceValue(item.salePriceAwg),
             }, {
                 productId: product._id,
                 warehouseCode: warehouse.code,
                 expirationDate: normalizedExpirationDate,
+                lotName,
+                unitCostUsd: roundLotPriceValue(totalUnitCostUsd),
+                usdToAwgRate,
+                salePriceAwg: roundLotPriceValue(item.salePriceAwg),
                 availableUnits: nextAvailableUnits,
                 minUnits,
                 status: resolveWarehouseStockStatus(nextAvailableUnits, minUnits),
@@ -4251,9 +4581,6 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
                 setDefaultsOnInsert: true,
                 runValidators: true,
             });
-            const unitCostUsd = item.quantity > 0 ? item.costUsd / item.quantity : item.costUsd;
-            // Include distributed additional expenses in the unit cost
-            const totalUnitCostUsd = unitCostUsd + additionalExpensePerUnitUsd;
             await Product.findByIdAndUpdate(product._id, {
                 arubaPurchaseCostUsd: totalUnitCostUsd,
                 arubaUsdToAwgRate: usdToAwgRate,
@@ -4953,6 +5280,8 @@ apiRouter.put("/management/catalogs/:id/client-pricing", async (request, respons
             }
             return {
                 productId: item.productId,
+                stockRowId: item.stockRowId,
+                lotName: item.lotName || product.name,
                 productName: product.name,
                 productSku: product.sku,
                 cost: item.cost,
@@ -5654,8 +5983,8 @@ apiRouter.get("/warehouse/cartera/pending-credit", async (request, response) => 
     response.json(entries.map((entry) => mapCarteraEntryRecord(entry)));
 });
 apiRouter.get("/management/cartera", async (request, response) => {
-    const monthFilter = typeof request.query.month === "string" ? request.query.month.trim() : "";
     const storeIdFilter = typeof request.query.storeId === "string" ? request.query.storeId.trim() : "";
+    const { startDate, endDate } = resolveCarteraDateRangeFilters(request.query);
     const filters = { active: { $ne: false } };
     const collectionFilters = { active: { $ne: false } };
     await syncDeliveredOrdersIntoCartera();
@@ -5664,13 +5993,13 @@ apiRouter.get("/management/cartera", async (request, response) => {
         filters.storeId = storeIdFilter;
         collectionFilters.storeId = storeIdFilter;
     }
-    const invoicedAtMonthFilter = buildBusinessMonthMongoFilter("invoicedAt", monthFilter);
-    const collectedAtMonthFilter = buildBusinessMonthMongoFilter("collectedAt", monthFilter);
-    if (invoicedAtMonthFilter) {
-        Object.assign(filters, invoicedAtMonthFilter);
+    const invoicedAtDateFilter = buildBusinessDateRangeMongoFilter("invoicedAt", startDate, endDate);
+    const collectedAtDateFilter = buildBusinessDateRangeMongoFilter("collectedAt", startDate, endDate);
+    if (invoicedAtDateFilter) {
+        Object.assign(filters, invoicedAtDateFilter);
     }
-    if (collectedAtMonthFilter) {
-        Object.assign(collectionFilters, collectedAtMonthFilter);
+    if (collectedAtDateFilter) {
+        Object.assign(collectionFilters, collectedAtDateFilter);
     }
     const [entries, collections, summary] = await Promise.all([
         CarteraEntry.find(filters).sort({ invoicedAt: -1, createdAt: -1 }).lean(),
