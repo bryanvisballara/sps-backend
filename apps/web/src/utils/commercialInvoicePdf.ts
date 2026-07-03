@@ -188,7 +188,7 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
 
   const finalY = (pdf as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 178;
   const footerY = Math.min(finalY + 28, pageHeight - 48);
-  const footerLabel = input.invoiceNumber ? "BALANCE DUE AWG" : "REFERENCE TOTAL AWG";
+  const footerLabel = input.invoiceNumber ? "TOTAL AWG" : "REFERENCE TOTAL AWG";
 
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(10);
