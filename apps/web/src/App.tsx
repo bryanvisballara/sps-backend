@@ -4816,7 +4816,7 @@ export default function App() {
         notes: draft.notes.trim(),
       };
     })
-    .filter((item) => (item.stockCurrent !== null && Number.isFinite(item.stockCurrent) && item.stockCurrent >= 0) || (Number.isFinite(item.quantity) && item.quantity > 0));
+    .filter((item) => Number.isFinite(item.quantity) && item.quantity > 0);
   const sellerOrderEstimatedTotal = sellerDraftedItems.reduce((sum, item) => {
     const product = sellerClientProducts.find((entry) => entry.productId === item.productId);
     const unitPrice = Number(product?.promotion?.promotionSalePrice ?? product?.salePrice ?? 0);
@@ -7183,31 +7183,36 @@ export default function App() {
           ) : null}
         </div>
         <div className="seller-product-catalog-order-fields">
-          {showOrderFields ? (
-            <label className="seller-product-catalog-field">
-              <span>Stock en tienda</span>
+          <label className="seller-product-catalog-field seller-product-catalog-field-quantity">
+            <span>Cantidad (displays)</span>
+            <div className="seller-quantity-stepper">
+              <button
+                className="seller-quantity-stepper-btn"
+                type="button"
+                aria-label="Disminuir cantidad"
+                disabled={!Number.isFinite(quantityValue) || quantityValue <= 0}
+                onClick={() => adjustSellerOrderQuantity(product.productId, -1)}
+              >
+                −
+              </button>
               <input
                 className="catalog-price-input seller-order-input"
                 type="number"
                 min="0"
                 step="any"
-                value={draft.stockCurrent}
-                placeholder="Actual en cliente"
-                onChange={(event) => handleSellerOrderDraftChange(product.productId, "stockCurrent", event.target.value)}
+                value={draft.quantity}
+                placeholder="0"
+                onChange={(event) => handleSellerOrderDraftChange(product.productId, "quantity", event.target.value)}
               />
-            </label>
-          ) : null}
-          <label className="seller-product-catalog-field">
-            <span>Cantidad (displays)</span>
-            <input
-              className="catalog-price-input seller-order-input"
-              type="number"
-              min="0"
-              step="any"
-              value={draft.quantity}
-              placeholder="0"
-              onChange={(event) => handleSellerOrderDraftChange(product.productId, "quantity", event.target.value)}
-            />
+              <button
+                className="seller-quantity-stepper-btn"
+                type="button"
+                aria-label="Aumentar cantidad"
+                onClick={() => adjustSellerOrderQuantity(product.productId, 1)}
+              >
+                +
+              </button>
+            </div>
           </label>
           {showOrderFields && Number.isFinite(quantityValue) && quantityValue > 0 ? (
             <div className="seller-product-catalog-field seller-product-catalog-field-total">
@@ -12035,6 +12040,22 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
         [field]: value,
       },
     }));
+  }
+
+  function adjustSellerOrderQuantity(productId: string, delta: number) {
+    setSellerOrderDraft((current) => {
+      const existing = current[productId] ?? { stockCurrent: "", quantity: "", notes: "" };
+      const currentValue = Number(existing.quantity || 0);
+      const nextValue = Math.max(0, currentValue + delta);
+
+      return {
+        ...current,
+        [productId]: {
+          ...existing,
+          quantity: nextValue === 0 ? "" : String(nextValue),
+        },
+      };
+    });
   }
 
   function addSellerGiftDraftItem() {
