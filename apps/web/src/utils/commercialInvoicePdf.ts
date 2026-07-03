@@ -112,8 +112,8 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
     pdf.text(COMPANY.email, pageWidth - margin, 108, { align: "right" });
 
     pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(28);
-    pdf.text("INVOICE", margin, 96);
+    pdf.setFontSize(18);
+    pdf.text("INVOICE", margin, 116);
 
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(10);
