@@ -2254,6 +2254,8 @@ function buildBusinessDateRangeMongoFilter(dateField, startDate, endDate) {
 function resolveCarteraDateRangeFilters(query) {
     let startDate = typeof query.startDate === "string" ? query.startDate.trim() : "";
     let endDate = typeof query.endDate === "string" ? query.endDate.trim() : "";
+    let collectionStartDate = typeof query.collectionStartDate === "string" ? query.collectionStartDate.trim() : "";
+    let collectionEndDate = typeof query.collectionEndDate === "string" ? query.collectionEndDate.trim() : "";
     const monthFilter = typeof query.month === "string" ? query.month.trim() : "";
     if (!startDate && !endDate && /^\d{4}-\d{2}$/.test(monthFilter)) {
         const [year, month] = monthFilter.split("-").map(Number);
@@ -2261,7 +2263,11 @@ function resolveCarteraDateRangeFilters(query) {
         startDate = `${monthFilter}-01`;
         endDate = `${monthFilter}-${String(lastDay).padStart(2, "0")}`;
     }
-    return { startDate, endDate };
+    if (!collectionStartDate && !collectionEndDate) {
+        collectionStartDate = startDate;
+        collectionEndDate = endDate;
+    }
+    return { startDate, endDate, collectionStartDate, collectionEndDate };
 }
 async function syncDeliveredOrdersIntoCartera() {
     const [deliveredOrders, existingEntries] = await Promise.all([
@@ -2418,6 +2424,28 @@ function mapCarteraEntryRecord(entry) {
         createdAt: entry.createdAt,
         updatedAt: entry.updatedAt,
     };
+}
+const CARTERA_CREDIT_DUE_DAYS = 30;
+function getCarteraInvoiceAgeDays(invoicedAt, referenceDate = new Date()) {
+    const invoiceDate = invoicedAt instanceof Date ? invoicedAt : new Date(String(invoicedAt ?? ""));
+    if (Number.isNaN(invoiceDate.getTime())) {
+        return 0;
+    }
+    const invoiceKey = getBusinessDateKeyFromDate(invoiceDate);
+    const todayKey = getBusinessDateKeyFromDate(referenceDate);
+    const start = new Date(`${invoiceKey}T12:00:00`);
+    const end = new Date(`${todayKey}T12:00:00`);
+    return Math.max(0, Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
+}
+async function fetchOverdueCarteraEntries() {
+    const entries = await CarteraEntry.find({
+        active: { $ne: false },
+        paymentMethod: "credito",
+        outstandingAmountAwg: { $gt: 0.009 },
+    }).sort({ invoicedAt: 1, createdAt: 1 }).lean();
+    return entries
+        .map((entry) => mapCarteraEntryRecord(entry))
+        .filter((entry) => getCarteraInvoiceAgeDays(entry.invoicedAt) > CARTERA_CREDIT_DUE_DAYS);
 }
 async function applyCreditCollections(collections, context) {
     if (collections.length === 0) {
@@ -6114,7 +6142,10 @@ apiRouter.get("/warehouse/cartera/pending-credit", async (request, response) => 
 });
 apiRouter.get("/management/cartera", async (request, response) => {
     const storeIdFilter = typeof request.query.storeId === "string" ? request.query.storeId.trim() : "";
-    const { startDate, endDate } = resolveCarteraDateRangeFilters(request.query);
+    const { startDate, endDate, collectionStartDate, collectionEndDate } = resolveCarteraDateRangeFilters(request.query);
+    const collectionPaymentMethodFilter = typeof request.query.collectionPaymentMethod === "string"
+        ? request.query.collectionPaymentMethod.trim().toLowerCase()
+        : "";
     const filters = { active: { $ne: false } };
     const collectionFilters = { active: { $ne: false } };
     await syncDeliveredOrdersIntoCartera();
@@ -6123,21 +6154,26 @@ apiRouter.get("/management/cartera", async (request, response) => {
         filters.storeId = storeIdFilter;
         collectionFilters.storeId = storeIdFilter;
     }
+    if (carteraCollectionPaymentMethods.has(collectionPaymentMethodFilter)) {
+        collectionFilters.paymentMethod = collectionPaymentMethodFilter;
+    }
     const invoicedAtDateFilter = buildBusinessDateRangeMongoFilter("invoicedAt", startDate, endDate);
-    const collectedAtDateFilter = buildBusinessDateRangeMongoFilter("collectedAt", startDate, endDate);
+    const collectedAtDateFilter = buildBusinessDateRangeMongoFilter("collectedAt", collectionStartDate, collectionEndDate);
     if (invoicedAtDateFilter) {
         Object.assign(filters, invoicedAtDateFilter);
     }
     if (collectedAtDateFilter) {
         Object.assign(collectionFilters, collectedAtDateFilter);
     }
-    const [entries, collections, summary] = await Promise.all([
+    const [entries, collections, summary, overdueEntries] = await Promise.all([
         CarteraEntry.find(filters).sort({ invoicedAt: -1, createdAt: -1 }).lean(),
         CarteraCollection.find(collectionFilters).sort({ collectedAt: -1, createdAt: -1 }).lean(),
         buildCarteraSummary(),
+        fetchOverdueCarteraEntries(),
     ]);
     response.json({
         summary,
+        overdueEntries,
         entries: entries.map((entry) => mapCarteraEntryRecord(entry)),
         collections: collections.map((collection) => ({
             _id: String(collection._id),

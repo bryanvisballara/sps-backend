@@ -5388,6 +5388,12 @@ h1 {
   align-items: end;
 }
 
+.cartera-collection-filter-grid {
+  align-items: end;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+
 .cartera-date-presets {
   display: flex;
   flex-wrap: wrap;
@@ -5453,6 +5459,33 @@ h1 {
 .cartera-status-badge.is-pendiente {
   background: rgba(239, 68, 68, 0.12);
   color: #b91c1c;
+}
+
+.cartera-credit-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.cartera-credit-badge.is-al-dia {
+  background: rgba(14, 165, 233, 0.14);
+  color: #0369a1;
+}
+
+.cartera-credit-badge.is-vencida {
+  background: rgba(239, 68, 68, 0.14);
+  color: #b91c1c;
+}
+
+.cartera-overdue-kpis {
+  margin-bottom: 12px;
+}
+
+.cartera-overdue-row {
+  background: rgba(239, 68, 68, 0.04);
 }
 
 .cartera-collect-row td {

@@ -945,6 +945,10 @@ type ManagementCarteraCollectionDraft = {
 
 type CarteraEntryPaymentStatus = "pagada" | "parcial" | "pendiente";
 
+type CarteraCreditMonitoringStatus = "no_aplica" | "al_dia" | "vencida";
+
+const CARTERA_CREDIT_DUE_DAYS = 30;
+
 type AccountingModalKind = "fixed-cost" | "operational-expense";
 
 type AccountingView = "overview" | "container-import";
@@ -2723,6 +2727,31 @@ function resolveStoreDefaultPaymentMethod(value?: string): CarteraPaymentMethod 
   return "";
 }
 
+function resolveAccountingLineTotalDraft(
+  productId: string,
+  fallbackLineTotal: number,
+  draft: Record<string, string>,
+) {
+  const raw = draft[productId];
+
+  if (raw === undefined || raw.trim() === "") {
+    return roundCurrencyValue(fallbackLineTotal);
+  }
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? roundCurrencyValue(parsed) : roundCurrencyValue(fallbackLineTotal);
+}
+
+function resolveAccountingSalePriceFromDraft(
+  productId: string,
+  quantity: number,
+  fallbackLineTotal: number,
+  draft: Record<string, string>,
+) {
+  const lineTotal = resolveAccountingLineTotalDraft(productId, fallbackLineTotal, draft);
+  return quantity > 0 ? roundCurrencyValue(lineTotal / quantity) : 0;
+}
+
 function getBusinessMonthKey(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Aruba",
@@ -3061,6 +3090,82 @@ function formatCarteraEntryPaymentStatus(status: CarteraEntryPaymentStatus) {
   }
 
   return "Pendiente";
+}
+
+function getCarteraInvoiceAgeDays(invoicedAt: string, referenceDate = new Date()) {
+  const invoiceDate = new Date(invoicedAt);
+
+  if (Number.isNaN(invoiceDate.getTime())) {
+    return 0;
+  }
+
+  const invoiceKey = getBusinessDateKey(invoiceDate);
+  const todayKey = getBusinessDateKey(referenceDate);
+  const start = new Date(`${invoiceKey}T12:00:00`);
+  const end = new Date(`${todayKey}T12:00:00`);
+
+  return Math.max(0, Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
+}
+
+function getCarteraCreditMonitoringStatus(entry: CarteraEntryRecord): CarteraCreditMonitoringStatus {
+  if (entry.paymentMethod !== "credito" || getCarteraEntryPaymentStatus(entry) === "pagada") {
+    return "no_aplica";
+  }
+
+  return getCarteraInvoiceAgeDays(entry.invoicedAt) > CARTERA_CREDIT_DUE_DAYS ? "vencida" : "al_dia";
+}
+
+function formatCarteraInvoiceAgeDays(ageDays: number) {
+  return `${ageDays} día${ageDays === 1 ? "" : "s"}`;
+}
+
+function formatCarteraCreditMonitoringStatus(status: CarteraCreditMonitoringStatus) {
+  if (status === "al_dia") {
+    return "Al día";
+  }
+
+  if (status === "vencida") {
+    return "Vencida";
+  }
+
+  return "-";
+}
+
+function renderCarteraInvoiceRowCells(
+  row: CarteraEntryRecord,
+  options: { showStoreColumn: boolean },
+) {
+  const paymentStatus = getCarteraEntryPaymentStatus(row);
+  const creditMonitoringStatus = getCarteraCreditMonitoringStatus(row);
+  const invoiceAgeDays = getCarteraInvoiceAgeDays(row.invoicedAt);
+
+  return (
+    <>
+      <td>{String(row.invoicedAt).slice(0, 10)}</td>
+      {options.showStoreColumn ? <td>{row.storeName || "-"}</td> : null}
+      <td>{row.invoiceNumber ? `#${row.invoiceNumber}` : "-"}</td>
+      <td>{row.salesRepName || "-"}</td>
+      <td>{formatPaymentMethodLabel(row.paymentMethod)}</td>
+      <td>{formatCarteraInvoiceAgeDays(invoiceAgeDays)}</td>
+      <td>
+        {creditMonitoringStatus === "no_aplica" ? (
+          "-"
+        ) : (
+          <span className={`cartera-credit-badge is-${creditMonitoringStatus.replace("_", "-")}`}>
+            {formatCarteraCreditMonitoringStatus(creditMonitoringStatus)}
+          </span>
+        )}
+      </td>
+      <td>{formatCurrency(row.invoiceAmountAwg)}</td>
+      <td>{formatCurrency(row.collectedAmountAwg)}</td>
+      <td>{formatCurrency(row.outstandingAmountAwg)}</td>
+      <td>
+        <span className={`cartera-status-badge is-${paymentStatus}`}>
+          {formatCarteraEntryPaymentStatus(paymentStatus)}
+        </span>
+      </td>
+    </>
+  );
 }
 
 function createInitialCarteraSummary(): CarteraSummary {
@@ -4266,10 +4371,14 @@ export default function App() {
   const [warehousePaymentMethodDraft, setWarehousePaymentMethodDraft] = useState<CarteraPaymentMethod | "">("");
   const [warehousePaymentModalStatus, setWarehousePaymentModalStatus] = useState<CreationStatus | null>(null);
   const [carteraRows, setCarteraRows] = useState<CarteraEntryRecord[]>([]);
+  const [carteraOverdueRows, setCarteraOverdueRows] = useState<CarteraEntryRecord[]>([]);
   const [carteraCollections, setCarteraCollections] = useState<CarteraCollectionRecord[]>([]);
   const [carteraSummary, setCarteraSummary] = useState<CarteraSummary>(() => createInitialCarteraSummary());
   const [carteraStartDateFilter, setCarteraStartDateFilter] = useState(() => getBusinessMonthStartDateKey());
   const [carteraEndDateFilter, setCarteraEndDateFilter] = useState(() => getBusinessDateKey());
+  const [carteraCollectionStartDateFilter, setCarteraCollectionStartDateFilter] = useState(() => getBusinessMonthStartDateKey());
+  const [carteraCollectionEndDateFilter, setCarteraCollectionEndDateFilter] = useState(() => getBusinessDateKey());
+  const [carteraCollectionPaymentMethodFilter, setCarteraCollectionPaymentMethodFilter] = useState<CarteraCollectionPaymentMethod | "">("");
   const [carteraPendingOnlyFilter, setCarteraPendingOnlyFilter] = useState(false);
   const [isLoadingCartera, setIsLoadingCartera] = useState(false);
   const [carteraError, setCarteraError] = useState("");
@@ -4293,7 +4402,7 @@ export default function App() {
   const [warehousePendingCreditError, setWarehousePendingCreditError] = useState("");
   const [warehouseOrderItemDraft, setWarehouseOrderItemDraft] = useState<Record<string, string>>({});
   const [warehouseOrderLotDraft, setWarehouseOrderLotDraft] = useState<Record<string, string>>({});
-  const [accountingOrderPriceDraft, setAccountingOrderPriceDraft] = useState<Record<string, string>>({});
+  const [accountingOrderLineTotalDraft, setAccountingOrderLineTotalDraft] = useState<Record<string, string>>({});
   const [isSavingAccountingOrderPrices, setIsSavingAccountingOrderPrices] = useState(false);
   const [accountingOrderPriceStatus, setAccountingOrderPriceStatus] = useState<CreationStatus | null>(null);
   const [warehouseOrderDiscountDraft, setWarehouseOrderDiscountDraft] = useState("");
@@ -4815,6 +4924,9 @@ export default function App() {
       ? selectedWarehouseOrderDetail.items
       : selectedWarehouseOrderDetail.items.filter((item) => warehouseOrderDraftProductIds.includes(item.productId)))
     : [];
+  const canAccountingAdjustDispatchPricing = sessionUser?.role === "contabilidad"
+    && selectedWarehouseOrderDetail !== null
+    && selectedWarehouseOrderDetail.status !== "delivered";
   const warehousePricedItems = selectedWarehouseOrderDetail
     ? warehouseOrderEffectiveItems.map((item) => {
       const productOption = productOptionsById.get(item.productId);
@@ -4845,7 +4957,13 @@ export default function App() {
       const quantity = selectedWarehouseOrderDetail.status === "delivered"
         ? Number(item.quantity ?? 0)
         : Number(warehouseOrderItemDraft[item.productId] ?? item.quantity ?? 0);
-      const resolvedSalePrice = defaultSalePrice;
+      const defaultLineTotal = roundCurrencyValue(defaultSalePrice * quantity);
+      const lineTotal = canAccountingAdjustDispatchPricing
+        ? resolveAccountingLineTotalDraft(item.productId, defaultLineTotal, accountingOrderLineTotalDraft)
+        : defaultLineTotal;
+      const resolvedSalePrice = canAccountingAdjustDispatchPricing
+        ? resolveAccountingSalePriceFromDraft(item.productId, quantity, defaultLineTotal, accountingOrderLineTotalDraft)
+        : defaultSalePrice;
 
       return {
         ...item,
@@ -4856,14 +4974,16 @@ export default function App() {
         hasLotPromotion,
         lotPromotionDiscount,
         originalSalePrice: hasLotPromotion ? liveSalePrice : null,
-        lineTotal: roundCurrencyValue(resolvedSalePrice * quantity),
-        priceSource: hasFrozenPrice
-          ? "frozen"
-          : catalogItem
-            ? "catalog"
-            : productOption?.variableSalePrice
-              ? "variable"
-              : "product",
+        lineTotal,
+        priceSource: canAccountingAdjustDispatchPricing
+          ? "manual"
+          : hasFrozenPrice
+            ? "frozen"
+            : catalogItem
+              ? "catalog"
+              : productOption?.variableSalePrice
+                ? "variable"
+                : "product",
       };
     })
     : [];
@@ -4952,11 +5072,31 @@ export default function App() {
         const defaultLotId = lots.find((lot) => lot.quantity > 0)?.stockRowId || lots[0]?.stockRowId || "";
         const savedLotId = String(item.stockRowId ?? "");
         const expectedLotId = savedLotId || defaultLotId;
+        const savedQuantity = String(item.quantity);
+        const draftQuantity = warehouseOrderItemDraft[item.productId] ?? savedQuantity;
+        const quantityChanged = savedQuantity !== draftQuantity;
+        const lotChanged = expectedLotId !== String(warehouseOrderLotDraft[item.productId] ?? expectedLotId);
 
-        return (
-          String(item.quantity) !== (warehouseOrderItemDraft[item.productId] ?? String(item.quantity))
-          || expectedLotId !== String(warehouseOrderLotDraft[item.productId] ?? expectedLotId)
-        );
+        if (sessionUser?.role === "contabilidad") {
+          const savedQtyNumber = Number(savedQuantity);
+          const draftQtyNumber = Number(draftQuantity);
+          const storedPrice = Number(item.salePriceAwg ?? 0);
+          const productOption = productOptionsById.get(item.productId);
+          const invRow = inventoryRowsByProductId.get(item.productId);
+          const fallbackPrice = storedPrice > 0
+            ? storedPrice
+            : Number(invRow?.salePrice ?? productOption?.salePrice ?? 0);
+          const savedLineTotal = roundCurrencyValue((storedPrice > 0 ? storedPrice : fallbackPrice) * savedQtyNumber);
+          const draftLineTotal = resolveAccountingLineTotalDraft(
+            item.productId,
+            roundCurrencyValue(fallbackPrice * draftQtyNumber),
+            accountingOrderLineTotalDraft,
+          );
+
+          return quantityChanged || lotChanged || draftLineTotal !== savedLineTotal;
+        }
+
+        return quantityChanged || lotChanged;
       }) || JSON.stringify(savedOrder.giftItems ?? []) !== JSON.stringify(selectedWarehouseOrderDetail.giftItems ?? []);
     })(),
   );
@@ -5452,6 +5592,10 @@ export default function App() {
   const logisticsMonthlyAdditionalCosts = logisticsMonthlyFixedCosts + logisticsMonthlyExpenses;
   const logisticsMonthlyNetUtility = logisticsMonthlyUtility - logisticsMonthlyAdditionalCosts;
   const carteraDateRangeLabel = formatCarteraDateRangeLabel(carteraStartDateFilter, carteraEndDateFilter);
+  const carteraCollectionDateRangeLabel = formatCarteraDateRangeLabel(
+    carteraCollectionStartDateFilter,
+    carteraCollectionEndDateFilter,
+  );
   const selectedCarteraStore = storeOptionsById.get(selectedCarteraStoreId) ?? null;
   const filteredCarteraRows = selectedCarteraStoreId
     ? carteraRows.filter((row) => String(row.storeId).trim() === String(selectedCarteraStoreId).trim())
@@ -5459,11 +5603,20 @@ export default function App() {
   const displayedCarteraRows = carteraPendingOnlyFilter
     ? filteredCarteraRows.filter((row) => getCarteraEntryPaymentStatus(row) === "pendiente")
     : filteredCarteraRows;
-  const filteredCarteraCollections = selectedCarteraStoreId
+  const displayedCarteraCollections = selectedCarteraStoreId
     ? carteraCollections.filter((row) => String(row.storeId).trim() === String(selectedCarteraStoreId).trim())
     : carteraCollections;
+  const displayedCarteraOverdueRows = (selectedCarteraStoreId
+    ? carteraOverdueRows.filter((row) => String(row.storeId).trim() === String(selectedCarteraStoreId).trim())
+    : carteraOverdueRows)
+    .slice()
+    .sort((left, right) => getCarteraInvoiceAgeDays(right.invoicedAt) - getCarteraInvoiceAgeDays(left.invoicedAt));
+  const carteraOverdueOutstandingTotal = displayedCarteraOverdueRows.reduce(
+    (sum, row) => sum + Number(row.outstandingAmountAwg ?? 0),
+    0,
+  );
   const carteraMonthlyFacturacionTotal = filteredCarteraRows.reduce((sum, row) => sum + Number(row.invoiceAmountAwg ?? 0), 0);
-  const carteraMonthlyRecaudoTotal = filteredCarteraCollections.reduce((sum, row) => sum + Number(row.amountAwg ?? 0), 0);
+  const carteraMonthlyRecaudoTotal = displayedCarteraCollections.reduce((sum, row) => sum + Number(row.amountAwg ?? 0), 0);
   const carteraMonthlyOutstandingTotal = filteredCarteraRows.reduce((sum, row) => sum + Number(row.outstandingAmountAwg ?? 0), 0);
   const carteraStorePendingCount = filteredCarteraRows.filter((row) => getCarteraEntryPaymentStatus(row) !== "pagada").length;
   const warehouseSelectedCreditCollections = Object.values(warehouseCreditCollectionDrafts)
@@ -6023,7 +6176,7 @@ export default function App() {
     if (activeSection === "dashboard") {
       void refreshCarteraData({ unfiltered: true });
     }
-  }, [activeSection, carteraStartDateFilter, carteraEndDateFilter, sessionUser]);
+  }, [activeSection, carteraStartDateFilter, carteraEndDateFilter, carteraCollectionStartDateFilter, carteraCollectionEndDateFilter, carteraCollectionPaymentMethodFilter, sessionUser]);
 
   useEffect(() => {
     const canAccessBilling = sessionUser?.role === "management" || sessionUser?.role === "colombia-ops";
@@ -6453,22 +6606,24 @@ export default function App() {
 
   useEffect(() => {
     if (sessionUser?.role !== "contabilidad" || !selectedWarehouseOrderDetail) {
-      setAccountingOrderPriceDraft({});
+      setAccountingOrderLineTotalDraft({});
       setAccountingOrderPriceStatus(null);
       return;
     }
 
-    setAccountingOrderPriceDraft(
+    setAccountingOrderLineTotalDraft(
       Object.fromEntries(
         selectedWarehouseOrderDetail.items.map((item) => {
+          const quantity = Number(item.quantity ?? 0);
           const storedPrice = Number(item.salePriceAwg ?? 0);
           const productOption = productOptions.find((option) => option.value === item.productId);
           const invRow = inventoryRows.find((row) => row.productId === item.productId);
           const fallbackPrice = storedPrice > 0
             ? storedPrice
             : Number(invRow?.salePrice ?? productOption?.salePrice ?? 0);
+          const lineTotal = roundCurrencyValue(fallbackPrice * quantity);
 
-          return [item.productId, fallbackPrice > 0 ? String(roundCurrencyValue(fallbackPrice)) : ""];
+          return [item.productId, lineTotal > 0 || quantity > 0 ? String(lineTotal) : ""];
         }),
       ),
     );
@@ -7828,7 +7983,14 @@ export default function App() {
     }
   }
 
-  async function refreshCarteraData(options?: { startDate?: string; endDate?: string; unfiltered?: boolean }) {
+  async function refreshCarteraData(options?: {
+    startDate?: string;
+    endDate?: string;
+    collectionStartDate?: string;
+    collectionEndDate?: string;
+    collectionPaymentMethod?: CarteraCollectionPaymentMethod | "";
+    unfiltered?: boolean;
+  }) {
     try {
       setIsLoadingCartera(true);
       setCarteraError("");
@@ -7840,6 +8002,11 @@ export default function App() {
           options?.startDate ?? carteraStartDateFilter,
           options?.endDate ?? carteraEndDateFilter,
         );
+        const normalizedCollectionRange = normalizeCarteraDateRange(
+          options?.collectionStartDate ?? carteraCollectionStartDateFilter,
+          options?.collectionEndDate ?? carteraCollectionEndDateFilter,
+        );
+        const collectionPaymentMethod = options?.collectionPaymentMethod ?? carteraCollectionPaymentMethodFilter;
 
         if (normalizedRange.startDate) {
           params.set("startDate", normalizedRange.startDate);
@@ -7848,6 +8015,18 @@ export default function App() {
         if (normalizedRange.endDate) {
           params.set("endDate", normalizedRange.endDate);
         }
+
+        if (normalizedCollectionRange.startDate) {
+          params.set("collectionStartDate", normalizedCollectionRange.startDate);
+        }
+
+        if (normalizedCollectionRange.endDate) {
+          params.set("collectionEndDate", normalizedCollectionRange.endDate);
+        }
+
+        if (collectionPaymentMethod) {
+          params.set("collectionPaymentMethod", collectionPaymentMethod);
+        }
       }
 
       const query = params.toString().length > 0 ? `?${params.toString()}` : "";
@@ -7855,6 +8034,7 @@ export default function App() {
       const data = (await response.json()) as {
         summary?: CarteraSummary;
         entries?: CarteraEntryRecord[];
+        overdueEntries?: CarteraEntryRecord[];
         collections?: CarteraCollectionRecord[];
         message?: string;
       };
@@ -7865,6 +8045,7 @@ export default function App() {
       }
 
       setCarteraRows(data.entries);
+      setCarteraOverdueRows(Array.isArray(data.overdueEntries) ? data.overdueEntries : []);
       setCarteraCollections(data.collections);
       setCarteraSummary(data.summary);
     } catch {
@@ -9538,13 +9719,39 @@ export default function App() {
 
     const nextItems = selectedWarehouseOrderDetail.items
       .filter((item) => item.productId in warehouseOrderItemDraft)
-      .map((item) => ({
-        productId: item.productId,
-        stockCurrent: item.stockCurrent,
-        quantity: Number(warehouseOrderItemDraft[item.productId] ?? item.quantity),
-        stockRowId: warehouseOrderLotDraft[item.productId] || item.stockRowId || "",
-        notes: item.notes,
-      }))
+      .map((item) => {
+        const quantity = Number(warehouseOrderItemDraft[item.productId] ?? item.quantity);
+        const baseItem = {
+          productId: item.productId,
+          stockCurrent: item.stockCurrent,
+          quantity,
+          stockRowId: warehouseOrderLotDraft[item.productId] || item.stockRowId || "",
+          notes: item.notes,
+        };
+
+        if (sessionUser?.role === "contabilidad") {
+          const storedPrice = Number(item.salePriceAwg ?? 0);
+          const productOption = productOptionsById.get(item.productId);
+          const invRow = inventoryRowsByProductId.get(item.productId);
+          const fallbackPrice = storedPrice > 0
+            ? storedPrice
+            : Number(invRow?.salePrice ?? productOption?.salePrice ?? 0);
+          const fallbackLineTotal = roundCurrencyValue(fallbackPrice * quantity);
+          const salePriceAwg = resolveAccountingSalePriceFromDraft(
+            item.productId,
+            quantity,
+            fallbackLineTotal,
+            accountingOrderLineTotalDraft,
+          );
+
+          return {
+            ...baseItem,
+            salePriceAwg,
+          };
+        }
+
+        return baseItem;
+      })
       .filter((item) => Number.isFinite(item.quantity) && item.quantity > 0);
 
     if (nextItems.length === 0) {
@@ -9564,13 +9771,7 @@ export default function App() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: nextItems.map((item) => ({
-            productId: item.productId,
-            stockCurrent: item.stockCurrent,
-            quantity: item.quantity,
-            stockRowId: item.stockRowId,
-            notes: item.notes,
-          })),
+          items: nextItems,
           giftItems: (selectedWarehouseOrderDetail.giftItems ?? []).map((item) => ({
             productId: item.productId,
             quantity: item.quantity,
@@ -9604,6 +9805,17 @@ export default function App() {
       setWarehouseOrderLotDraft(
         Object.fromEntries(updatedOrder.items.map((item) => [item.productId, item.stockRowId ?? ""])),
       );
+      if (sessionUser?.role === "contabilidad") {
+        setAccountingOrderLineTotalDraft(
+          Object.fromEntries(
+            updatedOrder.items.map((item) => {
+              const quantity = Number(item.quantity ?? 0);
+              const salePriceAwg = Number(item.salePriceAwg ?? 0);
+              return [item.productId, String(roundCurrencyValue(salePriceAwg * quantity))];
+            }),
+          ),
+        );
+      }
       setWarehouseOrderEditStatus({ tone: "success", message: data.message ?? "Pedido actualizado correctamente." });
     } catch (error) {
       setWarehouseOrderEditStatus({
@@ -9631,14 +9843,26 @@ export default function App() {
 
     const nextItems = selectedWarehouseOrderDetail.items.map((item) => {
       const quantity = Number(warehouseOrderItemDraft[item.productId] ?? item.quantity);
-      const salePriceAwg = roundCurrencyValue(Number(accountingOrderPriceDraft[item.productId] ?? item.salePriceAwg ?? 0));
+      const storedPrice = Number(item.salePriceAwg ?? 0);
+      const productOption = productOptionsById.get(item.productId);
+      const invRow = inventoryRowsByProductId.get(item.productId);
+      const fallbackPrice = storedPrice > 0
+        ? storedPrice
+        : Number(invRow?.salePrice ?? productOption?.salePrice ?? 0);
+      const fallbackLineTotal = roundCurrencyValue(fallbackPrice * quantity);
+      const salePriceAwg = resolveAccountingSalePriceFromDraft(
+        item.productId,
+        quantity,
+        fallbackLineTotal,
+        accountingOrderLineTotalDraft,
+      );
 
       if (!Number.isFinite(quantity) || quantity < 0) {
         throw new Error(`La cantidad de ${item.productName} no es valida.`);
       }
 
       if (!Number.isFinite(salePriceAwg) || salePriceAwg < 0) {
-        throw new Error(`El precio de ${item.productName} no es valido.`);
+        throw new Error(`El total de ${item.productName} no es valido.`);
       }
 
       return {
@@ -9691,12 +9915,13 @@ export default function App() {
       setWarehouseOrderItemDraft(
         Object.fromEntries(updatedOrder.items.map((item) => [item.productId, String(item.quantity)])),
       );
-      setAccountingOrderPriceDraft(
+      setAccountingOrderLineTotalDraft(
         Object.fromEntries(
-          updatedOrder.items.map((item) => [
-            item.productId,
-            Number(item.salePriceAwg ?? 0) > 0 ? String(roundCurrencyValue(Number(item.salePriceAwg))) : "",
-          ]),
+          updatedOrder.items.map((item) => {
+            const quantity = Number(item.quantity ?? 0);
+            const salePriceAwg = Number(item.salePriceAwg ?? 0);
+            return [item.productId, String(roundCurrencyValue(salePriceAwg * quantity))];
+          }),
         ),
       );
       setAccountingOrderPriceStatus({ tone: "success", message: data.message ?? "Cambios del pedido guardados correctamente." });
@@ -13115,6 +13340,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
     { key: "invoiceNumber", label: "Factura" },
     { key: "salesRepName", label: "Vendedor" },
     { key: "paymentMethod", label: "Metodo factura" },
+    { key: "invoiceAgeDays", label: "Dias" },
+    { key: "creditMonitoringStatus", label: "Plazo credito" },
     { key: "invoiceAmountAwg", label: "Facturado (AWG)" },
     { key: "collectedAmountAwg", label: "Recaudado (AWG)" },
     { key: "outstandingAmountAwg", label: "Pendiente (AWG)" },
@@ -13143,6 +13370,15 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
     if (key === "paymentMethod") {
       return formatPaymentMethodLabel(String(row.paymentMethod ?? ""));
+    }
+
+    if (key === "invoiceAgeDays") {
+      const entry = row as CarteraEntryRecord;
+      return formatCarteraInvoiceAgeDays(getCarteraInvoiceAgeDays(String(entry.invoicedAt ?? "")));
+    }
+
+    if (key === "creditMonitoringStatus") {
+      return formatCarteraCreditMonitoringStatus(getCarteraCreditMonitoringStatus(row as CarteraEntryRecord));
     }
 
     if (key === "invoiceAmountAwg" || key === "collectedAmountAwg" || key === "outstandingAmountAwg" || key === "amountAwg") {
@@ -13190,48 +13426,48 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       rows: displayedCarteraRows as Array<Record<string, unknown>>,
       formatCell: formatCarteraExportCell,
       sheetName: "Facturas",
-      extraSheets: filteredCarteraCollections.length > 0
+      extraSheets: displayedCarteraCollections.length > 0
         ? [{
             name: "Recaudos",
             columns: carteraCollectionExportColumns,
-            rows: filteredCarteraCollections as Array<Record<string, unknown>>,
+            rows: displayedCarteraCollections as Array<Record<string, unknown>>,
           }]
         : [],
     });
   }
 
   function downloadCarteraCollectionsPdf() {
-    if (filteredCarteraCollections.length === 0) {
+    if (displayedCarteraCollections.length === 0) {
       return;
     }
 
     const storeLabel = selectedCarteraStore?.label ?? "todas-las-tiendas";
     downloadDataTablePdf({
       title: selectedCarteraStore ? `Recaudos · ${selectedCarteraStore.label}` : "Recaudos del periodo",
-      fileName: `recaudos-${storeLabel.toLowerCase().replace(/\s+/g, "-")}-${carteraStartDateFilter}-${carteraEndDateFilter}`,
+      fileName: `recaudos-${storeLabel.toLowerCase().replace(/\s+/g, "-")}-${carteraCollectionStartDateFilter}-${carteraCollectionEndDateFilter}`,
       subtitleLines: [
-        `Periodo: ${carteraDateRangeLabel}`,
-        `${filteredCarteraCollections.length} movimiento${filteredCarteraCollections.length === 1 ? "" : "s"}`,
+        `Periodo: ${carteraCollectionDateRangeLabel}`,
+        `${displayedCarteraCollections.length} movimiento${displayedCarteraCollections.length === 1 ? "" : "s"}`,
         `Total: ${formatCurrency(carteraMonthlyRecaudoTotal)}`,
       ],
       columns: carteraCollectionExportColumns,
-      rows: filteredCarteraCollections as Array<Record<string, unknown>>,
+      rows: displayedCarteraCollections as Array<Record<string, unknown>>,
       formatCell: formatCarteraExportCell,
       landscape: true,
     });
   }
 
   function downloadCarteraCollectionsExcel() {
-    if (filteredCarteraCollections.length === 0) {
+    if (displayedCarteraCollections.length === 0) {
       return;
     }
 
     const storeLabel = selectedCarteraStore?.label ?? "todas-las-tiendas";
     downloadDataTableExcel({
       title: selectedCarteraStore ? `Recaudos · ${selectedCarteraStore.label}` : "Recaudos del periodo",
-      fileName: `recaudos-${storeLabel.toLowerCase().replace(/\s+/g, "-")}-${carteraStartDateFilter}-${carteraEndDateFilter}`,
+      fileName: `recaudos-${storeLabel.toLowerCase().replace(/\s+/g, "-")}-${carteraCollectionStartDateFilter}-${carteraCollectionEndDateFilter}`,
       columns: carteraCollectionExportColumns,
-      rows: filteredCarteraCollections as Array<Record<string, unknown>>,
+      rows: displayedCarteraCollections as Array<Record<string, unknown>>,
       formatCell: formatCarteraExportCell,
       sheetName: "Recaudos",
     });
@@ -15025,7 +15261,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 )}
                               </td>
                               <td>
-                                {item.hasLotPromotion ? (
+                                {canAccountingAdjustDispatchPricing ? (
+                                  <span className="warehouse-order-derived-price">
+                                    {item.quantity > 0 ? formatAwgCurrency(item.resolvedSalePrice) : "-"}
+                                  </span>
+                                ) : item.hasLotPromotion ? (
                                   <span className="promo-price-stack">
                                     <s>{formatAwgCurrency(item.originalSalePrice ?? item.resolvedSalePrice)} AWG</s>
                                     <strong>{formatAwgCurrency(item.resolvedSalePrice)} AWG</strong>
@@ -15034,7 +15274,27 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                   formatAwgCurrency(item.resolvedSalePrice)
                                 )}
                               </td>
-                              <td>{formatAwgCurrency(item.lineTotal)} AWG</td>
+                              <td>
+                                {canAccountingAdjustDispatchPricing ? (
+                                  <input
+                                    className="warehouse-order-qty-input"
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={accountingOrderLineTotalDraft[item.productId] ?? String(item.lineTotal)}
+                                    onChange={(event) => {
+                                      setAccountingOrderLineTotalDraft((current) => ({
+                                        ...current,
+                                        [item.productId]: event.target.value,
+                                      }));
+                                      setWarehouseOrderEditStatus(null);
+                                      setAccountingOrderPriceStatus(null);
+                                    }}
+                                  />
+                                ) : (
+                                  `${formatAwgCurrency(item.lineTotal)} AWG`
+                                )}
+                              </td>
                               <td className="warehouse-order-col-optional">{item.notes || "-"}</td>
                               {selectedWarehouseOrderDetail.status !== "delivered" ? (
                                 <td>
@@ -15127,7 +15387,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         <p className="route-helper-text">
                           {selectedWarehouseOrderDetail.status === "dispatched"
                             ? (canWarehouseInvoiceOrder
-                              ? "Ajusta cantidades o quita productos si el cliente cambio de opinion antes de facturar."
+                              ? "Ajusta cantidad y total por producto si hace falta. El precio unitario se calcula automaticamente antes de facturar."
                               : "Ajusta cantidades o quita productos si el cliente cambio de opinion antes de la entrega.")
                             : "Ajusta cantidades si hubo dano en bodega o quita productos que no se puedan despachar."}
                         </p>
@@ -18844,6 +19104,147 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
               <div className="management-table-header cartera-table-header">
                 <div>
+                  <h3>Facturas vencidas</h3>
+                  <p>
+                    Facturas a crédito con más de {CARTERA_CREDIT_DUE_DAYS} días sin saldar. Requieren seguimiento de cobro reforzado.
+                  </p>
+                </div>
+              </div>
+
+              <div className="accounting-kpi-grid cartera-overdue-kpis">
+                <article className="kpi-card tone-slate">
+                  <p>Facturas vencidas</p>
+                  <strong>{displayedCarteraOverdueRows.length}</strong>
+                </article>
+                <article className="kpi-card tone-amber">
+                  <p>Pendiente vencido (AWG)</p>
+                  <strong>{formatCurrency(carteraOverdueOutstandingTotal)}</strong>
+                </article>
+              </div>
+
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      {!selectedCarteraStoreId ? <th>Cliente</th> : null}
+                      <th>Factura</th>
+                      <th>Vendedor</th>
+                      <th>Metodo factura</th>
+                      <th>Días</th>
+                      <th>Plazo crédito</th>
+                      <th>Facturado</th>
+                      <th>Recaudado</th>
+                      <th>Pendiente</th>
+                      <th>Estado</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isLoadingCartera ? (
+                      <tr>
+                        <td colSpan={selectedCarteraStoreId ? 11 : 12} className="empty-table-cell">Cargando facturas vencidas...</td>
+                      </tr>
+                    ) : displayedCarteraOverdueRows.length > 0 ? (
+                      displayedCarteraOverdueRows.map((row) => {
+                        const isCollectFormOpen = carteraCollectEntryId === row._id;
+
+                        return [
+                          <tr key={`overdue-${row._id ?? row.orderId}`} className="cartera-overdue-row">
+                            {renderCarteraInvoiceRowCells(row, { showStoreColumn: !selectedCarteraStoreId })}
+                            <td>
+                              <button
+                                type="button"
+                                className="secondary-action-button"
+                                onClick={() => {
+                                  if (isCollectFormOpen) {
+                                    setCarteraCollectEntryId("");
+                                    setCarteraCollectionStatus(null);
+                                    return;
+                                  }
+
+                                  openCarteraCollectForm(row);
+                                }}
+                              >
+                                {isCollectFormOpen ? "Cancelar" : "Registrar recaudo"}
+                              </button>
+                            </td>
+                          </tr>,
+                          ...(isCollectFormOpen ? [
+                            <tr key={`${row._id}-overdue-collect`} className="cartera-collect-row">
+                              <td colSpan={selectedCarteraStoreId ? 11 : 12}>
+                                <div className="cartera-collect-form">
+                                  <p>Registrar recaudo de factura {row.invoiceNumber ? `#${row.invoiceNumber}` : ""} · pendiente {formatCurrency(row.outstandingAmountAwg)}</p>
+                                  <div className="filter-grid">
+                                    <label className="field">
+                                      <span>Monto recaudado (AWG)</span>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        value={carteraCollectionDraft.amountAwg}
+                                        onChange={(event) => setCarteraCollectionDraft((current) => ({
+                                          ...current,
+                                          amountAwg: event.target.value,
+                                        }))}
+                                      />
+                                    </label>
+                                    <label className="field">
+                                      <span>Metodo de recaudo</span>
+                                      <select
+                                        value={carteraCollectionDraft.paymentMethod}
+                                        onChange={(event) => setCarteraCollectionDraft((current) => ({
+                                          ...current,
+                                          paymentMethod: event.target.value as CarteraCollectionPaymentMethod | "",
+                                        }))}
+                                      >
+                                        <option value="">Seleccionar...</option>
+                                        {carteraCollectionPaymentMethodOptions.map((option) => (
+                                          <option key={option.value} value={option.value}>{option.label}</option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <label className="field">
+                                      <span>Fecha de recaudo</span>
+                                      <input
+                                        type="date"
+                                        value={carteraCollectionDraft.collectedAt}
+                                        onChange={(event) => setCarteraCollectionDraft((current) => ({
+                                          ...current,
+                                          collectedAt: event.target.value,
+                                        }))}
+                                      />
+                                    </label>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="primary-action-button"
+                                    disabled={isSavingCarteraCollection}
+                                    onClick={() => void handleRegisterCarteraCollection(row)}
+                                  >
+                                    {isSavingCarteraCollection ? "Guardando..." : "Confirmar recaudo"}
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>,
+                          ] : []),
+                        ];
+                      }).flat()
+                    ) : (
+                      <tr>
+                        <td colSpan={selectedCarteraStoreId ? 11 : 12} className="empty-table-cell">
+                          {selectedCarteraStore
+                            ? `No hay facturas vencidas para ${selectedCarteraStore.label}.`
+                            : "No hay facturas vencidas en cartera."}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="management-table-header cartera-table-header">
+                <div>
                   <h3>Facturas del periodo</h3>
                   <p>
                     {selectedCarteraStore
@@ -18867,6 +19268,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <th>Factura</th>
                       <th>Vendedor</th>
                       <th>Metodo factura</th>
+                      <th>Días</th>
+                      <th>Plazo crédito</th>
                       <th>Facturado</th>
                       <th>Recaudado</th>
                       <th>Pendiente</th>
@@ -18877,7 +19280,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <tbody>
                     {isLoadingCartera ? (
                       <tr>
-                        <td colSpan={selectedCarteraStoreId ? 9 : 10} className="empty-table-cell">Cargando cartera...</td>
+                        <td colSpan={selectedCarteraStoreId ? 11 : 12} className="empty-table-cell">Cargando cartera...</td>
                       </tr>
                     ) : displayedCarteraRows.length > 0 ? (
                       displayedCarteraRows.flatMap((row) => {
@@ -18887,19 +19290,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
                         const mainRow = (
                           <tr key={row._id ?? row.orderId}>
-                            <td>{String(row.invoicedAt).slice(0, 10)}</td>
-                            {!selectedCarteraStoreId ? <td>{row.storeName || "-"}</td> : null}
-                            <td>{row.invoiceNumber ? `#${row.invoiceNumber}` : "-"}</td>
-                            <td>{row.salesRepName || "-"}</td>
-                            <td>{formatPaymentMethodLabel(row.paymentMethod)}</td>
-                            <td>{formatCurrency(row.invoiceAmountAwg)}</td>
-                            <td>{formatCurrency(row.collectedAmountAwg)}</td>
-                            <td>{formatCurrency(row.outstandingAmountAwg)}</td>
-                            <td>
-                              <span className={`cartera-status-badge is-${paymentStatus}`}>
-                                {formatCarteraEntryPaymentStatus(paymentStatus)}
-                              </span>
-                            </td>
+                            {renderCarteraInvoiceRowCells(row, { showStoreColumn: !selectedCarteraStoreId })}
                             <td>
                               {canCollect ? (
                                 <button
@@ -18931,7 +19322,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         return [
                           mainRow,
                           <tr key={`${row._id}-collect`} className="cartera-collect-row">
-                            <td colSpan={selectedCarteraStoreId ? 9 : 10}>
+                            <td colSpan={selectedCarteraStoreId ? 11 : 12}>
                               <div className="cartera-collect-form">
                                 <p>Registrar recaudo de factura {row.invoiceNumber ? `#${row.invoiceNumber}` : ""} · pendiente {formatCurrency(row.outstandingAmountAwg)}</p>
                                 <div className="filter-grid">
@@ -18990,7 +19381,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       })
                     ) : (
                       <tr>
-                        <td colSpan={selectedCarteraStoreId ? 9 : 10} className="empty-table-cell">
+                        <td colSpan={selectedCarteraStoreId ? 11 : 12} className="empty-table-cell">
                           {carteraPendingOnlyFilter
                             ? selectedCarteraStore
                               ? `No hay facturas pendientes para ${selectedCarteraStore.label} en este periodo.`
@@ -19013,12 +19404,101 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <p>Incluye cobros inmediatos al facturar y pagos de facturas en credito cobradas despues.</p>
                 </div>
                 <InventoryExportButtons
-                  disabled={isLoadingCartera || filteredCarteraCollections.length === 0}
+                  disabled={isLoadingCartera || displayedCarteraCollections.length === 0}
                   onDownloadPdf={() => downloadCarteraCollectionsPdf()}
                   onDownloadExcel={() => downloadCarteraCollectionsExcel()}
                 />
               </div>
-              <p className="management-table-meta cartera-table-meta">{filteredCarteraCollections.length} movimiento{filteredCarteraCollections.length === 1 ? "" : "s"}</p>
+
+              <div className="filter-grid cartera-collection-filter-grid">
+                <label className="field">
+                  <span>Desde</span>
+                  <input
+                    type="date"
+                    value={carteraCollectionStartDateFilter}
+                    onChange={(event) => {
+                      const nextRange = normalizeCarteraDateRange(event.target.value, carteraCollectionEndDateFilter);
+                      setCarteraCollectionStartDateFilter(nextRange.startDate);
+                      setCarteraCollectionEndDateFilter(nextRange.endDate);
+                    }}
+                  />
+                </label>
+                <label className="field">
+                  <span>Hasta</span>
+                  <input
+                    type="date"
+                    value={carteraCollectionEndDateFilter}
+                    onChange={(event) => {
+                      const nextRange = normalizeCarteraDateRange(carteraCollectionStartDateFilter, event.target.value);
+                      setCarteraCollectionStartDateFilter(nextRange.startDate);
+                      setCarteraCollectionEndDateFilter(nextRange.endDate);
+                    }}
+                  />
+                </label>
+                <label className="field">
+                  <span>Metodo de recaudo</span>
+                  <select
+                    value={carteraCollectionPaymentMethodFilter}
+                    onChange={(event) => setCarteraCollectionPaymentMethodFilter(event.target.value as CarteraCollectionPaymentMethod | "")}
+                  >
+                    <option value="">Todos</option>
+                    {carteraCollectionPaymentMethodOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <div className="cartera-date-presets">
+                  <button
+                    type="button"
+                    className="secondary-action-button"
+                    onClick={() => {
+                      const today = getBusinessDateKey();
+                      setCarteraCollectionStartDateFilter(today);
+                      setCarteraCollectionEndDateFilter(today);
+                    }}
+                  >
+                    Hoy
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-action-button"
+                    onClick={() => {
+                      const today = getBusinessDateKey();
+                      setCarteraCollectionStartDateFilter(addDaysToBusinessDateKey(today, -4));
+                      setCarteraCollectionEndDateFilter(today);
+                    }}
+                  >
+                    Ultimos 5 dias
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-action-button"
+                    onClick={() => {
+                      setCarteraCollectionStartDateFilter(getBusinessMonthStartDateKey());
+                      setCarteraCollectionEndDateFilter(getBusinessDateKey());
+                    }}
+                  >
+                    Este mes
+                  </button>
+                  {carteraCollectionPaymentMethodFilter ? (
+                    <button
+                      type="button"
+                      className="secondary-action-button"
+                      onClick={() => setCarteraCollectionPaymentMethodFilter("")}
+                    >
+                      Todos los metodos
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              <p className="management-table-meta cartera-table-meta">
+                Periodo recaudo: {carteraCollectionDateRangeLabel}
+                {carteraCollectionPaymentMethodFilter ? ` · Metodo: ${formatPaymentMethodLabel(carteraCollectionPaymentMethodFilter)}` : ""}
+                {" · "}
+                {displayedCarteraCollections.length} movimiento{displayedCarteraCollections.length === 1 ? "" : "s"}
+                {" · "}
+                Total: {formatCurrency(carteraMonthlyRecaudoTotal)}
+              </p>
 
               <div className="table-wrap">
                 <table className="data-table">
@@ -19036,8 +19516,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <tr>
                         <td colSpan={selectedCarteraStoreId ? 4 : 5} className="empty-table-cell">Cargando recaudos...</td>
                       </tr>
-                    ) : filteredCarteraCollections.length > 0 ? (
-                      filteredCarteraCollections.map((row) => (
+                    ) : displayedCarteraCollections.length > 0 ? (
+                      displayedCarteraCollections.map((row) => (
                         <tr key={row._id ?? `${row.carteraEntryId}-${row.collectedAt}`}>
                           <td>{String(row.collectedAt).slice(0, 10)}</td>
                           {!selectedCarteraStoreId ? <td>{row.storeName}</td> : null}
@@ -19050,8 +19530,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <tr>
                         <td colSpan={selectedCarteraStoreId ? 4 : 5} className="empty-table-cell">
                           {selectedCarteraStoreId
-                            ? `No hay recaudos registrados para ${selectedCarteraStore?.label ?? "esta tienda"} en este periodo.`
-                            : "No hay recaudos registrados para este periodo."}
+                            ? `No hay recaudos registrados para ${selectedCarteraStore?.label ?? "esta tienda"} con los filtros seleccionados.`
+                            : "No hay recaudos registrados con los filtros seleccionados."}
                         </td>
                       </tr>
                     )}
@@ -22738,7 +23218,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
                   {canAccountingEditOrderDetail(selectedWarehouseOrderDetail) && sessionUser?.role === "contabilidad" ? (
                     <p className="route-helper-text">
-                      Ajusta precio y cantidad por producto para este pedido. Bodega usara estos valores al generar el despacho y la factura PDF tomara los precios guardados aqui.
+                      Ajusta cantidad y total por producto. El precio unitario se calcula automaticamente y se usara al generar despacho y factura.
                     </p>
                   ) : null}
 
@@ -22750,8 +23230,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           <th>Producto</th>
                           <th>Stock actual</th>
                           <th className="col-highlight">Cantidad a despachar</th>
+                          <th className="col-highlight">Total venta (AWG)</th>
+                          <th>Precio unit. (AWG)</th>
                           <th>Costo unit. (AWG)</th>
-                          <th>Precio venta (AWG)</th>
                           <th>Utilidad unit. (AWG)</th>
                           <th>Utilidad total (AWG)</th>
                           <th>Notas</th>
@@ -22771,8 +23252,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           const quantity = canAccountingEditOrder
                             ? Number(warehouseOrderItemDraft[item.productId] ?? item.quantity)
                             : Number(item.quantity ?? 0);
+                          const fallbackLineTotal = roundCurrencyValue(fallbackSalePriceAwg * quantity);
+                          const lineTotal = canAccountingEditOrder
+                            ? resolveAccountingLineTotalDraft(item.productId, fallbackLineTotal, accountingOrderLineTotalDraft)
+                            : fallbackLineTotal;
                           const salePriceAwg = canAccountingEditOrder
-                            ? roundCurrencyValue(Number(accountingOrderPriceDraft[item.productId] ?? fallbackSalePriceAwg))
+                            ? resolveAccountingSalePriceFromDraft(item.productId, quantity, fallbackLineTotal, accountingOrderLineTotalDraft)
                             : fallbackSalePriceAwg;
                           const unitUtilityAwg = salePriceAwg - unitCostAwg;
                           const totalUtilityAwg = unitUtilityAwg * quantity;
@@ -22802,17 +23287,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                   <strong>{item.quantity}</strong>
                                 )}
                               </td>
-                              <td>{unitCostAwg > 0 ? formatAwgCurrency2(unitCostAwg) : "-"}</td>
-                              <td>
+                              <td className="col-highlight">
                                 {canAccountingEditOrder ? (
                                   <input
                                     className="warehouse-order-qty-input"
                                     type="number"
                                     min="0"
                                     step="0.01"
-                                    value={accountingOrderPriceDraft[item.productId] ?? (fallbackSalePriceAwg > 0 ? String(roundCurrencyValue(fallbackSalePriceAwg)) : "")}
+                                    value={accountingOrderLineTotalDraft[item.productId] ?? String(lineTotal)}
                                     onChange={(event) => {
-                                      setAccountingOrderPriceDraft((current) => ({
+                                      setAccountingOrderLineTotalDraft((current) => ({
                                         ...current,
                                         [item.productId]: event.target.value,
                                       }));
@@ -22820,9 +23304,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                     }}
                                   />
                                 ) : (
-                                  salePriceAwg > 0 ? formatAwgCurrency2(salePriceAwg) : "-"
+                                  lineTotal > 0 ? formatAwgCurrency2(lineTotal) : "-"
                                 )}
                               </td>
+                              <td>{quantity > 0 && salePriceAwg > 0 ? formatAwgCurrency2(salePriceAwg) : "-"}</td>
+                              <td>{unitCostAwg > 0 ? formatAwgCurrency2(unitCostAwg) : "-"}</td>
                               <td>{unitCostAwg > 0 || salePriceAwg > 0 ? formatAwgCurrency2(unitUtilityAwg) : "-"}</td>
                               <td>{unitCostAwg > 0 || salePriceAwg > 0 ? formatAwgCurrency2(totalUtilityAwg) : "-"}</td>
                               <td>{item.notes || "-"}</td>
@@ -22849,14 +23335,21 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             || !selectedWarehouseOrderDetail.items.some((item) => {
                               const savedQuantity = String(item.quantity);
                               const draftQuantity = warehouseOrderItemDraft[item.productId] ?? savedQuantity;
+                              const savedQtyNumber = Number(savedQuantity);
+                              const draftQtyNumber = Number(draftQuantity);
                               const storedPrice = Number(item.salePriceAwg ?? 0);
                               const productOption = productOptionsById.get(item.productId);
                               const invRow = inventoryRowsByProductId.get(item.productId);
-                              const savedPrice = storedPrice > 0
-                                ? roundCurrencyValue(storedPrice)
+                              const fallbackPrice = storedPrice > 0
+                                ? storedPrice
                                 : roundCurrencyValue(Number(invRow?.salePrice ?? productOption?.salePrice ?? 0));
-                              const draftPrice = roundCurrencyValue(Number(accountingOrderPriceDraft[item.productId] ?? savedPrice));
-                              return draftQuantity !== savedQuantity || draftPrice !== savedPrice;
+                              const savedLineTotal = roundCurrencyValue(fallbackPrice * savedQtyNumber);
+                              const draftLineTotal = resolveAccountingLineTotalDraft(
+                                item.productId,
+                                roundCurrencyValue(fallbackPrice * draftQtyNumber),
+                                accountingOrderLineTotalDraft,
+                              );
+                              return draftQuantity !== savedQuantity || draftLineTotal !== savedLineTotal;
                             })
                           }
                           onClick={() => void handleSaveAccountingOrderChanges()}
