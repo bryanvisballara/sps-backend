@@ -948,6 +948,7 @@ type CarteraEntryPaymentStatus = "pagada" | "parcial" | "pendiente";
 type CarteraCreditMonitoringStatus = "no_aplica" | "al_dia" | "vencida";
 
 const CARTERA_CREDIT_DUE_DAYS = 30;
+const MIN_INVOICE_NUMBER = 12020;
 
 type AccountingModalKind = "fixed-cost" | "operational-expense";
 
@@ -1750,6 +1751,17 @@ function splitPhoneNumber(phone: unknown, countryCode: unknown) {
   }
 
   return normalizedPhone;
+}
+
+function getCreationNumberInputProps(field: FieldConfig) {
+  if (field.type !== "number") {
+    return {};
+  }
+
+  return {
+    min: "0",
+    step: "any",
+  };
 }
 
 function getFormFieldInitialValue(field: FieldConfig, row: Record<string, unknown> | null) {
@@ -4369,6 +4381,7 @@ export default function App() {
   const [isDispatchingWarehouseOrder, setIsDispatchingWarehouseOrder] = useState(false);
   const [warehousePaymentModalOpen, setWarehousePaymentModalOpen] = useState(false);
   const [warehousePaymentMethodDraft, setWarehousePaymentMethodDraft] = useState<CarteraPaymentMethod | "">("");
+  const [warehouseInvoiceNumberDraft, setWarehouseInvoiceNumberDraft] = useState("");
   const [warehousePaymentModalStatus, setWarehousePaymentModalStatus] = useState<CreationStatus | null>(null);
   const [carteraRows, setCarteraRows] = useState<CarteraEntryRecord[]>([]);
   const [carteraOverdueRows, setCarteraOverdueRows] = useState<CarteraEntryRecord[]>([]);
@@ -10067,10 +10080,43 @@ export default function App() {
     setWarehousePaymentMethodDraft(
       resolveStoreDefaultPaymentMethod(storeOptionsById.get(selectedWarehouseOrderDetail.storeId)?.defaultPaymentMethod),
     );
+    setWarehouseInvoiceNumberDraft(
+      Number(selectedWarehouseOrderDetail.invoiceNumber ?? 0) > 0
+        ? String(selectedWarehouseOrderDetail.invoiceNumber)
+        : "",
+    );
     setWarehousePaymentModalStatus(null);
     setWarehousePendingCreditError("");
     setWarehousePaymentModalOpen(true);
     void refreshWarehousePendingCredit(selectedWarehouseOrderDetail.storeId);
+    void refreshWarehouseInvoiceNumberDraft(selectedWarehouseOrderDetail);
+  }
+
+  async function refreshWarehouseInvoiceNumberDraft(order: SellerOrderRecord) {
+    const existingNumber = Number(order.invoiceNumber ?? 0);
+
+    if (existingNumber > 0) {
+      setWarehouseInvoiceNumberDraft(String(existingNumber));
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/warehouse/orders/next-invoice-number?orderId=${encodeURIComponent(String(order._id ?? ""))}`,
+      );
+      const data = (await response.json()) as { invoiceNumber?: number; message?: string };
+
+      if (!response.ok || !Number.isFinite(Number(data.invoiceNumber))) {
+        throw new Error(data.message ?? "No fue posible consultar el consecutivo de factura.");
+      }
+
+      setWarehouseInvoiceNumberDraft(String(data.invoiceNumber));
+    } catch (error) {
+      setWarehousePaymentModalStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible consultar el consecutivo de factura.",
+      });
+    }
   }
 
   function updateWarehouseCreditCollectionDraft(
@@ -10101,6 +10147,13 @@ export default function App() {
 
     if (!warehousePaymentMethodDraft) {
       setWarehousePaymentModalStatus({ tone: "error", message: "Selecciona un metodo de pago." });
+      return;
+    }
+
+    const invoiceNumber = Number(warehouseInvoiceNumberDraft || 0);
+
+    if (!Number.isFinite(invoiceNumber) || invoiceNumber < MIN_INVOICE_NUMBER) {
+      setWarehousePaymentModalStatus({ tone: "error", message: `Indica un numero de factura valido (${MIN_INVOICE_NUMBER} o superior).` });
       return;
     }
 
@@ -10142,6 +10195,7 @@ export default function App() {
         body: JSON.stringify({
           paymentMethod: warehousePaymentMethodDraft,
           invoiceAmountAwg: warehouseInvoiceTotal,
+          invoiceNumber,
           items: warehousePricedItems.map((item) => ({
             productId: item.productId,
             stockRowId: warehouseOrderLotDraft[item.productId]
@@ -10197,6 +10251,7 @@ export default function App() {
 
       setWarehousePaymentModalOpen(false);
       setWarehousePaymentMethodDraft("");
+      setWarehouseInvoiceNumberDraft("");
       setWarehousePendingCreditEntries([]);
       setWarehouseCreditCollectionDrafts({});
       setSelectedWarehouseOrderDetail(null);
@@ -13013,7 +13068,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
     if (config.key === "products") {
       payload.variableSalePrice = Boolean(editingRow?.variableSalePrice ?? false);
-      payload.salePrice = Number(formData.get("salePrice") ?? editingRow?.salePrice ?? 0);
+      payload.salePrice = parseDecimalInput(formData.get("salePrice") ?? editingRow?.salePrice ?? 0);
       payload.description = String(formData.get("description") ?? "").trim();
       payload.cost = 0;
       payload.arubaPurchaseCostUsd = Number(formData.get("arubaPurchaseCostUsd") ?? editingRow?.arubaPurchaseCostUsd ?? 0);
@@ -13247,7 +13302,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
     if (key === "salePrice") {
       const value = Number(row.salePrice ?? 0);
-      return value > 0 ? formatCurrency(value) : "-";
+      return value > 0 ? formatAwgCurrency2(value) : "-";
     }
 
     if (key === "warehouseStock") {
@@ -15130,6 +15185,13 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           </>
                         ) : null}
                         <strong>{formatAwgCurrency(warehouseInvoiceTotal)} AWG</strong>
+                        {canWarehouseInvoiceOrder && selectedWarehouseOrderDetail.status === "dispatched" ? (
+                          <p>
+                            Factura asignada: <strong>#{Number(selectedWarehouseOrderDetail.invoiceNumber ?? 0) > 0 ? selectedWarehouseOrderDetail.invoiceNumber : "pendiente"}</strong>
+                            {" · "}
+                            Podras revisarla o cambiarla al facturar.
+                          </p>
+                        ) : null}
                         <p>
                           {!selectedCatalogId
                             ? "Total calculado con el precio de venta de cada producto."
@@ -16083,6 +16145,24 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <strong>{formatAwgCurrency(warehouseTotalRecaudoPreview)} AWG</strong>
                   </div>
                 </div>
+
+                <label className="field">
+                  <span>Numero de factura</span>
+                  <input
+                    type="number"
+                    min={MIN_INVOICE_NUMBER}
+                    step="1"
+                    value={warehouseInvoiceNumberDraft}
+                    disabled={isCompletingWarehouseOrder}
+                    onChange={(event) => {
+                      setWarehouseInvoiceNumberDraft(event.target.value);
+                      setWarehousePaymentModalStatus(null);
+                    }}
+                  />
+                </label>
+                <p className="route-helper-text">
+                  Este sera el consecutivo impreso en la factura. Puedes cambiarlo antes de confirmar si necesitas otro numero.
+                </p>
 
                 <label className="field">
                   <span>Metodo de pago del pedido actual</span>
@@ -22120,6 +22200,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           placeholder={field.placeholder}
                           defaultValue={getFormFieldInitialValue(field, null)}
                           required={!isOptionalProductField(field)}
+                          {...getCreationNumberInputProps(field)}
                         />
                       )}
                     </label>
@@ -23622,6 +23703,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           placeholder={field.placeholder}
                           defaultValue={getFormFieldInitialValue(field, editingRow)}
                           required={isRequiredCreationField(selectedCollection, field)}
+                          {...getCreationNumberInputProps(field)}
                         />
                       )}
                     </label>

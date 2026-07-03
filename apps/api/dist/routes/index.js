@@ -2132,6 +2132,23 @@ apiRouter.get("/warehouse/orders", async (_request, response) => {
         sendCreationError(response, error);
     }
 });
+apiRouter.get("/warehouse/orders/next-invoice-number", async (request, response) => {
+    try {
+        const orderId = typeof request.query.orderId === "string" ? request.query.orderId.trim() : "";
+        if (orderId) {
+            const order = await Order.findById(orderId).lean();
+            const existingNumber = Number(order?.invoiceNumber ?? 0);
+            if (order && existingNumber >= MIN_INVOICE_NUMBER) {
+                response.json({ invoiceNumber: existingNumber });
+                return;
+            }
+        }
+        response.json({ invoiceNumber: await getNextInvoiceNumber() });
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
 apiRouter.put("/warehouse/orders/:id", async (request, response) => {
     try {
         const order = await Order.findById(request.params.id);
@@ -2516,6 +2533,40 @@ async function getNextInvoiceNumber() {
     }
     return candidate;
 }
+async function isInvoiceNumberAvailable(invoiceNumber, excludeOrderId = "") {
+    if (!Number.isFinite(invoiceNumber) || invoiceNumber < MIN_INVOICE_NUMBER) {
+        return false;
+    }
+    const [existingEntry, existingOrder] = await Promise.all([
+        CarteraEntry.findOne({ active: { $ne: false }, invoiceNumber }).select({ orderId: 1 }).lean(),
+        Order.findOne({ invoiceNumber }).select({ _id: 1 }).lean(),
+    ]);
+    if (existingEntry && String(existingEntry.orderId) !== excludeOrderId) {
+        return false;
+    }
+    if (existingOrder && String(existingOrder._id) !== excludeOrderId) {
+        return false;
+    }
+    return true;
+}
+async function resolveRequestedInvoiceNumber(requested, order) {
+    const orderId = String(order._id);
+    const currentNumber = Number(order.invoiceNumber ?? 0);
+    const parsedRequested = Number(typeof requested === "number" || typeof requested === "string"
+        ? String(requested).trim()
+        : currentNumber);
+    if (Number.isFinite(parsedRequested) && parsedRequested >= MIN_INVOICE_NUMBER) {
+        const available = await isInvoiceNumberAvailable(parsedRequested, orderId);
+        if (!available) {
+            throw new Error(`La factura #${parsedRequested} ya esta en uso.`);
+        }
+        return parsedRequested;
+    }
+    if (currentNumber >= MIN_INVOICE_NUMBER) {
+        return currentNumber;
+    }
+    return getNextInvoiceNumber();
+}
 function mergeOrderItemPrices(orderItems, rawItems) {
     const priceByProductId = new Map();
     const stockRowIdByProductId = new Map();
@@ -2832,7 +2883,7 @@ apiRouter.put("/warehouse/orders/:id/complete", async (request, response) => {
         const isCreditInvoice = paymentMethod === "credito";
         const initialCollectedAmountAwg = isCreditInvoice ? 0 : invoiceAmountAwg;
         const initialOutstandingAmountAwg = isCreditInvoice ? invoiceAmountAwg : 0;
-        const invoiceNumber = Number(order.invoiceNumber ?? 0) || await getNextInvoiceNumber();
+        const invoiceNumber = await resolveRequestedInvoiceNumber(request.body?.invoiceNumber, order);
         const orderItems = Array.isArray(order.items) ? order.items : [];
         const itemsWithPrices = mergeOrderItemPrices(orderItems, request.body?.items);
         await applyOrderInventoryDeduction({
