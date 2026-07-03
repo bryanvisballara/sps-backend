@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 FRONT_DIR="$ROOT_DIR/spsfront"
-ZIP_PATH="$ROOT_DIR/apps/spsfront.zip"
+ZIP_PATH="$ROOT_DIR/spsfront.zip"
 
 cd "$ROOT_DIR"
 
