@@ -7288,151 +7288,151 @@ export default function App() {
           {isLoadingSellerClientProducts ? (
             <p className="route-empty-state">Cargando productos asignados...</p>
           ) : assignedProducts.length > 0 ? (
-            <>
-              <div className="seller-product-catalog-list">
-                {assignedProducts.map((product) => renderSellerAssignedProductRow(product, storeId, showOrderFields))}
-              </div>
-              {showOrderFields ? (
-                <section className="seller-product-catalog-section seller-gifts-section">
-                  <div className="seller-product-catalog-section-header">
-                    <p className="section-label">Obsequios</p>
-                    <h4>Productos de regalo</h4>
-                    <p className="seller-product-catalog-count">
-                      Aparecen en la factura a precio 0 y se descuentan del inventario al facturar.
-                    </p>
-                  </div>
-
-                  <div className="seller-gifts-form">
-                    <label className="field field-full">
-                      <span>Producto</span>
-                      <SearchableProductSelect
-                        products={sellerGiftProductOptions}
-                        value={sellerGiftDraft.productId}
-                        onChange={(productId) => setSellerGiftDraft((current) => ({
-                          ...current,
-                          productId,
-                          stockRowId: resolveSuggestedWarehouseLotId(productId),
-                        }))}
-                      />
-                    </label>
-
-                    {sellerGiftDraft.productId ? (
-                      <label className="field field-full">
-                        <span>Lote</span>
-                        {(inventoryLotsByProductId.get(sellerGiftDraft.productId) ?? []).length === 0 ? (
-                          <p className="route-helper-text">Sin lotes registrados para este producto.</p>
-                        ) : (
-                          <select
-                            className="warehouse-order-lot-select"
-                            value={sellerGiftDraft.stockRowId}
-                            onChange={(event) => setSellerGiftDraft((current) => ({
-                              ...current,
-                              stockRowId: event.target.value,
-                            }))}
-                          >
-                            {(inventoryLotsByProductId.get(sellerGiftDraft.productId) ?? []).map((lot, lotIndex) => (
-                              <option key={lot.stockRowId || `${sellerGiftDraft.productId}-${lotIndex}`} value={lot.stockRowId}>
-                                {formatWarehouseLotOptionLabel(lot, lotIndex)}
-                              </option>
-                            ))}
-                          </select>
-                        )}
-                      </label>
-                    ) : null}
-
-                    <label className="field">
-                      <span>Cantidad</span>
-                      <input
-                        className="catalog-price-input seller-order-input"
-                        type="number"
-                        min="0"
-                        step="any"
-                        value={sellerGiftDraft.quantity}
-                        onChange={(event) => setSellerGiftDraft((current) => ({ ...current, quantity: event.target.value }))}
-                      />
-                    </label>
-
-                    <button className="ghost-button" type="button" onClick={addSellerGiftDraftItem}>
-                      Agregar obsequio
-                    </button>
-                  </div>
-
-                  {sellerGiftDraftItems.length > 0 ? (
-                    <div className="table-wrap table-wrap--cards">
-                      <table className="data-table data-table--order-items">
-                        <thead>
-                          <tr>
-                            <th>Producto</th>
-                            <th>Lote</th>
-                            <th>Cantidad</th>
-                            <th>Quitar</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {sellerGiftDraftItems.map((gift) => {
-                            const product = sellerGiftProductOptions.find((entry) => entry.value === gift.productId);
-                            const lot = (inventoryLotsByProductId.get(gift.productId) ?? []).find((entry) => entry.stockRowId === gift.stockRowId);
-
-                            return (
-                              <tr key={gift.key}>
-                                <td>{product?.label ?? "Producto"}</td>
-                                <td>{lot ? formatWarehouseLotOptionLabel(lot, 0) : "Sin lote"}</td>
-                                <td>{gift.quantity}</td>
-                                <td>
-                                  <button className="ghost-button" type="button" onClick={() => removeSellerGiftDraftItem(gift.key)}>
-                                    Quitar
-                                  </button>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : null}
-                </section>
-              ) : null}
-              {showOrderFields ? (
-                <div className="seller-order-footer seller-order-footer-inline">
-                  <label className="field seller-order-delivery-date">
-                    <span>Fecha de entrega</span>
-                    <input
-                      type="date"
-                      min={getBusinessDateKey()}
-                      value={sellerDeliveryDateDraft}
-                      onChange={(event) => setSellerDeliveryDateDraft(event.target.value)}
-                    />
-                  </label>
-                  <label className="field field-full seller-order-notes-field">
-                    <span>Nota u observación del pedido</span>
-                    <textarea
-                      rows={3}
-                      value={sellerOrderNotesDraft}
-                      placeholder="Ejemplo: cliente pidió media paca de sal, entregar antes del mediodía..."
-                      onChange={(event) => setSellerOrderNotesDraft(event.target.value)}
-                    />
-                  </label>
-                  <p>{sellerDraftedItems.length > 0 ? `${sellerDraftedItems.length} producto${sellerDraftedItems.length === 1 ? "" : "s"} listos para registrar.` : "Agrega stock actual o cantidades antes de enviar el pedido a bodega."}</p>
-                  {sellerDraftedItems.length > 0 ? (
-                    <p className="seller-order-estimated-total">
-                      Total estimado: <strong>{formatAwgCurrency(sellerOrderEstimatedTotal)} AWG</strong>
-                    </p>
-                  ) : null}
-                  <button
-                    className="submit-button seller-order-submit"
-                    type="button"
-                    onClick={() => void handleSellerOrderSubmit()}
-                    disabled={isSubmittingSellerOrder || isLoadingSellerClientProducts || assignedProducts.length === 0}
-                  >
-                    {isSubmittingSellerOrder ? "Enviando pedido a bodega..." : "Enviar pedido a bodega"}
-                  </button>
-                </div>
-              ) : null}
-            </>
+            <div className="seller-product-catalog-list">
+              {assignedProducts.map((product) => renderSellerAssignedProductRow(product, storeId, showOrderFields))}
+            </div>
           ) : (
             <p className="route-empty-state">Este cliente aun no tiene productos asignados.</p>
           )}
         </section>
+
+        {showOrderFields && !isLoadingSellerClientProducts ? (
+          <>
+            <section className="seller-product-catalog-section seller-gifts-section">
+              <div className="seller-product-catalog-section-header">
+                <p className="section-label">Obsequios</p>
+                <h4>Productos de regalo</h4>
+                <p className="seller-product-catalog-count">
+                  Aparecen en la factura a precio 0 y se descuentan del inventario al facturar.
+                </p>
+              </div>
+
+              <div className="seller-gifts-form">
+                <label className="field field-full">
+                  <span>Producto</span>
+                  <SearchableProductSelect
+                    products={sellerGiftProductOptions}
+                    value={sellerGiftDraft.productId}
+                    onChange={(productId) => setSellerGiftDraft((current) => ({
+                      ...current,
+                      productId,
+                      stockRowId: resolveSuggestedWarehouseLotId(productId),
+                    }))}
+                  />
+                </label>
+
+                {sellerGiftDraft.productId ? (
+                  <label className="field field-full">
+                    <span>Lote</span>
+                    {(inventoryLotsByProductId.get(sellerGiftDraft.productId) ?? []).length === 0 ? (
+                      <p className="route-helper-text">Sin lotes registrados para este producto.</p>
+                    ) : (
+                      <select
+                        className="warehouse-order-lot-select"
+                        value={sellerGiftDraft.stockRowId}
+                        onChange={(event) => setSellerGiftDraft((current) => ({
+                          ...current,
+                          stockRowId: event.target.value,
+                        }))}
+                      >
+                        {(inventoryLotsByProductId.get(sellerGiftDraft.productId) ?? []).map((lot, lotIndex) => (
+                          <option key={lot.stockRowId || `${sellerGiftDraft.productId}-${lotIndex}`} value={lot.stockRowId}>
+                            {formatWarehouseLotOptionLabel(lot, lotIndex)}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </label>
+                ) : null}
+
+                <label className="field">
+                  <span>Cantidad</span>
+                  <input
+                    className="catalog-price-input seller-order-input"
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={sellerGiftDraft.quantity}
+                    onChange={(event) => setSellerGiftDraft((current) => ({ ...current, quantity: event.target.value }))}
+                  />
+                </label>
+
+                <button className="ghost-button" type="button" onClick={addSellerGiftDraftItem}>
+                  Agregar obsequio
+                </button>
+              </div>
+
+              {sellerGiftDraftItems.length > 0 ? (
+                <div className="table-wrap table-wrap--cards">
+                  <table className="data-table data-table--order-items">
+                    <thead>
+                      <tr>
+                        <th>Producto</th>
+                        <th>Lote</th>
+                        <th>Cantidad</th>
+                        <th>Quitar</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sellerGiftDraftItems.map((gift) => {
+                        const product = sellerGiftProductOptions.find((entry) => entry.value === gift.productId);
+                        const lot = (inventoryLotsByProductId.get(gift.productId) ?? []).find((entry) => entry.stockRowId === gift.stockRowId);
+
+                        return (
+                          <tr key={gift.key}>
+                            <td>{product?.label ?? "Producto"}</td>
+                            <td>{lot ? formatWarehouseLotOptionLabel(lot, 0) : "Sin lote"}</td>
+                            <td>{gift.quantity}</td>
+                            <td>
+                              <button className="ghost-button" type="button" onClick={() => removeSellerGiftDraftItem(gift.key)}>
+                                Quitar
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </section>
+
+            <div className="seller-order-footer seller-order-footer-inline">
+              <label className="field seller-order-delivery-date">
+                <span>Fecha de entrega</span>
+                <input
+                  type="date"
+                  min={getBusinessDateKey()}
+                  value={sellerDeliveryDateDraft}
+                  onChange={(event) => setSellerDeliveryDateDraft(event.target.value)}
+                />
+              </label>
+              <label className="field field-full seller-order-notes-field">
+                <span>Nota u observación del pedido</span>
+                <textarea
+                  rows={3}
+                  value={sellerOrderNotesDraft}
+                  placeholder="Ejemplo: cliente pidió media paca de sal, entregar antes del mediodía..."
+                  onChange={(event) => setSellerOrderNotesDraft(event.target.value)}
+                />
+              </label>
+              <p>{sellerDraftedItems.length > 0 ? `${sellerDraftedItems.length} producto${sellerDraftedItems.length === 1 ? "" : "s"} listos para registrar.` : "Agrega cantidades en los productos asignados antes de enviar el pedido a bodega."}</p>
+              {sellerDraftedItems.length > 0 ? (
+                <p className="seller-order-estimated-total">
+                  Total estimado: <strong>{formatAwgCurrency(sellerOrderEstimatedTotal)} AWG</strong>
+                </p>
+              ) : null}
+              <button
+                className="submit-button seller-order-submit"
+                type="button"
+                onClick={() => void handleSellerOrderSubmit()}
+                disabled={isSubmittingSellerOrder || isLoadingSellerClientProducts || sellerDraftedItems.length === 0}
+              >
+                {isSubmittingSellerOrder ? "Enviando pedido a bodega..." : "Enviar pedido a bodega"}
+              </button>
+            </div>
+          </>
+        ) : null}
 
         {isLoadingSellerProductCatalog ? (
           <p className="route-empty-state">Cargando catalogo de bodega...</p>

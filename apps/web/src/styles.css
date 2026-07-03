@@ -2630,6 +2630,10 @@ h1 {
 
 .seller-gifts-section {
   margin-top: 20px;
+  padding: 14px;
+  border: 1px solid rgba(17, 17, 17, 0.1);
+  border-radius: 18px;
+  background: rgba(255, 251, 235, 0.75);
 }
 
 .seller-gifts-form {
