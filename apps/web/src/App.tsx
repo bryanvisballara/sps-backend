@@ -2739,29 +2739,35 @@ function resolveStoreDefaultPaymentMethod(value?: string): CarteraPaymentMethod 
   return "";
 }
 
-function resolveAccountingLineTotalDraft(
-  productId: string,
-  fallbackLineTotal: number,
-  draft: Record<string, string>,
-) {
-  const raw = draft[productId];
+function getAccountingLinePricing(params: {
+  productId: string;
+  quantity: number;
+  defaultUnitPrice: number;
+  unitPriceDraft: Record<string, string>;
+  lineTotalManual: Record<string, boolean>;
+  lineTotalDraft: Record<string, string>;
+}) {
+  const unitPriceRaw = params.unitPriceDraft[params.productId];
+  const parsedUnitPrice = Number(unitPriceRaw);
+  const unitPrice = unitPriceRaw !== undefined && unitPriceRaw.trim() !== "" && Number.isFinite(parsedUnitPrice) && parsedUnitPrice >= 0
+    ? roundCurrencyValue(parsedUnitPrice)
+    : roundCurrencyValue(params.defaultUnitPrice);
 
-  if (raw === undefined || raw.trim() === "") {
-    return roundCurrencyValue(fallbackLineTotal);
+  if (params.lineTotalManual[params.productId]) {
+    const rawTotal = params.lineTotalDraft[params.productId] ?? "";
+    const parsedTotal = Number(rawTotal);
+    const lineTotal = rawTotal.trim() !== "" && Number.isFinite(parsedTotal) && parsedTotal >= 0
+      ? roundCurrencyValue(parsedTotal)
+      : roundCurrencyValue(unitPrice * params.quantity);
+    const salePrice = params.quantity > 0
+      ? roundCurrencyValue(lineTotal / params.quantity)
+      : unitPrice;
+
+    return { lineTotal, salePrice, unitPrice: salePrice };
   }
 
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed >= 0 ? roundCurrencyValue(parsed) : roundCurrencyValue(fallbackLineTotal);
-}
-
-function resolveAccountingSalePriceFromDraft(
-  productId: string,
-  quantity: number,
-  fallbackLineTotal: number,
-  draft: Record<string, string>,
-) {
-  const lineTotal = resolveAccountingLineTotalDraft(productId, fallbackLineTotal, draft);
-  return quantity > 0 ? roundCurrencyValue(lineTotal / quantity) : 0;
+  const lineTotal = roundCurrencyValue(unitPrice * params.quantity);
+  return { lineTotal, salePrice: unitPrice, unitPrice };
 }
 
 function getBusinessMonthKey(date = new Date()) {
@@ -4416,6 +4422,8 @@ export default function App() {
   const [warehouseOrderItemDraft, setWarehouseOrderItemDraft] = useState<Record<string, string>>({});
   const [warehouseOrderLotDraft, setWarehouseOrderLotDraft] = useState<Record<string, string>>({});
   const [accountingOrderLineTotalDraft, setAccountingOrderLineTotalDraft] = useState<Record<string, string>>({});
+  const [accountingOrderLineTotalManual, setAccountingOrderLineTotalManual] = useState<Record<string, boolean>>({});
+  const [accountingOrderUnitPriceDraft, setAccountingOrderUnitPriceDraft] = useState<Record<string, string>>({});
   const [isSavingAccountingOrderPrices, setIsSavingAccountingOrderPrices] = useState(false);
   const [accountingOrderInvoiceDraft, setAccountingOrderInvoiceDraft] = useState("");
   const [isEditingAccountingOrderInvoice, setIsEditingAccountingOrderInvoice] = useState(false);
@@ -4975,12 +4983,18 @@ export default function App() {
         ? Number(item.quantity ?? 0)
         : Number(warehouseOrderItemDraft[item.productId] ?? item.quantity ?? 0);
       const defaultLineTotal = roundCurrencyValue(defaultSalePrice * quantity);
-      const lineTotal = canAccountingAdjustDispatchPricing
-        ? resolveAccountingLineTotalDraft(item.productId, defaultLineTotal, accountingOrderLineTotalDraft)
-        : defaultLineTotal;
-      const resolvedSalePrice = canAccountingAdjustDispatchPricing
-        ? resolveAccountingSalePriceFromDraft(item.productId, quantity, defaultLineTotal, accountingOrderLineTotalDraft)
-        : defaultSalePrice;
+      const accountingPricing = canAccountingAdjustDispatchPricing
+        ? getAccountingLinePricing({
+          productId: item.productId,
+          quantity,
+          defaultUnitPrice: defaultSalePrice,
+          unitPriceDraft: accountingOrderUnitPriceDraft,
+          lineTotalManual: accountingOrderLineTotalManual,
+          lineTotalDraft: accountingOrderLineTotalDraft,
+        })
+        : null;
+      const lineTotal = accountingPricing?.lineTotal ?? defaultLineTotal;
+      const resolvedSalePrice = accountingPricing?.salePrice ?? defaultSalePrice;
 
       return {
         ...item,
@@ -5102,12 +5116,15 @@ export default function App() {
           const fallbackPrice = storedPrice > 0
             ? storedPrice
             : Number(invRow?.salePrice ?? productOption?.salePrice ?? 0);
-          const savedLineTotal = roundCurrencyValue((storedPrice > 0 ? storedPrice : fallbackPrice) * savedQtyNumber);
-          const draftLineTotal = resolveAccountingLineTotalDraft(
-            item.productId,
-            roundCurrencyValue(fallbackPrice * draftQtyNumber),
-            accountingOrderLineTotalDraft,
-          );
+          const savedLineTotal = roundCurrencyValue(fallbackPrice * savedQtyNumber);
+          const { lineTotal: draftLineTotal } = getAccountingLinePricing({
+            productId: item.productId,
+            quantity: draftQtyNumber,
+            defaultUnitPrice: fallbackPrice,
+            unitPriceDraft: accountingOrderUnitPriceDraft,
+            lineTotalManual: accountingOrderLineTotalManual,
+            lineTotalDraft: accountingOrderLineTotalDraft,
+          });
 
           return quantityChanged || lotChanged || draftLineTotal !== savedLineTotal;
         }
@@ -6623,6 +6640,8 @@ export default function App() {
   useEffect(() => {
     if (sessionUser?.role !== "contabilidad" || !selectedWarehouseOrderDetail) {
       setAccountingOrderLineTotalDraft({});
+      setAccountingOrderLineTotalManual({});
+      setAccountingOrderUnitPriceDraft({});
       setAccountingOrderPriceStatus(null);
       setAccountingOrderInvoiceDraft("");
       setIsEditingAccountingOrderInvoice(false);
@@ -6630,22 +6649,22 @@ export default function App() {
       return;
     }
 
-    setAccountingOrderLineTotalDraft(
+    setAccountingOrderUnitPriceDraft(
       Object.fromEntries(
         selectedWarehouseOrderDetail.items.map((item) => {
-          const quantity = Number(item.quantity ?? 0);
           const storedPrice = Number(item.salePriceAwg ?? 0);
           const productOption = productOptions.find((option) => option.value === item.productId);
           const invRow = inventoryRows.find((row) => row.productId === item.productId);
           const fallbackPrice = storedPrice > 0
             ? storedPrice
             : Number(invRow?.salePrice ?? productOption?.salePrice ?? 0);
-          const lineTotal = roundCurrencyValue(fallbackPrice * quantity);
 
-          return [item.productId, lineTotal > 0 || quantity > 0 ? String(lineTotal) : ""];
+          return [item.productId, fallbackPrice > 0 ? String(roundCurrencyValue(fallbackPrice)) : ""];
         }),
       ),
     );
+    setAccountingOrderLineTotalDraft({});
+    setAccountingOrderLineTotalManual({});
     setAccountingOrderPriceStatus(null);
     setAccountingOrderInvoiceDraft(
       Number(selectedWarehouseOrderDetail.invoiceNumber ?? 0) > 0
@@ -9769,13 +9788,16 @@ export default function App() {
           const fallbackPrice = storedPrice > 0
             ? storedPrice
             : Number(invRow?.salePrice ?? productOption?.salePrice ?? 0);
-          const fallbackLineTotal = roundCurrencyValue(fallbackPrice * quantity);
-          const salePriceAwg = resolveAccountingSalePriceFromDraft(
-            item.productId,
+          const pricedItem = warehousePricedItems.find((entry) => entry.productId === item.productId);
+          const defaultUnitPrice = pricedItem?.defaultSalePrice ?? fallbackPrice;
+          const { salePrice: salePriceAwg } = getAccountingLinePricing({
+            productId: item.productId,
             quantity,
-            fallbackLineTotal,
-            accountingOrderLineTotalDraft,
-          );
+            defaultUnitPrice,
+            unitPriceDraft: accountingOrderUnitPriceDraft,
+            lineTotalManual: accountingOrderLineTotalManual,
+            lineTotalDraft: accountingOrderLineTotalDraft,
+          });
 
           return {
             ...baseItem,
@@ -9839,12 +9861,13 @@ export default function App() {
         Object.fromEntries(updatedOrder.items.map((item) => [item.productId, item.stockRowId ?? ""])),
       );
       if (sessionUser?.role === "contabilidad") {
-        setAccountingOrderLineTotalDraft(
+        setAccountingOrderLineTotalDraft({});
+        setAccountingOrderLineTotalManual({});
+        setAccountingOrderUnitPriceDraft(
           Object.fromEntries(
             updatedOrder.items.map((item) => {
-              const quantity = Number(item.quantity ?? 0);
               const salePriceAwg = Number(item.salePriceAwg ?? 0);
-              return [item.productId, String(roundCurrencyValue(salePriceAwg * quantity))];
+              return [item.productId, salePriceAwg > 0 ? String(roundCurrencyValue(salePriceAwg)) : ""];
             }),
           ),
         );
@@ -9974,13 +9997,14 @@ export default function App() {
       const fallbackPrice = storedPrice > 0
         ? storedPrice
         : Number(invRow?.salePrice ?? productOption?.salePrice ?? 0);
-      const fallbackLineTotal = roundCurrencyValue(fallbackPrice * quantity);
-      const salePriceAwg = resolveAccountingSalePriceFromDraft(
-        item.productId,
+      const { salePrice: salePriceAwg } = getAccountingLinePricing({
+        productId: item.productId,
         quantity,
-        fallbackLineTotal,
-        accountingOrderLineTotalDraft,
-      );
+        defaultUnitPrice: fallbackPrice,
+        unitPriceDraft: accountingOrderUnitPriceDraft,
+        lineTotalManual: accountingOrderLineTotalManual,
+        lineTotalDraft: accountingOrderLineTotalDraft,
+      });
 
       if (!Number.isFinite(quantity) || quantity < 0) {
         throw new Error(`La cantidad de ${item.productName} no es valida.`);
@@ -10040,12 +10064,13 @@ export default function App() {
       setWarehouseOrderItemDraft(
         Object.fromEntries(updatedOrder.items.map((item) => [item.productId, String(item.quantity)])),
       );
-      setAccountingOrderLineTotalDraft(
+      setAccountingOrderLineTotalDraft({});
+      setAccountingOrderLineTotalManual({});
+      setAccountingOrderUnitPriceDraft(
         Object.fromEntries(
           updatedOrder.items.map((item) => {
-            const quantity = Number(item.quantity ?? 0);
             const salePriceAwg = Number(item.salePriceAwg ?? 0);
-            return [item.productId, String(roundCurrencyValue(salePriceAwg * quantity))];
+            return [item.productId, salePriceAwg > 0 ? String(roundCurrencyValue(salePriceAwg)) : ""];
           }),
         ),
       );
@@ -15424,6 +15449,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                         ...current,
                                         [item.productId]: event.target.value,
                                       }));
+                                      if (canAccountingAdjustDispatchPricing) {
+                                        setAccountingOrderLineTotalManual((current) => ({
+                                          ...current,
+                                          [item.productId]: false,
+                                        }));
+                                      }
                                       setWarehouseOrderEditStatus(null);
                                     }}
                                   />
@@ -15478,12 +15509,31 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                     type="number"
                                     min="0"
                                     step="0.01"
-                                    value={accountingOrderLineTotalDraft[item.productId] ?? String(item.lineTotal)}
+                                    value={
+                                      accountingOrderLineTotalManual[item.productId]
+                                        ? (accountingOrderLineTotalDraft[item.productId] ?? String(item.lineTotal))
+                                        : String(item.lineTotal)
+                                    }
                                     onChange={(event) => {
+                                      const nextQuantity = Number(warehouseOrderItemDraft[item.productId] ?? item.quantity);
+                                      const nextTotal = Number(event.target.value);
+
                                       setAccountingOrderLineTotalDraft((current) => ({
                                         ...current,
                                         [item.productId]: event.target.value,
                                       }));
+                                      setAccountingOrderLineTotalManual((current) => ({
+                                        ...current,
+                                        [item.productId]: true,
+                                      }));
+
+                                      if (Number.isFinite(nextTotal) && nextTotal >= 0 && Number.isFinite(nextQuantity) && nextQuantity > 0) {
+                                        setAccountingOrderUnitPriceDraft((current) => ({
+                                          ...current,
+                                          [item.productId]: String(roundCurrencyValue(nextTotal / nextQuantity)),
+                                        }));
+                                      }
+
                                       setWarehouseOrderEditStatus(null);
                                       setAccountingOrderPriceStatus(null);
                                     }}
@@ -23542,12 +23592,18 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             ? Number(warehouseOrderItemDraft[item.productId] ?? item.quantity)
                             : Number(item.quantity ?? 0);
                           const fallbackLineTotal = roundCurrencyValue(fallbackSalePriceAwg * quantity);
-                          const lineTotal = canAccountingEditOrder
-                            ? resolveAccountingLineTotalDraft(item.productId, fallbackLineTotal, accountingOrderLineTotalDraft)
-                            : fallbackLineTotal;
-                          const salePriceAwg = canAccountingEditOrder
-                            ? resolveAccountingSalePriceFromDraft(item.productId, quantity, fallbackLineTotal, accountingOrderLineTotalDraft)
-                            : fallbackSalePriceAwg;
+                          const accountingPricing = canAccountingEditOrder
+                            ? getAccountingLinePricing({
+                              productId: item.productId,
+                              quantity,
+                              defaultUnitPrice: fallbackSalePriceAwg,
+                              unitPriceDraft: accountingOrderUnitPriceDraft,
+                              lineTotalManual: accountingOrderLineTotalManual,
+                              lineTotalDraft: accountingOrderLineTotalDraft,
+                            })
+                            : null;
+                          const lineTotal = accountingPricing?.lineTotal ?? fallbackLineTotal;
+                          const salePriceAwg = accountingPricing?.salePrice ?? fallbackSalePriceAwg;
                           const unitUtilityAwg = salePriceAwg - unitCostAwg;
                           const totalUtilityAwg = unitUtilityAwg * quantity;
 
@@ -23569,6 +23625,10 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                         ...current,
                                         [item.productId]: event.target.value,
                                       }));
+                                      setAccountingOrderLineTotalManual((current) => ({
+                                        ...current,
+                                        [item.productId]: false,
+                                      }));
                                       setAccountingOrderPriceStatus(null);
                                     }}
                                   />
@@ -23583,12 +23643,31 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                     type="number"
                                     min="0"
                                     step="0.01"
-                                    value={accountingOrderLineTotalDraft[item.productId] ?? String(lineTotal)}
+                                    value={
+                                      accountingOrderLineTotalManual[item.productId]
+                                        ? (accountingOrderLineTotalDraft[item.productId] ?? String(lineTotal))
+                                        : String(lineTotal)
+                                    }
                                     onChange={(event) => {
+                                      const nextQuantity = Number(warehouseOrderItemDraft[item.productId] ?? item.quantity);
+                                      const nextTotal = Number(event.target.value);
+
                                       setAccountingOrderLineTotalDraft((current) => ({
                                         ...current,
                                         [item.productId]: event.target.value,
                                       }));
+                                      setAccountingOrderLineTotalManual((current) => ({
+                                        ...current,
+                                        [item.productId]: true,
+                                      }));
+
+                                      if (Number.isFinite(nextTotal) && nextTotal >= 0 && Number.isFinite(nextQuantity) && nextQuantity > 0) {
+                                        setAccountingOrderUnitPriceDraft((current) => ({
+                                          ...current,
+                                          [item.productId]: String(roundCurrencyValue(nextTotal / nextQuantity)),
+                                        }));
+                                      }
+
                                       setAccountingOrderPriceStatus(null);
                                     }}
                                   />
@@ -23633,11 +23712,14 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 ? storedPrice
                                 : roundCurrencyValue(Number(invRow?.salePrice ?? productOption?.salePrice ?? 0));
                               const savedLineTotal = roundCurrencyValue(fallbackPrice * savedQtyNumber);
-                              const draftLineTotal = resolveAccountingLineTotalDraft(
-                                item.productId,
-                                roundCurrencyValue(fallbackPrice * draftQtyNumber),
-                                accountingOrderLineTotalDraft,
-                              );
+                              const { lineTotal: draftLineTotal } = getAccountingLinePricing({
+                                productId: item.productId,
+                                quantity: draftQtyNumber,
+                                defaultUnitPrice: fallbackPrice,
+                                unitPriceDraft: accountingOrderUnitPriceDraft,
+                                lineTotalManual: accountingOrderLineTotalManual,
+                                lineTotalDraft: accountingOrderLineTotalDraft,
+                              });
                               return draftQuantity !== savedQuantity || draftLineTotal !== savedLineTotal;
                             })
                           }
