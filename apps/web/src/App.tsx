@@ -10727,7 +10727,9 @@ export default function App() {
       return "No hay un pedido seleccionado.";
     }
 
-    if (!warehouseAllItemsChecked) {
+    const skipWarehouseChecklist = hasAccountingDispatchAccess(sessionUser?.role) && activeSection === "orders";
+
+    if (!skipWarehouseChecklist && !warehouseAllItemsChecked) {
       return "Marca todos los productos con su check antes de continuar.";
     }
 
@@ -10821,7 +10823,9 @@ export default function App() {
 
       setSelectedWarehouseOrderDetail(null);
       setWarehouseOrderChecklist({});
-      setWarehouseActiveSection("dispatch");
+      if (isWarehouseUser) {
+        setWarehouseActiveSection("dispatch");
+      }
       setWarehouseOrderCompletionStatus({
         tone: "success",
         message: isWarehouseUser
@@ -25663,39 +25667,77 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           {accountingOrderPriceStatus.message}
                         </p>
                       ) : null}
-                      <div className="catalog-form-actions">
-                        <button
-                          className="submit-button"
-                          type="button"
-                          disabled={
-                            isSavingAccountingOrderPrices
-                            || !selectedWarehouseOrderDetail.items.some((item) => {
-                              const savedQuantity = String(item.quantity);
-                              const draftQuantity = warehouseOrderItemDraft[item.productId] ?? savedQuantity;
-                              const savedQtyNumber = Number(savedQuantity);
-                              const draftQtyNumber = Number(draftQuantity);
-                              const storedPrice = Number(item.salePriceAwg ?? 0);
-                              const productOption = productOptionsById.get(item.productId);
-                              const invRow = inventoryRowsByProductId.get(item.productId);
-                              const fallbackPrice = storedPrice > 0
-                                ? storedPrice
-                                : roundCurrencyValue(Number(invRow?.salePrice ?? productOption?.salePrice ?? 0));
-                              const savedLineTotal = roundCurrencyValue(fallbackPrice * savedQtyNumber);
-                              const { lineTotal: draftLineTotal } = getAccountingLinePricing({
-                                productId: item.productId,
-                                quantity: draftQtyNumber,
-                                defaultUnitPrice: fallbackPrice,
-                                unitPriceDraft: accountingOrderUnitPriceDraft,
-                                lineTotalManual: accountingOrderLineTotalManual,
-                                lineTotalDraft: accountingOrderLineTotalDraft,
-                              });
-                              return draftQuantity !== savedQuantity || draftLineTotal !== savedLineTotal;
-                            })
-                          }
-                          onClick={() => void handleSaveAccountingOrderChanges()}
-                        >
-                          {isSavingAccountingOrderPrices ? "Guardando cambios..." : "Guardar cambios del pedido"}
-                        </button>
+                      {warehouseOrderCompletionStatus ? (
+                        <p className={`form-feedback ${warehouseOrderCompletionStatus.tone === "error" ? "error" : "success"}`}>
+                          {warehouseOrderCompletionStatus.message}
+                        </p>
+                      ) : null}
+                      <div className="warehouse-order-toolbar">
+                        <p>
+                          Estado actual: <strong>{formatSellerOrderStatus(selectedWarehouseOrderDetail.status)}</strong>
+                        </p>
+                        <div className="warehouse-order-toolbar-actions">
+                          <button
+                            className="warehouse-action-button warehouse-action-button--save"
+                            type="button"
+                            disabled={
+                              isSavingAccountingOrderPrices
+                              || isDispatchingWarehouseOrder
+                              || isCompletingWarehouseOrder
+                              || !selectedWarehouseOrderDetail.items.some((item) => {
+                                const savedQuantity = String(item.quantity);
+                                const draftQuantity = warehouseOrderItemDraft[item.productId] ?? savedQuantity;
+                                const savedQtyNumber = Number(savedQuantity);
+                                const draftQtyNumber = Number(draftQuantity);
+                                const storedPrice = Number(item.salePriceAwg ?? 0);
+                                const productOption = productOptionsById.get(item.productId);
+                                const invRow = inventoryRowsByProductId.get(item.productId);
+                                const fallbackPrice = storedPrice > 0
+                                  ? storedPrice
+                                  : roundCurrencyValue(Number(invRow?.salePrice ?? productOption?.salePrice ?? 0));
+                                const savedLineTotal = roundCurrencyValue(fallbackPrice * savedQtyNumber);
+                                const { lineTotal: draftLineTotal } = getAccountingLinePricing({
+                                  productId: item.productId,
+                                  quantity: draftQtyNumber,
+                                  defaultUnitPrice: fallbackPrice,
+                                  unitPriceDraft: accountingOrderUnitPriceDraft,
+                                  lineTotalManual: accountingOrderLineTotalManual,
+                                  lineTotalDraft: accountingOrderLineTotalDraft,
+                                });
+                                return draftQuantity !== savedQuantity || draftLineTotal !== savedLineTotal;
+                              })
+                            }
+                            onClick={() => void handleSaveAccountingOrderChanges()}
+                          >
+                            {isSavingAccountingOrderPrices ? "Guardando cambios..." : "Guardar cambios del pedido"}
+                          </button>
+                          {selectedWarehouseOrderDetail.status === "dispatched" || selectedWarehouseOrderDetail.status === "delivered" ? (
+                            <button
+                              className="warehouse-action-button warehouse-action-button--print"
+                              type="button"
+                              disabled={warehouseOrderItemsDirty || isSavingAccountingOrderPrices || isCompletingWarehouseOrder || isDispatchingWarehouseOrder}
+                              onClick={() => void handlePrintCompletedOrderSummary(selectedWarehouseOrderDetail)}
+                            >
+                              Reimprimir factura
+                            </button>
+                          ) : null}
+                          {selectedWarehouseOrderDetail.status === "submitted" ? (
+                            <button
+                              className="submit-button seller-order-submit"
+                              type="button"
+                              disabled={
+                                isDispatchingWarehouseOrder
+                                || isCompletingWarehouseOrder
+                                || isSavingAccountingOrderPrices
+                                || warehouseOrderItemsDirty
+                                || warehousePricedItems.length === 0
+                              }
+                              onClick={() => void handleWarehouseOrderDispatch()}
+                            >
+                              {isDispatchingWarehouseOrder ? "Imprimiendo guia..." : "Imprimir y enviar a despacho"}
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                     </>
                   ) : null}
