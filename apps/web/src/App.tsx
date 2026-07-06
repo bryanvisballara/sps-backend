@@ -4578,6 +4578,7 @@ export default function App() {
   const [isDownloadingQuickBooksExport, setIsDownloadingQuickBooksExport] = useState(false);
   const [selectedWarehouseOrderDetail, setSelectedWarehouseOrderDetail] = useState<SellerOrderRecord | null>(null);
   const [deletingWarehouseOrderId, setDeletingWarehouseOrderId] = useState("");
+  const [cancellingWarehouseDispatchOrderId, setCancellingWarehouseDispatchOrderId] = useState("");
   const [warehouseOrderChecklist, setWarehouseOrderChecklist] = useState<Record<string, boolean>>({});
   const [warehouseOrderCompletionStatus, setWarehouseOrderCompletionStatus] = useState<CreationStatus | null>(null);
   const [isCompletingWarehouseOrder, setIsCompletingWarehouseOrder] = useState(false);
@@ -11736,6 +11737,59 @@ export default function App() {
     }
   }
 
+  async function handleCancelWarehouseDispatch(order: SellerOrderRecord) {
+    if (!order._id) {
+      setWarehouseOrderCompletionStatus({ tone: "error", message: "No fue posible identificar el pedido." });
+      return;
+    }
+
+    if (order.status !== "dispatched") {
+      setWarehouseOrderCompletionStatus({ tone: "error", message: "Solo puedes cancelar pedidos en despacho." });
+      return;
+    }
+
+    if (!globalThis.confirm(`Se cancelara el despacho de ${order.storeName} y volvera a pedidos recibidos.`)) {
+      return;
+    }
+
+    try {
+      setCancellingWarehouseDispatchOrderId(order._id);
+      setWarehouseOrderCompletionStatus(null);
+
+      const response = await fetch(`${apiBaseUrl}/warehouse/orders/${order._id}/cancel-dispatch`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+      });
+      const responseText = await response.text();
+      const data = readApiResponse<{ message?: string; order?: SellerOrderRecord }>(response, responseText);
+
+      if (!response.ok || !data.order) {
+        throw new Error(data.message ?? "No fue posible cancelar el despacho.");
+      }
+
+      setWarehouseOrders((current) => current.map((currentOrder) => (
+        String(currentOrder._id) === String(data.order!._id) ? data.order! : currentOrder
+      )));
+      setSelectedWarehouseOrderDetail((current) => (
+        current?._id === order._id ? null : current
+      ));
+
+      await refreshWarehouseOrders();
+
+      setWarehouseOrderCompletionStatus({
+        tone: "success",
+        message: data.message ?? "Despacho cancelado correctamente.",
+      });
+    } catch (error) {
+      setWarehouseOrderCompletionStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible cancelar el despacho.",
+      });
+    } finally {
+      setCancellingWarehouseDispatchOrderId("");
+    }
+  }
+
   async function handleReviewOrderDeleteRequest(
     requestId: string,
     action: "approve" | "reject",
@@ -16845,19 +16899,35 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       emptyMessage="No hay pedidos en despacho."
                       loadingMessage="Cargando pedidos en despacho..."
                       onSelectOrder={setSelectedWarehouseOrderDetail}
-                      renderActions={(order) => (
-                        <button
-                          className="table-action-icon"
-                          type="button"
-                          aria-label="Reimprimir factura"
-                          title="Reimprimir factura"
-                          onClick={() => void handlePrintCompletedOrderSummary(order)}
-                        >
-                          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                            <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
-                          </svg>
-                        </button>
-                      )}
+                      renderActions={(order) => {
+                        const isCancellingDispatch = cancellingWarehouseDispatchOrderId === order._id;
+
+                        return (
+                          <>
+                            <button
+                              className="table-action-icon"
+                              type="button"
+                              aria-label="Reimprimir factura"
+                              title="Reimprimir factura"
+                              onClick={() => void handlePrintCompletedOrderSummary(order)}
+                            >
+                              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
+                              </svg>
+                            </button>
+                            <button
+                              className="table-action-icon is-danger"
+                              type="button"
+                              aria-label="Cancelar despacho"
+                              title="Cancelar despacho"
+                              disabled={isCancellingDispatch}
+                              onClick={() => void handleCancelWarehouseDispatch(order)}
+                            >
+                              x
+                            </button>
+                          </>
+                        );
+                      }}
                     />
                   </article>
                 </>

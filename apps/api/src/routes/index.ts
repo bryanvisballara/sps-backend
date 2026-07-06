@@ -3886,6 +3886,82 @@ apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
   }
 });
 
+function stripDispatchPricingFromOrderItems(items: unknown) {
+  return (Array.isArray(items) ? items : []).map((item) => {
+    const record = item as {
+      productId?: unknown;
+      stockCurrent?: unknown;
+      quantity?: unknown;
+      notes?: unknown;
+    };
+
+    return {
+      productId: record.productId,
+      quantity: record.quantity,
+      ...(record.stockCurrent !== undefined ? { stockCurrent: record.stockCurrent } : {}),
+      ...(typeof record.notes === "string" && record.notes.trim() ? { notes: record.notes.trim() } : {}),
+    };
+  });
+}
+
+async function cancelWarehouseOrderDispatch(orderId: string) {
+  const order = await Order.findById(orderId).lean();
+
+  if (!order) {
+    throw new Error("El pedido no existe.");
+  }
+
+  if (order.status === "delivered") {
+    throw new Error("No puedes cancelar el despacho de un pedido ya facturado.");
+  }
+
+  if (order.status !== "dispatched") {
+    throw new Error("Solo puedes cancelar pedidos en despacho.");
+  }
+
+  const updatedOrder = await Order.findByIdAndUpdate(
+    orderId,
+    {
+      $set: {
+        status: "submitted",
+        items: stripDispatchPricingFromOrderItems(order.items),
+      },
+      $unset: { invoiceNumber: "" },
+    },
+    { new: true, runValidators: true },
+  ).lean();
+
+  if (!updatedOrder) {
+    throw new Error("El pedido no existe.");
+  }
+
+  await deactivateCarteraForOrder(orderId);
+
+  return updatedOrder;
+}
+
+apiRouter.put("/warehouse/orders/:id/cancel-dispatch", async (request, response) => {
+  try {
+    const updatedOrder = await cancelWarehouseOrderDispatch(String(request.params.id));
+
+    response.json({
+      message: "Despacho cancelado. El pedido volvio a pedidos recibidos.",
+      order: await mapWarehouseOrderRecord(updatedOrder),
+    });
+  } catch (error) {
+    if (error instanceof Error && (
+      error.message === "El pedido no existe."
+      || error.message === "No puedes cancelar el despacho de un pedido ya facturado."
+      || error.message === "Solo puedes cancelar pedidos en despacho."
+    )) {
+      response.status(error.message === "El pedido no existe." ? 404 : 400).json({ message: error.message });
+      return;
+    }
+
+    sendCreationError(response, error);
+  }
+});
+
 apiRouter.put("/warehouse/orders/:id/complete", async (request, response) => {
   try {
     const order = await Order.findById(request.params.id).lean();
