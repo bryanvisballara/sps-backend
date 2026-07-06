@@ -27,7 +27,7 @@ export function PushNotificationBanner({ status, busy, onEnable, onDismiss }: Pu
             {busy ? "Activando..." : "Activar notificaciones"}
           </button>
         ) : null}
-        <button className="ghost-button" type="button" onClick={onDismiss}>
+        <button className="ghost-button ghost-button--cancel" type="button" onClick={onDismiss}>
           Ocultar
         </button>
       </div>

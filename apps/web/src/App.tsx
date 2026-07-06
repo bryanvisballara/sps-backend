@@ -5,6 +5,7 @@ import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import { registerWebPushNotifications, unregisterWebPushNotifications, type PushRegistrationResult } from "./pushNotifications";
 import { PushNotificationBanner } from "./PushNotificationBanner";
+import { AppModalOverlay } from "./AppModalOverlay";
 import { buildCommercialInvoicePdf, type CommercialInvoiceLineItem } from "./utils/commercialInvoicePdf";
 
 type SessionUser = {
@@ -1127,7 +1128,7 @@ type LogisticsInvoiceFormState = {
 
 function resolveApiBaseUrl(): string {
   if (import.meta.env.DEV) {
-    return "http://127.0.0.1:4000/api";
+    return "/api";
   }
 
   const configured = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
@@ -7094,7 +7095,7 @@ export default function App() {
           </small>
         </div>
         <button
-          className="ghost-button"
+          className="ghost-button ghost-button--accent"
           type="button"
           disabled={product.isAssigned || isAdding || !storeId}
           onClick={() => void handleAddProductToSellerClient(storeId, product.productId)}
@@ -7331,7 +7332,7 @@ export default function App() {
               />
             </label>
 
-            <button className="ghost-button" type="button" onClick={addSellerGiftDraftItem}>
+            <button className="ghost-button ghost-button--accent" type="button" onClick={addSellerGiftDraftItem}>
               Agregar obsequio
             </button>
           </div>
@@ -7358,7 +7359,7 @@ export default function App() {
                         <td>{lot ? formatWarehouseLotOptionLabel(lot, 0) : "Sin lote"}</td>
                         <td>{gift.quantity}</td>
                         <td>
-                          <button className="ghost-button" type="button" onClick={() => removeSellerGiftDraftItem(gift.key)}>
+                          <button className="ghost-button ghost-button--danger" type="button" onClick={() => removeSellerGiftDraftItem(gift.key)}>
                             Quitar
                           </button>
                         </td>
@@ -14800,7 +14801,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               </article>
 
               {selectedSellerOrderDetail ? (
-                <div className="modal-overlay" role="presentation" onClick={() => setSelectedSellerOrderDetail(null)}>
+                <AppModalOverlay onDismiss={() => setSelectedSellerOrderDetail(null)}>
                   <div className="modal-card seller-order-detail-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                     <div className="modal-header">
                       <div>
@@ -14862,11 +14863,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </div>
                     ) : null}
                   </div>
-                </div>
+                </AppModalOverlay>
               ) : null}
 
               {selectedSellerOrderEdit ? (
-                <div className="modal-overlay" role="presentation" onClick={() => setSelectedSellerOrderEdit(null)}>
+                <AppModalOverlay onDismiss={() => setSelectedSellerOrderEdit(null)}>
                   <div className="modal-card seller-order-detail-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                     <div className="modal-header">
                       <div>
@@ -14933,11 +14934,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </button>
                     </div>
                   </div>
-                </div>
+                </AppModalOverlay>
               ) : null}
 
               {sellerOrderExpiredNotice ? (
-                <div className="modal-overlay" role="presentation" onClick={() => setSellerOrderExpiredNotice(null)}>
+                <AppModalOverlay onDismiss={() => setSellerOrderExpiredNotice(null)}>
                   <div className="modal-card seller-order-expired-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                     <div className="modal-header">
                       <div>
@@ -14950,7 +14951,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
                     <p className="route-helper-text">Solo se permiten cambios durante las primeras 6 horas después de crear el pedido. Si necesitas ajustarlo después de ese tiempo, debe intervenir gerencia o bodega.</p>
                   </div>
-                </div>
+                </AppModalOverlay>
               ) : null}
             </section>
           ) : sellerActiveSection === "clients" ? (
@@ -15279,7 +15280,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <p className="route-helper-text">
                       {selectedWarehouseOrderDetail.salesRepName} · Entrega {formatDeliveryDateLabel(getOrderDeliveryDateKey(selectedWarehouseOrderDetail))} · {formatSellerOrderDate(selectedWarehouseOrderDetail.createdAt)}
                     </p>
-                    <button className="ghost-button" type="button" onClick={() => {
+                    <button className="ghost-button ghost-button--back" type="button" onClick={() => {
                       setSelectedWarehouseOrderDetail(null);
                       setWarehouseOrderCompletionStatus(null);
                     }}>
@@ -15346,11 +15347,76 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         ) : null}
                         <strong>{formatAwgCurrency(warehouseInvoiceTotal)} AWG</strong>
                         {canWarehouseInvoiceOrder && selectedWarehouseOrderDetail.status === "dispatched" ? (
-                          <p>
-                            Factura asignada: <strong>#{Number(selectedWarehouseOrderDetail.invoiceNumber ?? 0) > 0 ? selectedWarehouseOrderDetail.invoiceNumber : "pendiente"}</strong>
-                            {" · "}
-                            Podras revisarla o cambiarla al facturar.
-                          </p>
+                          <div className="warehouse-order-invoice-number-panel warehouse-order-invoice-number-panel--card">
+                            {isEditingAccountingOrderInvoice ? (
+                              <div className="warehouse-order-invoice-number-editor">
+                                <label className="field">
+                                  <span>Numero de consecutivo / factura</span>
+                                  <input
+                                    className="warehouse-order-qty-input"
+                                    type="number"
+                                    min={MIN_INVOICE_NUMBER}
+                                    step="1"
+                                    value={accountingOrderInvoiceDraft}
+                                    disabled={isSavingAccountingOrderInvoice}
+                                    onChange={(event) => {
+                                      setAccountingOrderInvoiceDraft(event.target.value);
+                                      setAccountingOrderInvoiceStatus(null);
+                                    }}
+                                  />
+                                </label>
+                                <div className="catalog-form-actions">
+                                  <button
+                                    className="submit-button"
+                                    type="button"
+                                    disabled={isSavingAccountingOrderInvoice}
+                                    onClick={() => void handleSaveAccountingOrderInvoiceNumber()}
+                                  >
+                                    {isSavingAccountingOrderInvoice ? "Guardando..." : "Guardar"}
+                                  </button>
+                                  <button
+                                    className="ghost-button ghost-button--cancel"
+                                    type="button"
+                                    disabled={isSavingAccountingOrderInvoice}
+                                    onClick={() => {
+                                      setIsEditingAccountingOrderInvoice(false);
+                                      setAccountingOrderInvoiceStatus(null);
+                                      setAccountingOrderInvoiceDraft(
+                                        Number(selectedWarehouseOrderDetail.invoiceNumber ?? 0) > 0
+                                          ? String(selectedWarehouseOrderDetail.invoiceNumber)
+                                          : "",
+                                      );
+                                    }}
+                                  >
+                                    Cancelar
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="warehouse-order-invoice-number-summary">
+                                <p>
+                                  Factura asignada:{" "}
+                                  <strong>
+                                    {Number(selectedWarehouseOrderDetail.invoiceNumber ?? 0) > 0
+                                      ? `#${selectedWarehouseOrderDetail.invoiceNumber}`
+                                      : "pendiente"}
+                                  </strong>
+                                </p>
+                                <button
+                                  className="warehouse-action-button warehouse-action-button--muted"
+                                  type="button"
+                                  onClick={() => void beginAccountingOrderInvoiceEdit()}
+                                >
+                                  Cambiar consecutivo
+                                </button>
+                              </div>
+                            )}
+                            {accountingOrderInvoiceStatus ? (
+                              <p className={`form-feedback ${accountingOrderInvoiceStatus.tone === "error" ? "error" : "success"}`}>
+                                {accountingOrderInvoiceStatus.message}
+                              </p>
+                            ) : null}
+                          </div>
                         ) : null}
                         <p>
                           {!selectedCatalogId
@@ -15389,7 +15455,28 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </p>
                     ) : null}
 
-                    <div className="table-wrap table-wrap--warehouse-items">
+                    <div className="warehouse-products-panel">
+                      <div className="management-table-header">
+                        <div>
+                          <p className="section-label">Productos</p>
+                          <h3>Lineas del pedido</h3>
+                          {selectedWarehouseOrderDetail.status === "dispatched" && canWarehouseInvoiceOrder ? (
+                            <p className="route-helper-text">Si el transportista solicito un producto adicional, anadelo aqui y guarda los cambios antes de facturar.</p>
+                          ) : null}
+                        </div>
+                        {selectedWarehouseOrderDetail.status !== "delivered" ? (
+                          <button
+                            className="warehouse-action-button warehouse-action-button--add"
+                            type="button"
+                            disabled={isSavingWarehouseOrderEdit || isCompletingWarehouseOrder || isDispatchingWarehouseOrder}
+                            onClick={openWarehouseAddProductModal}
+                          >
+                            Añadir producto
+                          </button>
+                        ) : null}
+                      </div>
+
+                      <div className="table-wrap table-wrap--warehouse-items">
                       <table className="data-table data-table--warehouse-order-items">
                         <thead>
                           <tr>
@@ -15558,6 +15645,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           ))}
                         </tbody>
                       </table>
+                      </div>
                     </div>
 
                     <div className="warehouse-gifts-panel">
@@ -15569,7 +15657,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         </div>
                         {selectedWarehouseOrderDetail.status !== "delivered" ? (
                           <button
-                            className="ghost-button warehouse-order-add-product-button"
+                            className="warehouse-action-button warehouse-action-button--add"
                             type="button"
                             disabled={isSavingWarehouseOrderEdit || isCompletingWarehouseOrder || isDispatchingWarehouseOrder}
                             onClick={openWarehouseAddGiftModal}
@@ -15646,9 +15734,10 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           ))}
                         </ul>
                       ) : null}
+                      <div className="warehouse-order-toolbar-actions">
                       {selectedWarehouseOrderDetail.status !== "delivered" ? (
                         <button
-                          className="ghost-button warehouse-order-save-button"
+                          className="warehouse-action-button warehouse-action-button--save"
                           type="button"
                           disabled={!warehouseOrderItemsDirty || isSavingWarehouseOrderEdit || isCompletingWarehouseOrder || isDispatchingWarehouseOrder}
                           onClick={() => void handleWarehouseOrderEditSubmit()}
@@ -15656,19 +15745,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           {isSavingWarehouseOrderEdit ? "Guardando cambios..." : "Guardar cambios al pedido"}
                         </button>
                       ) : null}
-                      {selectedWarehouseOrderDetail.status === "submitted" ? (
-                        <button
-                          className="ghost-button warehouse-order-add-product-button"
-                          type="button"
-                          disabled={isSavingWarehouseOrderEdit || isCompletingWarehouseOrder || isDispatchingWarehouseOrder}
-                          onClick={openWarehouseAddProductModal}
-                        >
-                          Añadir producto
-                        </button>
-                      ) : null}
                       {selectedWarehouseOrderDetail.status === "dispatched" || selectedWarehouseOrderDetail.status === "delivered" ? (
                         <button
-                          className="ghost-button warehouse-order-save-button"
+                          className="warehouse-action-button warehouse-action-button--print"
                           type="button"
                           disabled={warehouseOrderItemsDirty || isSavingWarehouseOrderEdit || isCompletingWarehouseOrder || isDispatchingWarehouseOrder}
                           onClick={() => void handlePrintCompletedOrderSummary(selectedWarehouseOrderDetail)}
@@ -15712,6 +15791,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           Facturar y terminar pedido
                         </button>
                       ) : null}
+                      </div>
                     </div>
                   </article>
                 </>
@@ -15910,7 +15990,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               </article>
 
               {selectedInventoryAdjustmentRow ? (
-                <div className="modal-overlay" role="presentation" onClick={closeInventoryAdjustmentModal}>
+                <AppModalOverlay onDismiss={closeInventoryAdjustmentModal}>
                   <div className="modal-card inventory-adjustment-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                     <div className="modal-header">
                       <div>
@@ -15983,11 +16063,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </button>
                     </form>
                   </div>
-                </div>
+                </AppModalOverlay>
               ) : null}
 
               {isInventoryEntryModalOpen ? (
-                <div className="modal-overlay" role="presentation" onClick={closeInventoryEntryModal}>
+                <AppModalOverlay onDismiss={closeInventoryEntryModal}>
                   <div className="modal-card inventory-entry-modal inventory-entry-modal--warehouse" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                     <div className="modal-header">
                       <div>
@@ -16159,13 +16239,13 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </div>
                     </form>
                   </div>
-                </div>
+                </AppModalOverlay>
               ) : null}
             </section>
           )}
 
           {warehouseAddProductModalOpen ? (
-            <div className="modal-overlay" role="presentation" onClick={closeWarehouseAddProductModal}>
+            <AppModalOverlay field onDismiss={closeWarehouseAddProductModal}>
               <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                 <div className="modal-header">
                   <div>
@@ -16228,11 +16308,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   Agregar al pedido
                 </button>
               </div>
-            </div>
+            </AppModalOverlay>
           ) : null}
 
           {warehouseAddGiftModalOpen ? (
-            <div className="modal-overlay" role="presentation" onClick={closeWarehouseAddGiftModal}>
+            <AppModalOverlay field onDismiss={closeWarehouseAddGiftModal}>
               <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                 <div className="modal-header">
                   <div>
@@ -16295,14 +16375,13 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   Agregar obsequio
                 </button>
               </div>
-            </div>
+            </AppModalOverlay>
           ) : null}
 
           {warehousePaymentModalOpen && canWarehouseInvoiceOrder ? (
-            <div
-              className="modal-overlay"
-              role="presentation"
-              onClick={() => {
+            <AppModalOverlay
+              field
+              onDismiss={() => {
                 if (!isCompletingWarehouseOrder) {
                   setWarehousePaymentModalOpen(false);
                   setWarehousePaymentModalStatus(null);
@@ -16477,7 +16556,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
                 <div className="catalog-form-actions inventory-adjustment-actions">
                   <button
-                    className="ghost-button"
+                    className="ghost-button ghost-button--cancel"
                     type="button"
                     disabled={isCompletingWarehouseOrder}
                     onClick={() => {
@@ -16499,7 +16578,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   </button>
                 </div>
               </div>
-            </div>
+            </AppModalOverlay>
           ) : null}
         </section>
       </main>
@@ -17473,7 +17552,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     {isSavingCatalog ? "Guardando catálogo..." : editingCatalogId ? "Guardar cambios" : "Guardar catálogo"}
                   </button>
                   {editingCatalogId ? (
-                    <button className="ghost-button" type="button" onClick={() => resetCatalogForm()}>
+                    <button className="ghost-button ghost-button--cancel" type="button" onClick={() => resetCatalogForm()}>
                       Cancelar edición
                     </button>
                   ) : null}
@@ -17901,7 +17980,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <h3>Agrega uno o varios gastos</h3>
                       <p>Selecciona el tipo de gasto, escribe el valor y adjunta las facturas que soportan ese costo.</p>
                     </div>
-                    <button className="ghost-button import-expense-add-button" type="button" onClick={addImportExpenseItem}>
+                    <button className="ghost-button ghost-button--accent import-expense-add-button" type="button" onClick={addImportExpenseItem}>
                       Agregar gasto
                     </button>
                   </div>
@@ -17995,7 +18074,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           ) : null}
 
                           <div className="catalog-form-actions">
-                            <button className="ghost-button" type="button" onClick={() => removeImportExpenseItem(expense.id)}>
+                            <button className="ghost-button ghost-button--danger" type="button" onClick={() => removeImportExpenseItem(expense.id)}>
                               Quitar gasto
                             </button>
                           </div>
@@ -18573,7 +18652,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
                     <div className="suggested-export-group-content">
                       <div className="suggested-export-group-actions">
-                        <button className="ghost-button" type="button" onClick={() => openSuggestedImportCostPage(group.key as ContainerType)}>
+                        <button className="ghost-button ghost-button--accent" type="button" onClick={() => openSuggestedImportCostPage(group.key as ContainerType)}>
                           Crear exportación
                         </button>
                       </div>
@@ -19128,7 +19207,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             </article>
 
             {selectedAccountingMonthlyBatch ? (
-              <div className="modal-overlay" role="presentation" onClick={() => setSelectedAccountingMonthlyBatchKey("")}>
+              <AppModalOverlay onDismiss={() => setSelectedAccountingMonthlyBatchKey("")}>
                 <div className="modal-card inventory-entry-history-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                   <div className="modal-header">
                     <div>
@@ -19181,7 +19260,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </table>
                   </div>
                 </div>
-              </div>
+              </AppModalOverlay>
             ) : null}
 
           </section>
@@ -19900,7 +19979,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           </td>
                           <td>
                             <button
-                              className="ghost-button"
+                              className="ghost-button ghost-button--danger"
                               type="button"
                               onClick={() => void handleDeactivateLotPromotion(promotion.id)}
                             >
@@ -20088,7 +20167,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             </article>
 
             {selectedLogisticsInvoice ? (
-              <div className="modal-overlay" role="presentation" onClick={() => setSelectedLogisticsInvoiceId(null)}>
+              <AppModalOverlay onDismiss={() => setSelectedLogisticsInvoiceId(null)}>
                 <div className="modal-card inventory-entry-history-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                   <div className="modal-header">
                     <div>
@@ -20128,11 +20207,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     {`Total ingresos: ${formatAwgCurrency(selectedLogisticsInvoice.totalRevenueAwg)} · Utilidad bruta: ${formatAwgCurrency(selectedLogisticsInvoice.totalUtilityAwg)}`}
                   </p>
                 </div>
-              </div>
+              </AppModalOverlay>
             ) : null}
 
             {logisticsAccountingModalKind === "logistics-invoice" ? (
-              <div className="modal-overlay" role="presentation" onClick={() => setLogisticsAccountingModalKind(null)}>
+              <AppModalOverlay onDismiss={() => setLogisticsAccountingModalKind(null)}>
                 <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                   <div className="modal-header">
                     <div>
@@ -20319,9 +20398,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </div>
                   </form>
                 </div>
-              </div>
+              </AppModalOverlay>
             ) : logisticsAccountingModalKind === "logistics-fixed-cost" ? (
-              <div className="modal-overlay" role="presentation" onClick={() => setLogisticsAccountingModalKind(null)}>
+              <AppModalOverlay onDismiss={() => setLogisticsAccountingModalKind(null)}>
                 <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                   <div className="modal-header">
                     <div>
@@ -20367,9 +20446,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </div>
                   </form>
                 </div>
-              </div>
+              </AppModalOverlay>
             ) : logisticsAccountingModalKind === "logistics-expense" ? (
-              <div className="modal-overlay" role="presentation" onClick={() => setLogisticsAccountingModalKind(null)}>
+              <AppModalOverlay onDismiss={() => setLogisticsAccountingModalKind(null)}>
                 <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                   <div className="modal-header">
                     <div>
@@ -20416,7 +20495,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </div>
                   </form>
                 </div>
-              </div>
+              </AppModalOverlay>
             ) : null}
           </section>
         ) : activeSection === "routes" ? (
@@ -20551,7 +20630,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 </button>
 
                 {editingRouteId ? (
-                  <button className="ghost-button" type="button" onClick={resetRouteForm}>
+                  <button className="ghost-button ghost-button--cancel" type="button" onClick={resetRouteForm}>
                     Cancelar edicion
                   </button>
                 ) : null}
@@ -21925,7 +22004,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             </article>
 
             {selectedInventoryEditRow ? (
-              <div className="modal-overlay" role="presentation" onClick={closeInventoryEditModal}>
+              <AppModalOverlay onDismiss={closeInventoryEditModal}>
                 <div className="modal-card inventory-adjustment-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                   <div className="modal-header">
                     <div>
@@ -22040,7 +22119,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     ) : null}
 
                     <div className="catalog-form-actions inventory-adjustment-actions">
-                      <button className="ghost-button" type="button" onClick={closeInventoryEditModal}>
+                      <button className="ghost-button ghost-button--cancel" type="button" onClick={closeInventoryEditModal}>
                         Cancelar
                       </button>
                       <button className="submit-button" type="submit" disabled={isSavingInventoryEdit}>
@@ -22049,11 +22128,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </div>
                   </form>
                 </div>
-              </div>
+              </AppModalOverlay>
             ) : null}
 
             {selectedInventoryAdjustmentRow ? (
-              <div className="modal-overlay" role="presentation" onClick={closeInventoryAdjustmentModal}>
+              <AppModalOverlay onDismiss={closeInventoryAdjustmentModal}>
                 <div className="modal-card inventory-adjustment-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                   <div className="modal-header">
                     <div>
@@ -22126,7 +22205,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     ) : null}
 
                     <div className="catalog-form-actions inventory-adjustment-actions">
-                      <button className="ghost-button" type="button" onClick={closeInventoryAdjustmentModal}>
+                      <button className="ghost-button ghost-button--cancel" type="button" onClick={closeInventoryAdjustmentModal}>
                         Cancelar
                       </button>
                       <button className="submit-button" type="submit" disabled={isSavingInventoryAdjustment}>
@@ -22135,11 +22214,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </div>
                   </form>
                 </div>
-              </div>
+              </AppModalOverlay>
             ) : null}
 
             {isInventoryEntryModalOpen ? (
-              <div className="modal-overlay" role="presentation" onClick={closeInventoryEntryModal}>
+              <AppModalOverlay onDismiss={closeInventoryEntryModal}>
                 <div className="modal-card inventory-entry-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                   <div className="modal-header">
                     <div>
@@ -22237,7 +22316,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </div>
 
                     <div className="catalog-form-actions inventory-adjustment-actions">
-                      <button className="ghost-button" type="button" onClick={addInventoryEntryRow}>
+                      <button className="ghost-button ghost-button--accent" type="button" onClick={addInventoryEntryRow}>
                         Agregar producto
                       </button>
                     </div>
@@ -22249,7 +22328,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </button>
                   </form>
                 </div>
-              </div>
+              </AppModalOverlay>
             ) : null}
           </section>
         ) : activeSection === "products-create" ? (
@@ -22261,8 +22340,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <h2>Crear productos</h2>
                   <p>Registra productos nuevos en una página dedicada, sin usar el modal genérico.</p>
                 </div>
-                <button className="ghost-button" type="button" onClick={() => setActiveSection("products")}>
-                  &larr; Volver a productos
+                <button className="ghost-button ghost-button--back" type="button" onClick={() => setActiveSection("products")}>
+                  Volver a productos
                 </button>
               </div>
 
@@ -22425,7 +22504,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 ) : null}
 
                 <div className="form-span-full product-page-actions">
-                  <button className="ghost-button inline-action-button" type="button" onClick={() => setActiveSection("products")}>
+                  <button className="ghost-button ghost-button--back inline-action-button" type="button" onClick={() => setActiveSection("products")}>
                     Cancelar
                   </button>
                   <button className="submit-button inline-submit-button" type="submit">
@@ -22444,8 +22523,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <h2>Importar productos desde Excel</h2>
                   <p>Sube la plantilla histórica de Aruba para crear o actualizar productos por lote usando una estructura fija.</p>
                 </div>
-                <button className="ghost-button" type="button" onClick={() => setActiveSection("products")}>
-                  &larr; Volver a productos
+                <button className="ghost-button ghost-button--back" type="button" onClick={() => setActiveSection("products")}>
+                  Volver a productos
                 </button>
               </div>
 
@@ -22567,8 +22646,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <h2>Registrar inventario</h2>
                   <p>Sube el Excel generado en Facturacion o agrega productos manualmente desde el boton pequeño.</p>
                 </div>
-                <button className="ghost-button" type="button" onClick={() => setActiveSection("inventory")}>
-                  &larr; Volver a inventario
+                <button className="ghost-button ghost-button--back" type="button" onClick={() => setActiveSection("inventory")}>
+                  Volver a inventario
                 </button>
               </div>
 
@@ -22699,7 +22778,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               )}
 
               <div className="catalog-form-actions inventory-adjustment-actions">
-                <button className="ghost-button" type="button" onClick={addInventoryEntryExpenseItem}>
+                <button className="ghost-button ghost-button--accent" type="button" onClick={addInventoryEntryExpenseItem}>
                   + Agregar costo adicional
                 </button>
               </div>
@@ -22954,7 +23033,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             </article>
 
             {selectedInventoryEntryHistoryGroup ? (
-              <div className="modal-overlay" role="presentation" onClick={closeInventoryEntryHistoryGroupDetails}>
+              <AppModalOverlay onDismiss={closeInventoryEntryHistoryGroupDetails}>
                 <div className="modal-card inventory-entry-history-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                   <div className="modal-header">
                     <div>
@@ -22998,11 +23077,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </table>
                   </div>
                 </div>
-              </div>
+              </AppModalOverlay>
             ) : null}
 
             {isInventoryEntryItemModalOpen ? (
-              <div className="modal-overlay" role="presentation" onClick={closeInventoryEntryItemModal}>
+              <AppModalOverlay onDismiss={closeInventoryEntryItemModal}>
                 <div className="modal-card inventory-entry-item-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                   <div className="modal-header">
                     <div>
@@ -23098,12 +23177,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </div>
 
                     <div className="catalog-form-actions inventory-adjustment-actions">
-                      <button className="ghost-button" type="button" onClick={closeInventoryEntryItemModal}>Cancelar</button>
+                      <button className="ghost-button ghost-button--cancel" type="button" onClick={closeInventoryEntryItemModal}>Cancelar</button>
                       <button className="submit-button" type="submit">Agregar a la tabla</button>
                     </div>
                   </form>
                 </div>
-              </div>
+              </AppModalOverlay>
             ) : null}
           </section>
         ) : activeSection === "invoice-change-requests" ? (
@@ -23197,7 +23276,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               }))}
                             />
                             <button
-                              className="ghost-button"
+                              className="ghost-button ghost-button--danger"
                               type="button"
                               disabled={isReviewingInvoiceChangeRequest}
                               onClick={() => void handleReviewInvoiceChangeRequest(request._id, "reject")}
@@ -23292,7 +23371,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               }))}
                             />
                             <button
-                              className="ghost-button"
+                              className="ghost-button ghost-button--danger"
                               type="button"
                               disabled={isReviewingOrderDeleteRequest}
                               onClick={() => void handleReviewOrderDeleteRequest(request._id, "reject")}
@@ -23471,7 +23550,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             </article>
 
             {selectedWarehouseOrderDetail ? (
-              <div className="modal-overlay" role="presentation" onClick={() => setSelectedWarehouseOrderDetail(null)}>
+              <AppModalOverlay onDismiss={() => setSelectedWarehouseOrderDetail(null)}>
                 <div className="modal-card seller-order-detail-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                   <div className="modal-header">
                     <div>
@@ -23511,7 +23590,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               {isSavingAccountingOrderInvoice ? "Guardando consecutivo..." : "Guardar consecutivo"}
                             </button>
                             <button
-                              className="ghost-button"
+                              className="ghost-button ghost-button--cancel"
                               type="button"
                               disabled={isSavingAccountingOrderInvoice}
                               onClick={() => {
@@ -23539,7 +23618,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             </strong>
                           </p>
                           <button
-                            className="ghost-button"
+                            className="warehouse-action-button warehouse-action-button--muted"
                             type="button"
                             onClick={() => void beginAccountingOrderInvoiceEdit()}
                           >
@@ -23731,7 +23810,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </>
                   ) : null}
                 </div>
-              </div>
+              </AppModalOverlay>
             ) : null}
           </section>
         ) : (
@@ -23739,7 +23818,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
         )}
 
         {invoiceChangeOrder ? (
-          <div className="modal-overlay" role="presentation" onClick={closeInvoiceChangeModal}>
+          <AppModalOverlay onDismiss={closeInvoiceChangeModal}>
             <div className="modal-card modal-card--wide" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
               <div className="modal-header">
                 <div>
@@ -23843,7 +23922,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               ) : null}
 
               <div className="catalog-form-actions inventory-adjustment-actions">
-                <button className="ghost-button" type="button" onClick={closeInvoiceChangeModal}>Cancelar</button>
+                <button className="ghost-button ghost-button--cancel" type="button" onClick={closeInvoiceChangeModal}>Cancelar</button>
                 <button
                   className="submit-button"
                   type="button"
@@ -23854,11 +23933,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 </button>
               </div>
             </div>
-          </div>
+          </AppModalOverlay>
         ) : null}
 
         {isCreationSection && isCreationModalOpen ? (
-          <div className="modal-overlay" role="presentation" onClick={closeCreationModal}>
+          <AppModalOverlay onDismiss={closeCreationModal}>
             <div
               className="modal-card"
               role="dialog"
@@ -24108,10 +24187,10 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 </button>
               </form>
             </div>
-          </div>
+          </AppModalOverlay>
         ) : null}
         {activeSection === "accounting" && accountingModalKind ? (
-          <div className="modal-overlay" role="presentation" onClick={closeAccountingModal}>
+          <AppModalOverlay onDismiss={closeAccountingModal}>
             <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
               {accountingModalKind === "fixed-cost" ? (
                 <>
@@ -24212,7 +24291,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 </>
               )}
             </div>
-          </div>
+          </AppModalOverlay>
         ) : null}
       </section>
     </main>
