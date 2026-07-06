@@ -33,6 +33,10 @@ import { SalesRepGoal } from "../modules/users/sales-rep-goal.model.js";
 import { Warehouse } from "../modules/warehouses/warehouse.model.js";
 import { isFirebasePushConfigured } from "../services/firebase-admin.service.js";
 import { notifyNewSalesOrder, notifyContabilidadOrderDispatched, notifyRouteAssigned, registerPushToken, unregisterPushToken, } from "../services/push-notification.service.js";
+import { buildFinancialReports } from "../services/financial-reports.service.js";
+import { buildOrderPlannerReport } from "../services/order-planner.service.js";
+import { buildQuickBooksBillExportCsv } from "../services/quickbooks-bill-export.service.js";
+import { buildQuickBooksInvoiceExportCsv } from "../services/quickbooks-invoice-export.service.js";
 export const apiRouter = Router();
 const cloudinaryProductFolder = "spste/products";
 const cloudinaryImportDocumentsFolder = "spste/import-documents";
@@ -1545,6 +1549,7 @@ function mapInvoiceChangeRequestRecord(entry) {
         salesRepName: String(entry.salesRepName ?? ""),
         routeName: String(entry.routeName ?? ""),
         invoiceNumber: Number(entry.invoiceNumber ?? 0) || null,
+        proposedInvoiceNumber: Number(entry.proposedInvoiceNumber ?? entry.invoiceNumber ?? 0) || null,
         status: String(entry.status ?? "pending"),
         requestedByUserId: String(entry.requestedByUserId ?? ""),
         requestedByUserName: String(entry.requestedByUserName ?? ""),
@@ -1577,10 +1582,14 @@ async function updateCarteraAfterInvoiceChange(params) {
     if (isCreditInvoice && params.newInvoiceAmountAwg < collectedAmountAwg - 0.009) {
         throw new Error("El nuevo monto de factura no puede ser menor al recaudo ya registrado.");
     }
+    const invoiceNumberUpdate = params.invoiceNumber && params.invoiceNumber >= MIN_INVOICE_NUMBER
+        ? { invoiceNumber: params.invoiceNumber }
+        : {};
     if (isCreditInvoice) {
         await CarteraEntry.findByIdAndUpdate(params.carteraEntryId, {
             invoiceAmountAwg: params.newInvoiceAmountAwg,
             outstandingAmountAwg: Math.round(Math.max(params.newInvoiceAmountAwg - collectedAmountAwg, 0) * 100) / 100,
+            ...invoiceNumberUpdate,
         });
         return;
     }
@@ -1588,6 +1597,7 @@ async function updateCarteraAfterInvoiceChange(params) {
         invoiceAmountAwg: params.newInvoiceAmountAwg,
         collectedAmountAwg: params.newInvoiceAmountAwg,
         outstandingAmountAwg: 0,
+        ...invoiceNumberUpdate,
     });
     await CarteraCollection.updateMany({
         carteraEntryId: params.carteraEntryId,
@@ -2132,6 +2142,33 @@ apiRouter.get("/warehouse/orders", async (_request, response) => {
         sendCreationError(response, error);
     }
 });
+apiRouter.get("/management/orders/quickbooks-export", async (request, response) => {
+    try {
+        const startDate = typeof request.query.startDate === "string" ? request.query.startDate.trim() : "";
+        const endDate = typeof request.query.endDate === "string" ? request.query.endDate.trim() : "";
+        const exportResult = await buildQuickBooksInvoiceExportCsv({ startDate, endDate });
+        response.setHeader("Content-Type", "text/csv; charset=utf-8");
+        response.setHeader("Content-Disposition", `attachment; filename="${exportResult.fileName}"`);
+        response.send(exportResult.csv);
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
+apiRouter.get("/management/inventory-entries/quickbooks-export", async (request, response) => {
+    try {
+        const startDate = typeof request.query.startDate === "string" ? request.query.startDate.trim() : "";
+        const endDate = typeof request.query.endDate === "string" ? request.query.endDate.trim() : "";
+        const groupId = typeof request.query.groupId === "string" ? request.query.groupId.trim() : "";
+        const exportResult = await buildQuickBooksBillExportCsv({ startDate, endDate, groupId });
+        response.setHeader("Content-Type", "text/csv; charset=utf-8");
+        response.setHeader("Content-Disposition", `attachment; filename="${exportResult.fileName}"`);
+        response.send(exportResult.csv);
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
 apiRouter.get("/warehouse/orders/next-invoice-number", async (request, response) => {
     try {
         const orderId = typeof request.query.orderId === "string" ? request.query.orderId.trim() : "";
@@ -2144,6 +2181,33 @@ apiRouter.get("/warehouse/orders/next-invoice-number", async (request, response)
             }
         }
         response.json({ invoiceNumber: await getNextInvoiceNumber() });
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
+apiRouter.put("/warehouse/orders/:id/invoice-number", async (request, response) => {
+    try {
+        const order = await Order.findById(request.params.id).lean();
+        if (!order) {
+            response.status(404).json({ message: "El pedido no existe." });
+            return;
+        }
+        if (order.status === "delivered") {
+            response.status(400).json({ message: "No puedes cambiar el consecutivo de un pedido ya facturado." });
+            return;
+        }
+        const invoiceNumber = await resolveRequestedInvoiceNumber(request.body?.invoiceNumber, order);
+        const updatedOrder = await Order.findByIdAndUpdate(order._id, { invoiceNumber }, { new: true, runValidators: true }).lean();
+        if (!updatedOrder) {
+            response.status(404).json({ message: "El pedido no existe." });
+            return;
+        }
+        response.json({
+            message: `Consecutivo de factura actualizado a #${invoiceNumber}.`,
+            order: await mapWarehouseOrderRecord(updatedOrder),
+            invoiceNumber,
+        });
     }
     catch (error) {
         sendCreationError(response, error);
@@ -3161,9 +3225,12 @@ apiRouter.post("/warehouse/orders/:id/invoice-change-requests", async (request, 
             response.status(400).json({ message: "Este pedido no tiene una factura registrada en cartera." });
             return;
         }
+        const currentInvoiceNumber = Number(carteraEntry.invoiceNumber ?? order.invoiceNumber ?? 0) || null;
+        const proposedInvoiceNumber = await resolveRequestedInvoiceNumber(payload.proposedInvoiceNumber ?? currentInvoiceNumber, order);
         const currentSnapshot = JSON.stringify(currentItems.map((item) => ({ productId: item.productId, quantity: item.quantity })));
         const proposedSnapshot = JSON.stringify(enrichedProposedItems.map((item) => ({ productId: item.productId, quantity: item.quantity })));
-        if (currentSnapshot === proposedSnapshot && Math.abs(currentInvoiceAmountAwg - proposedInvoiceAmountAwg) < 0.009) {
+        const invoiceNumberChanged = currentInvoiceNumber !== proposedInvoiceNumber;
+        if (currentSnapshot === proposedSnapshot && Math.abs(currentInvoiceAmountAwg - proposedInvoiceAmountAwg) < 0.009 && !invoiceNumberChanged) {
             response.status(400).json({ message: "No hay cambios en la factura respecto al pedido actual." });
             return;
         }
@@ -3173,7 +3240,8 @@ apiRouter.post("/warehouse/orders/:id/invoice-change-requests", async (request, 
             storeName: String(order.storeName ?? ""),
             salesRepName: String(order.salesRepName ?? ""),
             routeName: String(order.routeName ?? ""),
-            invoiceNumber: Number(carteraEntry.invoiceNumber ?? 0) || undefined,
+            invoiceNumber: currentInvoiceNumber ?? undefined,
+            proposedInvoiceNumber,
             status: "pending",
             requestedByUserId,
             requestedByUserName,
@@ -3241,12 +3309,17 @@ apiRouter.put("/management/invoice-change-requests/:id/approve", async (request,
             notes: String(item.notes ?? ""),
         }));
         await applyOrderInventoryDelta(String(order._id), order.items, proposedItems);
-        await Order.findByIdAndUpdate(order._id, { items: proposedItems }, { new: true, runValidators: true });
+        const proposedInvoiceNumber = Number(changeRequest.proposedInvoiceNumber ?? changeRequest.invoiceNumber ?? 0);
+        await Order.findByIdAndUpdate(order._id, {
+            items: proposedItems,
+            ...(proposedInvoiceNumber >= MIN_INVOICE_NUMBER ? { invoiceNumber: proposedInvoiceNumber } : {}),
+        }, { new: true, runValidators: true });
         await updateCarteraAfterInvoiceChange({
             carteraEntryId: String(carteraEntry._id),
             orderId: String(order._id),
             newInvoiceAmountAwg: Number(changeRequest.proposedInvoiceAmountAwg ?? 0),
             paymentMethod: String(changeRequest.currentPaymentMethod ?? carteraEntry.paymentMethod ?? "credito"),
+            invoiceNumber: proposedInvoiceNumber >= MIN_INVOICE_NUMBER ? proposedInvoiceNumber : undefined,
         });
         changeRequest.status = "approved";
         changeRequest.reviewedByUserId = reviewedByUserId;
@@ -4007,6 +4080,29 @@ apiRouter.get("/management/performance/store-rankings", async (_request, respons
 apiRouter.get("/management/performance/product-rankings", async (_request, response) => {
     try {
         response.json(await buildProductPerformanceRankings());
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
+apiRouter.get("/management/order-planner", async (request, response) => {
+    try {
+        await ensureOrderDeliveryDates();
+        const startDate = typeof request.query.startDate === "string" ? request.query.startDate.trim() : "";
+        const endDate = typeof request.query.endDate === "string" ? request.query.endDate.trim() : "";
+        const category = typeof request.query.category === "string" ? request.query.category.trim() : "";
+        const productId = typeof request.query.productId === "string" ? request.query.productId.trim() : "";
+        const coverageDays = typeof request.query.coverageDays === "string" ? request.query.coverageDays.trim() : "";
+        const alertsOnly = request.query.alertsOnly === "true" || request.query.alertsOnly === "1";
+        const report = await buildOrderPlannerReport({
+            startDate,
+            endDate,
+            coverageDays: coverageDays ? Number(coverageDays) : undefined,
+            category,
+            productId,
+            alertsOnly,
+        });
+        response.json(report);
     }
     catch (error) {
         sendCreationError(response, error);
@@ -6242,6 +6338,29 @@ apiRouter.get("/management/cartera", async (request, response) => {
             updatedAt: collection.updatedAt,
         })),
     });
+});
+apiRouter.get("/management/financial-reports", async (request, response) => {
+    try {
+        await syncDeliveredOrdersIntoCartera();
+        const startDate = typeof request.query.startDate === "string" ? request.query.startDate.trim() : "";
+        const endDate = typeof request.query.endDate === "string" ? request.query.endDate.trim() : "";
+        const storeId = typeof request.query.storeId === "string" ? request.query.storeId.trim() : "";
+        let storeName = null;
+        if (storeId) {
+            const store = await Store.findById(storeId).select({ name: 1 }).lean();
+            storeName = store ? String(store.name ?? "") : null;
+        }
+        const report = await buildFinancialReports({
+            startDate,
+            endDate,
+            storeId,
+            storeName,
+        });
+        response.json(report);
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
 });
 apiRouter.post("/management/cartera/entries/:id/collect", async (request, response) => {
     try {

@@ -953,6 +953,215 @@ h1 {
   white-space: nowrap;
 }
 
+.financial-report-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.financial-statement {
+  display: grid;
+  gap: 0;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.financial-statement-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  background: rgba(17, 17, 17, 0.04);
+  border-bottom: 1px solid rgba(17, 17, 17, 0.08);
+}
+
+.financial-statement-header h3 {
+  margin: 0;
+}
+
+.financial-statement-header p {
+  margin: 0;
+  color: rgba(17, 17, 17, 0.62);
+}
+
+.financial-statement-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 18px;
+  border-bottom: 1px solid rgba(17, 17, 17, 0.06);
+}
+
+.financial-statement-row:last-child {
+  border-bottom: 0;
+}
+
+.financial-statement-row.is-level-1 span {
+  padding-left: 18px;
+}
+
+.financial-statement-row.is-subtotal {
+  background: rgba(17, 17, 17, 0.03);
+  font-weight: 600;
+}
+
+.financial-statement-row.is-total {
+  background: rgba(0, 122, 255, 0.08);
+  font-weight: 700;
+}
+
+.financial-statement-row.is-reference {
+  color: rgba(17, 17, 17, 0.72);
+  font-style: italic;
+}
+
+.financial-report-notes {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: rgba(17, 17, 17, 0.03);
+}
+
+.financial-report-notes h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.financial-report-notes ul {
+  margin: 0;
+  padding-left: 18px;
+  color: rgba(17, 17, 17, 0.72);
+  line-height: 1.6;
+}
+
+.order-planner-layout {
+  display: grid;
+  gap: 18px;
+}
+
+.order-planner-filter-grid {
+  margin-bottom: 12px;
+}
+
+.order-planner-presets {
+  align-self: end;
+}
+
+.order-planner-kpi-grid {
+  margin: 18px 0;
+}
+
+.order-planner-weekly-trend {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: rgba(17, 17, 17, 0.03);
+}
+
+.order-planner-weekly-trend h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.order-planner-weekly-bars {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(56px, 1fr));
+  gap: 10px;
+  align-items: end;
+  min-height: 140px;
+}
+
+.order-planner-weekly-bar {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  align-content: end;
+  min-height: 140px;
+}
+
+.order-planner-weekly-bar-fill {
+  width: 100%;
+  max-width: 42px;
+  border-radius: 8px 8px 4px 4px;
+  background: linear-gradient(180deg, rgba(0, 122, 255, 0.85), rgba(0, 122, 255, 0.35));
+}
+
+.order-planner-weekly-bar strong {
+  font-size: 0.82rem;
+}
+
+.order-planner-weekly-bar span {
+  font-size: 0.75rem;
+  color: rgba(17, 17, 17, 0.62);
+  text-align: center;
+}
+
+.order-planner-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  margin-bottom: 14px;
+  color: rgba(17, 17, 17, 0.72);
+  font-size: 0.88rem;
+}
+
+.planner-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-style: normal;
+}
+
+.planner-pill--critical {
+  background: rgba(255, 59, 48, 0.14);
+  color: #b42318;
+}
+
+.planner-pill--warning {
+  background: rgba(255, 149, 0, 0.16);
+  color: #b54708;
+}
+
+.planner-pill--watch {
+  background: rgba(255, 204, 0, 0.18);
+  color: #8a6d00;
+}
+
+.planner-pill--ok {
+  background: rgba(52, 199, 89, 0.14);
+  color: #027a48;
+}
+
+.planner-pill--no_demand {
+  background: rgba(142, 142, 147, 0.16);
+  color: rgba(17, 17, 17, 0.72);
+}
+
+.order-planner-table tbody tr {
+  cursor: pointer;
+}
+
+.order-planner-row.is-selected {
+  background: rgba(0, 122, 255, 0.08);
+}
+
+.order-planner-detail-card {
+  margin-top: 18px;
+}
+
 .import-page-card {
   display: grid;
   gap: 24px;
@@ -3556,6 +3765,11 @@ h1 {
   margin-top: 22px;
 }
 
+.creation-form > .field:not(.field-full):not(.field-two-third) {
+  grid-column: span 4;
+  min-width: 0;
+}
+
 .field-full {
   grid-column: 1 / -1;
 }
@@ -5014,7 +5228,8 @@ h1 {
     align-items: flex-start;
   }
 
-  .field-third {
+  .field-third,
+  .creation-form > .field:not(.field-full):not(.field-two-third) {
     grid-column: 1 / -1;
   }
 

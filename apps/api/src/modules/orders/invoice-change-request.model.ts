@@ -19,6 +19,7 @@ const invoiceChangeRequestSchema = new Schema(
     salesRepName: { type: String, trim: true, default: "" },
     routeName: { type: String, trim: true, default: "" },
     invoiceNumber: { type: Number, min: 1 },
+    proposedInvoiceNumber: { type: Number, min: 1 },
     status: {
       type: String,
       enum: ["pending", "approved", "rejected"],

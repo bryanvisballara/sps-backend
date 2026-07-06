@@ -33,12 +33,14 @@ type ActiveSection =
   | "store-performance"
   | "sales-rep-performance"
   | "product-performance"
+  | "order-planner"
   | "catalog"
   | "imports"
   | "import-billing"
   | "accounting"
   | "logistics-accounting"
   | "cartera"
+  | "financial-reports"
   | "promotions"
   | "warehouse-dispatch"
   | "warehouse-inventory"
@@ -863,6 +865,7 @@ type InvoiceChangeRequestRecord = {
   salesRepName: string;
   routeName: string;
   invoiceNumber: number | null;
+  proposedInvoiceNumber: number | null;
   status: "pending" | "approved" | "rejected";
   requestedByUserId: string;
   requestedByUserName: string;
@@ -929,6 +932,123 @@ type CarteraSummary = {
   outstandingTotal: number;
   facturacionByPaymentMethod: Record<CarteraPaymentMethod, number> & { datafono?: number };
   recaudoByPaymentMethod: Record<CarteraCollectionPaymentMethod, number> & { datafono?: number };
+};
+
+type FinancialReportLine = {
+  key: string;
+  label: string;
+  amount: number;
+  level: 0 | 1 | 2;
+  tone?: "normal" | "subtotal" | "total" | "reference";
+};
+
+type FinancialReportsData = {
+  filters: {
+    startDate: string;
+    endDate: string;
+    storeId: string;
+    storeName: string | null;
+  };
+  profitAndLoss: {
+    lines: FinancialReportLine[];
+    metrics: {
+      revenue: number;
+      costOfGoodsSold: number;
+      grossProfit: number;
+      operatingExpenses: number;
+      fixedCosts: number;
+      netIncome: number;
+      collectionsInPeriod: number;
+      invoiceCount: number;
+    };
+    expenseBreakdown: Array<{ category: string; label: string; amount: number }>;
+    storeBreakdown: Array<{
+      storeId: string;
+      storeName: string;
+      revenue: number;
+      costOfGoodsSold: number;
+      grossProfit: number;
+    }> | null;
+  };
+  balance: {
+    asOfDate: string;
+    lines: Array<FinancialReportLine & { section: "assets" | "liabilities" | "equity" }>;
+    metrics: {
+      cashEstimate: number;
+      accountsReceivable: number;
+      inventory: number;
+      totalAssets: number;
+      totalLiabilities: number;
+      retainedEarnings: number;
+      totalEquity: number;
+    };
+  };
+  notes: string[];
+};
+
+type OrderPlannerAlertLevel = "critical" | "warning" | "watch" | "ok" | "no_demand";
+
+type OrderPlannerProductRow = {
+  productId: string;
+  productSku: string;
+  productName: string;
+  category: string;
+  supplier: string;
+  currentStock: number;
+  minStockAlert: number;
+  nearestExpiration: string | null;
+  daysUntilExpiration: number | null;
+  unitsSoldInPeriod: number;
+  orderCountInPeriod: number;
+  storeCountInPeriod: number;
+  avgDailyUnits: number;
+  avgWeeklyUnits: number;
+  daysUntilStockout: number | null;
+  coverageDaysTarget: number;
+  suggestedOrderQty: number;
+  trend: "up" | "down" | "stable" | "unknown";
+  trendPercent: number | null;
+  rotationLabel: string;
+  alertLevel: OrderPlannerAlertLevel;
+  alertMessage: string;
+};
+
+type OrderPlannerData = {
+  filters: {
+    startDate: string;
+    endDate: string;
+    coverageDays: number;
+    category: string;
+    productId: string;
+    alertsOnly: boolean;
+  };
+  summary: {
+    totalProducts: number;
+    criticalCount: number;
+    warningCount: number;
+    watchCount: number;
+    noDemandCount: number;
+    suggestedOrderUnits: number;
+    periodDays: number;
+    totalUnitsSold: number;
+  };
+  products: OrderPlannerProductRow[];
+  selectedProduct: {
+    productId: string;
+    productName: string;
+    productSku: string;
+    unitsSoldInPeriod: number;
+    stores: Array<{
+      storeId: string;
+      storeName: string;
+      address: string;
+      unitsSold: number;
+      orderCount: number;
+      sharePercent: number;
+    }>;
+  } | null;
+  weeklyTrend: Array<{ weekStart: string; weekLabel: string; totalUnits: number }>;
+  notes: string[];
 };
 
 type WarehouseCreditCollectionDraft = {
@@ -1256,6 +1376,7 @@ const managementSidebarSections = [
       { key: "store-performance", label: "Desempeño de tiendas" },
       { key: "sales-rep-performance", label: "Desempeño de vendedores" },
       { key: "product-performance", label: "Desempeño de productos" },
+      { key: "order-planner", label: "Planificador de pedidos" },
       { key: "logistics-accounting", label: "Contabilidad" },
     ],
   },
@@ -1266,6 +1387,7 @@ const managementSidebarSections = [
       { key: "orders", label: "Pedidos" },
       { key: "catalog", label: "Catálogo" },
       { key: "cartera", label: "Cartera" },
+      { key: "financial-reports", label: "P&G y Balance" },
       { key: "promotions", label: "Promociones" },
       { key: "invoice-change-requests", label: "Solicitudes factura" },
       { key: "order-delete-requests", label: "Solicitudes borrado" },
@@ -1325,6 +1447,7 @@ const contabilidadSidebarSections = [
       { key: "orders", label: "Pedidos" },
       { key: "catalog", label: "Catálogo" },
       { key: "cartera", label: "Cartera" },
+      { key: "financial-reports", label: "P&G y Balance" },
       { key: "promotions", label: "Promociones" },
     ],
   },
@@ -1350,6 +1473,7 @@ const contabilidadAllowedSections = new Set<ActiveSection>([
   "orders",
   "catalog",
   "cartera",
+  "financial-reports",
   "promotions",
   "warehouse-dispatch",
   "warehouse-inventory",
@@ -1404,6 +1528,19 @@ const operationalExpenseCategoryOptions = [
   { value: "maintenance", label: "Mantenimiento" },
   { value: "unforeseen", label: "Imprevistos" },
   { value: "logistics", label: "Logística" },
+  { value: "tolls", label: "Peajes" },
+  { value: "other", label: "Otro" },
+];
+
+const logisticsExpenseCategoryOptions = [
+  { value: "payroll", label: "Nomina" },
+  { value: "rent", label: "Arriendo" },
+  { value: "utilities", label: "Servicios" },
+  { value: "fuel", label: "Combustible" },
+  { value: "maintenance", label: "Mantenimiento" },
+  { value: "administration", label: "Administracion" },
+  { value: "unforeseen", label: "Imprevisto" },
+  { value: "delivery", label: "Despacho" },
   { value: "tolls", label: "Peajes" },
   { value: "other", label: "Otro" },
 ];
@@ -2732,6 +2869,11 @@ function formatPaymentMethodLabel(paymentMethod: string) {
   return match?.label ?? paymentMethod;
 }
 
+function formatLogisticsExpenseCategoryLabel(category: string) {
+  const match = logisticsExpenseCategoryOptions.find((option) => option.value === category);
+  return match?.label ?? category;
+}
+
 function resolveStoreDefaultPaymentMethod(value?: string): CarteraPaymentMethod | "" {
   if (value === "credito" || value === "transferencia" || value === "efectivo") {
     return value;
@@ -3278,6 +3420,34 @@ function formatAwgCurrency(value: number) {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   }).format(Number.isFinite(value) ? value : 0);
+}
+
+function formatOrderPlannerAlertLabel(level: OrderPlannerAlertLevel) {
+  switch (level) {
+    case "critical":
+      return "Critico";
+    case "warning":
+      return "Alerta";
+    case "watch":
+      return "Vigilar";
+    case "no_demand":
+      return "Sin demanda";
+    default:
+      return "OK";
+  }
+}
+
+function formatOrderPlannerTrend(trend: OrderPlannerProductRow["trend"], trendPercent: number | null) {
+  if (trend === "unknown" || trendPercent === null) {
+    return "Sin tendencia";
+  }
+
+  if (trend === "stable") {
+    return "Estable";
+  }
+
+  const prefix = trend === "up" ? "Sube" : "Baja";
+  return `${prefix} ${Math.abs(trendPercent).toFixed(0)}%`;
 }
 
 function matchesSellerCatalogSearch(product: SellerCatalogProduct, query: string) {
@@ -4192,6 +4362,11 @@ export default function App() {
   });
   const [selectedInventoryEntryHistoryGroupId, setSelectedInventoryEntryHistoryGroupId] = useState("");
   const [deletingInventoryEntryHistoryGroupId, setDeletingInventoryEntryHistoryGroupId] = useState("");
+  const [inventoryEntriesStartDate, setInventoryEntriesStartDate] = useState(() => getBusinessMonthStartDateKey());
+  const [inventoryEntriesEndDate, setInventoryEntriesEndDate] = useState(() => getBusinessDateKey());
+  const [isDownloadingInventoryQuickBooksExport, setIsDownloadingInventoryQuickBooksExport] = useState(false);
+  const [downloadingInventoryQuickBooksGroupId, setDownloadingInventoryQuickBooksGroupId] = useState("");
+  const [inventoryEntryGroupsFeedback, setInventoryEntryGroupsFeedback] = useState<CreationStatus | null>(null);
   const [inventoryEntryStatus, setInventoryEntryStatus] = useState<CreationStatus | null>(null);
   const [isSavingInventoryEntry, setIsSavingInventoryEntry] = useState(false);
   const [inventoryNameFilter, setInventoryNameFilter] = useState("");
@@ -4380,6 +4555,9 @@ export default function App() {
   const [warehouseOrders, setWarehouseOrders] = useState<SellerOrderRecord[]>([]);
   const [warehouseOrdersError, setWarehouseOrdersError] = useState("");
   const [isLoadingWarehouseOrders, setIsLoadingWarehouseOrders] = useState(false);
+  const [completedOrdersStartDate, setCompletedOrdersStartDate] = useState(() => getBusinessMonthStartDateKey());
+  const [completedOrdersEndDate, setCompletedOrdersEndDate] = useState(() => getBusinessDateKey());
+  const [isDownloadingQuickBooksExport, setIsDownloadingQuickBooksExport] = useState(false);
   const [selectedWarehouseOrderDetail, setSelectedWarehouseOrderDetail] = useState<SellerOrderRecord | null>(null);
   const [deletingWarehouseOrderId, setDeletingWarehouseOrderId] = useState("");
   const [warehouseOrderChecklist, setWarehouseOrderChecklist] = useState<Record<string, boolean>>({});
@@ -4411,6 +4589,23 @@ export default function App() {
   }));
   const [carteraCollectionStatus, setCarteraCollectionStatus] = useState<CreationStatus | null>(null);
   const [isSavingCarteraCollection, setIsSavingCarteraCollection] = useState(false);
+  const [financialReportsTab, setFinancialReportsTab] = useState<"profit-and-loss" | "balance">("profit-and-loss");
+  const [financialReportsStartDate, setFinancialReportsStartDate] = useState(() => getBusinessMonthStartDateKey());
+  const [financialReportsEndDate, setFinancialReportsEndDate] = useState(() => getBusinessDateKey());
+  const [financialReportsStoreId, setFinancialReportsStoreId] = useState("");
+  const [financialReportsData, setFinancialReportsData] = useState<FinancialReportsData | null>(null);
+  const [isLoadingFinancialReports, setIsLoadingFinancialReports] = useState(false);
+  const [financialReportsError, setFinancialReportsError] = useState("");
+  const [orderPlannerStartDate, setOrderPlannerStartDate] = useState(() => addDaysToBusinessDateKey(getBusinessDateKey(), -29));
+  const [orderPlannerEndDate, setOrderPlannerEndDate] = useState(() => getBusinessDateKey());
+  const [orderPlannerCoverageDays, setOrderPlannerCoverageDays] = useState("14");
+  const [orderPlannerCategoryFilter, setOrderPlannerCategoryFilter] = useState("");
+  const [orderPlannerAlertsOnly, setOrderPlannerAlertsOnly] = useState(false);
+  const [orderPlannerSearchQuery, setOrderPlannerSearchQuery] = useState("");
+  const [selectedOrderPlannerProductId, setSelectedOrderPlannerProductId] = useState("");
+  const [orderPlannerData, setOrderPlannerData] = useState<OrderPlannerData | null>(null);
+  const [isLoadingOrderPlanner, setIsLoadingOrderPlanner] = useState(false);
+  const [orderPlannerError, setOrderPlannerError] = useState("");
   const [lotPromotions, setLotPromotions] = useState<LotPromotionRecord[]>([]);
   const [isLoadingLotPromotions, setIsLoadingLotPromotions] = useState(false);
   const [lotPromotionStatus, setLotPromotionStatus] = useState<CreationStatus | null>(null);
@@ -4441,6 +4636,8 @@ export default function App() {
   const [invoiceChangeOrder, setInvoiceChangeOrder] = useState<SellerOrderRecord | null>(null);
   const [invoiceChangeItemDraft, setInvoiceChangeItemDraft] = useState<Record<string, string>>({});
   const [invoiceChangeNotes, setInvoiceChangeNotes] = useState("");
+  const [invoiceChangeNumberDraft, setInvoiceChangeNumberDraft] = useState("");
+  const [invoiceChangeOriginalNumber, setInvoiceChangeOriginalNumber] = useState<number | null>(null);
   const [invoiceChangeStatus, setInvoiceChangeStatus] = useState<CreationStatus | null>(null);
   const [isSubmittingInvoiceChangeRequest, setIsSubmittingInvoiceChangeRequest] = useState(false);
   const [invoiceChangeRequests, setInvoiceChangeRequests] = useState<InvoiceChangeRequestRecord[]>([]);
@@ -4668,6 +4865,12 @@ export default function App() {
       }, new Map<string, InventoryEntryHistoryGroup>())
       .values(),
   ).sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+  const normalizedInventoryEntriesStartDate = inventoryEntriesStartDate.trim() || "0000-01-01";
+  const normalizedInventoryEntriesEndDate = inventoryEntriesEndDate.trim() || "9999-12-31";
+  const filteredInventoryEntryHistoryGroups = inventoryEntryHistoryGroups.filter((group) => {
+    const dateKey = String(group.createdAt).slice(0, 10);
+    return dateKey >= normalizedInventoryEntriesStartDate && dateKey <= normalizedInventoryEntriesEndDate;
+  });
   const selectedInventoryEntryHistoryGroup = inventoryEntryHistoryGroups.find((group) => group.id === selectedInventoryEntryHistoryGroupId) ?? null;
   const isCreationSection = creationSectionKeys.includes(normalizedCollectionKey as (typeof creationSectionKeys)[number]);
   const isProductCreateSection = activeSection === "products-create";
@@ -5060,6 +5263,14 @@ export default function App() {
       || invoiceChangeOrder.items.some((item) => (
         String(item.quantity) !== (invoiceChangeItemDraft[item.productId] ?? String(item.quantity))
       ))
+      || (
+        invoiceChangeOriginalNumber !== null
+        && Number(invoiceChangeNumberDraft.trim() || 0) !== invoiceChangeOriginalNumber
+      )
+      || (
+        invoiceChangeOriginalNumber === null
+        && Number(invoiceChangeNumberDraft.trim() || 0) >= MIN_INVOICE_NUMBER
+      )
     ),
   );
   const pendingInvoiceChangeOrderIds = new Set(
@@ -5071,6 +5282,12 @@ export default function App() {
   const warehouseIncomingOrders = warehouseOrders.filter((order) => order.status === "submitted");
   const warehouseDispatchOrders = warehouseOrders.filter((order) => order.status === "dispatched");
   const warehouseCompletedOrders = warehouseOrders.filter((order) => order.status === "delivered");
+  const filteredWarehouseCompletedOrders = warehouseCompletedOrders.filter((order) => {
+    const dateKey = getOrderDeliveryDateKey(order);
+    const startDate = completedOrdersStartDate || "0000-01-01";
+    const endDate = completedOrdersEndDate || "9999-12-31";
+    return dateKey >= startDate && dateKey <= endDate;
+  });
   const warehouseAllItemsChecked = warehousePricedItems.length > 0
     && warehousePricedItems.every((item) => Boolean(warehouseOrderChecklist[item.productId]));
   const warehouseSomeItemsChecked = warehousePricedItems.some((item) => Boolean(warehouseOrderChecklist[item.productId]));
@@ -5620,9 +5837,13 @@ export default function App() {
     if (fc.frequency === "one-time") return sum + (startMonth === normalizedLogisticsMonthFilter ? Number(fc.amountAwg ?? 0) : 0);
     return sum + normalizeMonthlyAmount(Number(fc.amountAwg ?? 0), fc.frequency);
   }, 0);
-  const logisticsMonthlyExpenses = logisticsExpenses
-    .filter((ex) => String(ex.expenseDate).slice(0, 7) === normalizedLogisticsMonthFilter)
-    .reduce((sum, ex) => sum + Number(ex.amountAwg ?? 0), 0);
+  const logisticsMonthlyExpenseRows = logisticsExpenses.filter(
+    (ex) => String(ex.expenseDate).slice(0, 7) === normalizedLogisticsMonthFilter,
+  );
+  const logisticsMonthlyExpenses = logisticsMonthlyExpenseRows.reduce(
+    (sum, ex) => sum + Number(ex.amountAwg ?? 0),
+    0,
+  );
   const logisticsMonthlyAdditionalCosts = logisticsMonthlyFixedCosts + logisticsMonthlyExpenses;
   const logisticsMonthlyNetUtility = logisticsMonthlyUtility - logisticsMonthlyAdditionalCosts;
   const carteraDateRangeLabel = formatCarteraDateRangeLabel(carteraStartDateFilter, carteraEndDateFilter);
@@ -6135,6 +6356,23 @@ export default function App() {
   }, [activeSection, selectedCampaignProductId, sessionUser]);
 
   useEffect(() => {
+    if (sessionUser?.role !== "management" || activeSection !== "order-planner") {
+      return;
+    }
+
+    void refreshOrderPlanner();
+  }, [
+    activeSection,
+    orderPlannerStartDate,
+    orderPlannerEndDate,
+    orderPlannerCoverageDays,
+    orderPlannerCategoryFilter,
+    orderPlannerAlertsOnly,
+    selectedOrderPlannerProductId,
+    sessionUser,
+  ]);
+
+  useEffect(() => {
     if (activeSection !== "sales-rep-performance") {
       return;
     }
@@ -6207,10 +6445,15 @@ export default function App() {
       return;
     }
 
+    if (activeSection === "financial-reports") {
+      void refreshFinancialReports();
+      return;
+    }
+
     if (activeSection === "dashboard") {
       void refreshCarteraData({ unfiltered: true });
     }
-  }, [activeSection, carteraStartDateFilter, carteraEndDateFilter, carteraCollectionStartDateFilter, carteraCollectionEndDateFilter, carteraCollectionPaymentMethodFilter, sessionUser]);
+  }, [activeSection, carteraStartDateFilter, carteraEndDateFilter, carteraCollectionStartDateFilter, carteraCollectionEndDateFilter, carteraCollectionPaymentMethodFilter, financialReportsStartDate, financialReportsEndDate, financialReportsStoreId, sessionUser]);
 
   useEffect(() => {
     const canAccessBilling = sessionUser?.role === "management" || sessionUser?.role === "colombia-ops";
@@ -8108,6 +8351,90 @@ export default function App() {
     }
   }
 
+  async function refreshFinancialReports() {
+    try {
+      setIsLoadingFinancialReports(true);
+      setFinancialReportsError("");
+
+      const normalizedRange = normalizeCarteraDateRange(financialReportsStartDate, financialReportsEndDate);
+      const params = new URLSearchParams();
+
+      if (normalizedRange.startDate) {
+        params.set("startDate", normalizedRange.startDate);
+      }
+
+      if (normalizedRange.endDate) {
+        params.set("endDate", normalizedRange.endDate);
+      }
+
+      if (financialReportsStoreId) {
+        params.set("storeId", financialReportsStoreId);
+      }
+
+      const query = params.toString().length > 0 ? `?${params.toString()}` : "";
+      const response = await fetch(`${apiBaseUrl}/management/financial-reports${query}`);
+      const data = (await response.json()) as FinancialReportsData & { message?: string };
+
+      if (!response.ok || !data.profitAndLoss || !data.balance) {
+        setFinancialReportsError(data.message ?? "No fue posible cargar los reportes financieros.");
+        return;
+      }
+
+      setFinancialReportsData(data);
+    } catch {
+      setFinancialReportsError("No fue posible conectar con el backend.");
+    } finally {
+      setIsLoadingFinancialReports(false);
+    }
+  }
+
+  async function refreshOrderPlanner() {
+    try {
+      setIsLoadingOrderPlanner(true);
+      setOrderPlannerError("");
+
+      const normalizedRange = normalizeCarteraDateRange(orderPlannerStartDate, orderPlannerEndDate);
+      const params = new URLSearchParams();
+      const coverageDays = Math.min(90, Math.max(1, Math.round(Number(orderPlannerCoverageDays) || 14)));
+
+      if (normalizedRange.startDate) {
+        params.set("startDate", normalizedRange.startDate);
+      }
+
+      if (normalizedRange.endDate) {
+        params.set("endDate", normalizedRange.endDate);
+      }
+
+      params.set("coverageDays", String(coverageDays));
+
+      if (orderPlannerCategoryFilter) {
+        params.set("category", orderPlannerCategoryFilter);
+      }
+
+      if (selectedOrderPlannerProductId) {
+        params.set("productId", selectedOrderPlannerProductId);
+      }
+
+      if (orderPlannerAlertsOnly) {
+        params.set("alertsOnly", "true");
+      }
+
+      const response = await fetch(`${apiBaseUrl}/management/order-planner?${params.toString()}`);
+      const data = (await response.json()) as OrderPlannerData & { message?: string };
+
+      if (!response.ok || !Array.isArray(data.products) || !data.summary) {
+        setOrderPlannerError(data.message ?? "No fue posible cargar el planificador de pedidos.");
+        return;
+      }
+
+      setOrderPlannerData(data);
+    } catch {
+      setOrderPlannerError("No fue posible conectar con el backend.");
+    } finally {
+      setIsLoadingOrderPlanner(false);
+    }
+  }
+
   function openCarteraCollectForm(entry: CarteraEntryRecord) {
     if (!entry._id) {
       return;
@@ -8549,6 +8876,10 @@ export default function App() {
           tone: "error",
           message: data.message ?? "No fue posible borrar la entrada de inventario.",
         });
+        setInventoryEntryGroupsFeedback({
+          tone: "error",
+          message: data.message ?? "No fue posible borrar la entrada de inventario.",
+        });
         return;
       }
 
@@ -8558,6 +8889,10 @@ export default function App() {
 
       await refreshInventorySummary();
       setInventoryEntryStatus({
+        tone: "success",
+        message: data.message ?? "Entrada de inventario borrada correctamente.",
+      });
+      setInventoryEntryGroupsFeedback({
         tone: "success",
         message: data.message ?? "Entrada de inventario borrada correctamente.",
       });
@@ -9240,7 +9575,9 @@ export default function App() {
       return;
     }
 
-    const isWarehouseInventoryEntry = sessionUser?.role === "warehouse-aruba" || sessionUser?.role === "contabilidad";
+    const isWarehouseInventoryEntry = sessionUser?.role === "warehouse-aruba"
+      || sessionUser?.role === "contabilidad"
+      || sessionUser?.role === "management";
     let usdToAwgRate = Number(inventoryUsdToAwgRate || 0);
     let normalizedItems: Array<{
       productId: string;
@@ -10461,6 +10798,304 @@ export default function App() {
     }
   }
 
+  async function handleDownloadQuickBooksExport() {
+    try {
+      setIsDownloadingQuickBooksExport(true);
+      setWarehouseOrderCompletionStatus(null);
+
+      const normalizedRange = normalizeCarteraDateRange(completedOrdersStartDate, completedOrdersEndDate);
+      const params = new URLSearchParams();
+
+      if (normalizedRange.startDate) {
+        params.set("startDate", normalizedRange.startDate);
+      }
+
+      if (normalizedRange.endDate) {
+        params.set("endDate", normalizedRange.endDate);
+      }
+
+      const response = await fetch(`${apiBaseUrl}/management/orders/quickbooks-export?${params.toString()}`);
+
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { message?: string };
+        throw new Error(data.message ?? "No fue posible generar la exportacion para QuickBooks.");
+      }
+
+      const blob = await response.blob();
+      const fileName = `quickbooks-facturas-${normalizedRange.startDate || "inicio"}-a-${normalizedRange.endDate || "fin"}.csv`;
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(downloadUrl);
+
+      setWarehouseOrderCompletionStatus({
+        tone: "success",
+        message: `Exportacion QuickBooks descargada (${normalizedRange.startDate} a ${normalizedRange.endDate}).`,
+      });
+    } catch (error) {
+      setWarehouseOrderCompletionStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible descargar la exportacion.",
+      });
+    } finally {
+      setIsDownloadingQuickBooksExport(false);
+    }
+  }
+
+  async function handleDownloadInventoryQuickBooksExport(options?: { groupId?: string }) {
+    try {
+      if (options?.groupId) {
+        setDownloadingInventoryQuickBooksGroupId(options.groupId);
+      } else {
+        setIsDownloadingInventoryQuickBooksExport(true);
+      }
+
+      setInventoryEntryGroupsFeedback(null);
+
+      const normalizedRange = normalizeCarteraDateRange(inventoryEntriesStartDate, inventoryEntriesEndDate);
+      const params = new URLSearchParams();
+
+      if (normalizedRange.startDate) {
+        params.set("startDate", normalizedRange.startDate);
+      }
+
+      if (normalizedRange.endDate) {
+        params.set("endDate", normalizedRange.endDate);
+      }
+
+      if (options?.groupId) {
+        params.set("groupId", options.groupId);
+      }
+
+      const response = await fetch(`${apiBaseUrl}/management/inventory-entries/quickbooks-export?${params.toString()}`);
+
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { message?: string };
+        throw new Error(data.message ?? "No fue posible generar la exportacion para QuickBooks.");
+      }
+
+      const blob = await response.blob();
+      const fileName = options?.groupId
+        ? `quickbooks-factura-proveedor-${options.groupId}.csv`
+        : `quickbooks-facturas-proveedor-${normalizedRange.startDate || "inicio"}-a-${normalizedRange.endDate || "fin"}.csv`;
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(downloadUrl);
+
+      setInventoryEntryGroupsFeedback({
+        tone: "success",
+        message: options?.groupId
+          ? "Exportacion QuickBooks del registro descargada."
+          : `Exportacion QuickBooks descargada (${normalizedRange.startDate} a ${normalizedRange.endDate}).`,
+      });
+    } catch (error) {
+      setInventoryEntryGroupsFeedback({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible descargar la exportacion.",
+      });
+    } finally {
+      setIsDownloadingInventoryQuickBooksExport(false);
+      setDownloadingInventoryQuickBooksGroupId("");
+    }
+  }
+
+  function getInventoryEntryGroupTotalCostUsd(group: InventoryEntryHistoryGroup) {
+    return group.items.reduce(
+      (sum, item) => sum + Number(item.quantity ?? 0) * Number(item.entryCostUsd ?? 0),
+      0,
+    );
+  }
+
+  function renderInventoryEntryGroupsSection() {
+    return (
+      <>
+        {inventoryEntryGroupsFeedback ? (
+          <p className={`form-feedback ${inventoryEntryGroupsFeedback.tone === "error" ? "error" : "success"}`}>
+            {inventoryEntryGroupsFeedback.message}
+          </p>
+        ) : null}
+
+        <article className="database-card">
+          <div className="creation-header database-header">
+            <div>
+              <h2>Inventario ingresado</h2>
+              <p>Cada fila es un registro completo de entrada (varios productos en un solo lote). Exporta a QuickBooks como factura de proveedor.</p>
+            </div>
+            <div className="inventory-header-actions">
+              <p className="management-table-meta">{filteredInventoryEntryHistoryGroups.length} registro{filteredInventoryEntryHistoryGroups.length === 1 ? "" : "s"}</p>
+              <button
+                className="ghost-button ghost-button--accent"
+                type="button"
+                disabled={isDownloadingInventoryQuickBooksExport || filteredInventoryEntryHistoryGroups.length === 0}
+                onClick={() => void handleDownloadInventoryQuickBooksExport()}
+              >
+                {isDownloadingInventoryQuickBooksExport ? "Generando CSV..." : "Exportar QuickBooks"}
+              </button>
+            </div>
+          </div>
+
+          <div className="filter-grid cartera-date-filter-grid">
+            <label className="field">
+              <span>Desde</span>
+              <input
+                type="date"
+                value={inventoryEntriesStartDate}
+                onChange={(event) => {
+                  const nextRange = normalizeCarteraDateRange(event.target.value, inventoryEntriesEndDate);
+                  setInventoryEntriesStartDate(nextRange.startDate);
+                  setInventoryEntriesEndDate(nextRange.endDate);
+                }}
+              />
+            </label>
+            <label className="field">
+              <span>Hasta</span>
+              <input
+                type="date"
+                value={inventoryEntriesEndDate}
+                onChange={(event) => {
+                  const nextRange = normalizeCarteraDateRange(inventoryEntriesStartDate, event.target.value);
+                  setInventoryEntriesStartDate(nextRange.startDate);
+                  setInventoryEntriesEndDate(nextRange.endDate);
+                }}
+              />
+            </label>
+          </div>
+
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Bodega</th>
+                  <th>Productos</th>
+                  <th>Unidades</th>
+                  <th>Costo total (USD)</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredInventoryEntryHistoryGroups.length > 0 ? (
+                  filteredInventoryEntryHistoryGroups.map((group) => {
+                    const isDeletingGroup = deletingInventoryEntryHistoryGroupId === group.id;
+                    const isExportingGroup = downloadingInventoryQuickBooksGroupId === group.id;
+
+                    return (
+                      <tr key={`inventory-entry-group-${group.id}`}>
+                        <td>{String(group.createdAt).slice(0, 10)}</td>
+                        <td>{group.warehouseName || "-"}</td>
+                        <td>{group.productCount}</td>
+                        <td>{group.totalUnits}</td>
+                        <td>{formatUsdCurrency(getInventoryEntryGroupTotalCostUsd(group))}</td>
+                        <td>
+                          <div className="table-action-group">
+                            <button
+                              className="table-action-icon"
+                              type="button"
+                              aria-label="Ver detalle del inventario ingresado"
+                              title="Ver listado"
+                              onClick={() => openInventoryEntryHistoryGroupDetails(group.id)}
+                              disabled={isDeletingGroup || isExportingGroup}
+                            >
+                              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z" fill="currentColor" />
+                              </svg>
+                            </button>
+
+                            <button
+                              className="table-action-icon"
+                              type="button"
+                              aria-label="Exportar registro a QuickBooks"
+                              title="Exportar QuickBooks"
+                              disabled={isDeletingGroup || isExportingGroup || isDownloadingInventoryQuickBooksExport}
+                              onClick={() => void handleDownloadInventoryQuickBooksExport({ groupId: group.id })}
+                            >
+                              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
+                              </svg>
+                            </button>
+
+                            <button
+                              className="table-action-icon is-danger"
+                              type="button"
+                              aria-label="Eliminar registro de inventario ingresado"
+                              title="Eliminar"
+                              disabled={isDeletingGroup || isExportingGroup}
+                              onClick={() => void handleDeleteInventoryEntryHistoryGroup(group)}
+                            >
+                              x
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td colSpan={6} className="empty-table-cell">Aun no hay entradas de inventario registradas en este periodo.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <p className="management-table-meta">
+            El CSV sigue la plantilla de importacion de facturas de proveedor (bills) de QuickBooks.
+          </p>
+        </article>
+
+        {selectedInventoryEntryHistoryGroup ? (
+          <AppModalOverlay onDismiss={closeInventoryEntryHistoryGroupDetails}>
+            <div className="modal-card inventory-entry-history-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+              <div className="modal-header">
+                <div>
+                  <p className="section-label">Detalle de ingreso</p>
+                  <h2>Inventario ingresado</h2>
+                  <p>
+                    {`${selectedInventoryEntryHistoryGroup.productCount} productos · ${selectedInventoryEntryHistoryGroup.totalUnits} unidades · ${formatUsdCurrency(getInventoryEntryGroupTotalCostUsd(selectedInventoryEntryHistoryGroup))} USD`}
+                  </p>
+                </div>
+                <button className="modal-close-button" type="button" onClick={closeInventoryEntryHistoryGroupDetails}>Cerrar</button>
+              </div>
+
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Producto</th>
+                      <th>Cantidad</th>
+                      <th>Costo USD/u</th>
+                      <th>Total USD</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedInventoryEntryHistoryGroup.items.map((item) => {
+                      const unitCostUsd = Number(item.entryCostUsd ?? 0);
+                      const totalCostUsd = unitCostUsd * Number(item.quantity ?? 0);
+
+                      return (
+                        <tr key={`entry-history-item-${selectedInventoryEntryHistoryGroup.id}-${item.id}`}>
+                          <td>{`${item.productName} (${item.productSku})`}</td>
+                          <td>{item.quantity}</td>
+                          <td>{formatUsdCurrency(unitCostUsd)}</td>
+                          <td>{formatUsdCurrency(totalCostUsd)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </AppModalOverlay>
+        ) : null}
+      </>
+    );
+  }
+
   async function refreshInvoiceChangeRequests(status: "pending" | "all" = "pending") {
     try {
       setIsLoadingInvoiceChangeRequests(true);
@@ -10508,12 +11143,41 @@ export default function App() {
     );
     setInvoiceChangeNotes("");
     setInvoiceChangeStatus(null);
+
+    const initialNumber = Number(order.invoiceNumber ?? 0) || null;
+    setInvoiceChangeOriginalNumber(initialNumber);
+    setInvoiceChangeNumberDraft(initialNumber ? String(initialNumber) : "");
+
+    void (async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/warehouse/orders/${order._id}/invoice-document`);
+        const data = (await response.json()) as {
+          invoiceNumber?: number | null;
+          carteraEntry?: { invoiceNumber?: number | null } | null;
+        };
+
+        if (!response.ok) {
+          return;
+        }
+
+        const resolvedNumber = Number(data.invoiceNumber ?? data.carteraEntry?.invoiceNumber ?? 0) || null;
+
+        if (resolvedNumber) {
+          setInvoiceChangeOriginalNumber(resolvedNumber);
+          setInvoiceChangeNumberDraft(String(resolvedNumber));
+        }
+      } catch {
+        // Keep order-level invoice number when document lookup fails.
+      }
+    })();
   }
 
   function closeInvoiceChangeModal() {
     setInvoiceChangeOrder(null);
     setInvoiceChangeItemDraft({});
     setInvoiceChangeNotes("");
+    setInvoiceChangeNumberDraft("");
+    setInvoiceChangeOriginalNumber(null);
     setInvoiceChangeStatus(null);
   }
 
@@ -10567,6 +11231,19 @@ export default function App() {
       return;
     }
 
+    const parsedInvoiceNumber = Number(invoiceChangeNumberDraft.trim());
+    const canEditInvoiceNumber = sessionUser.role === "management" || sessionUser.role === "contabilidad";
+    const proposedInvoiceNumber = canEditInvoiceNumber
+      && Number.isFinite(parsedInvoiceNumber)
+      && parsedInvoiceNumber >= MIN_INVOICE_NUMBER
+      ? parsedInvoiceNumber
+      : invoiceChangeOriginalNumber;
+
+    if (canEditInvoiceNumber && invoiceChangeNumberDraft.trim() && (!Number.isFinite(parsedInvoiceNumber) || parsedInvoiceNumber < MIN_INVOICE_NUMBER)) {
+      setInvoiceChangeStatus({ tone: "error", message: `Indica un consecutivo valido (minimo ${MIN_INVOICE_NUMBER}).` });
+      return;
+    }
+
     try {
       setIsSubmittingInvoiceChangeRequest(true);
       setInvoiceChangeStatus(null);
@@ -10580,6 +11257,7 @@ export default function App() {
           requestedByUserId: sessionUser.id,
           requestedByUserName: sessionUser.name,
           requestedByRole: sessionUser.role,
+          proposedInvoiceNumber,
         }),
       });
       const data = (await response.json()) as { message?: string };
@@ -14169,6 +14847,10 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       }
 
       setLogisticsAccountingModalKind(null);
+      setLogisticsAccountingStatuses((current) => ({
+        ...current,
+        expenses: { tone: "success", message: "Gasto operacional registrado correctamente." },
+      }));
       await refreshLogisticsAccountingData();
     } catch {
       setLogisticsAccountingStatuses((current) => ({
@@ -15989,6 +16671,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 />
               </article>
 
+              {renderInventoryEntryGroupsSection()}
+
               {selectedInventoryAdjustmentRow ? (
                 <AppModalOverlay onDismiss={closeInventoryAdjustmentModal}>
                   <div className="modal-card inventory-adjustment-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
@@ -16714,10 +17398,14 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 ? "Desempeño de vendedores"
               : activeSection === "product-performance"
                 ? "Desempeño de productos"
+              : activeSection === "order-planner"
+                ? "Planificador de pedidos"
               : activeSection === "catalog"
                 ? "Catálogo"
               : activeSection === "cartera"
                 ? "Cartera"
+              : activeSection === "financial-reports"
+                ? "P&G y Balance"
               : activeSection === "promotions"
                 ? "Promociones"
               : activeSection === "invoice-change-requests"
@@ -16755,10 +17443,14 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 ? "Supervisa facturacion, rutas, tiendas asignadas y los horarios en que cada vendedor envia pedidos a bodega."
               : activeSection === "product-performance"
                 ? "Identifica productos estrella, productos rezagados y oportunidades para mejorar rotacion e inventario."
+              : activeSection === "order-planner"
+                ? "Analiza consumo historico, estima dias de inventario y sugiere cuanto pedir segun la rotacion y la cobertura deseada."
               : activeSection === "catalog"
                 ? "Arma catálogos por categorías o productos, luego define el precio de venta por cliente con un porcentaje global o ajustes manuales."
               : activeSection === "cartera"
                 ? "Consulta los pedidos facturados desde bodega y el metodo de pago registrado por cada cliente."
+              : activeSection === "financial-reports"
+                ? "Estado de resultados y balance general en AWG, con filtros por periodo y tienda."
               : activeSection === "promotions"
                 ? "Aplica descuentos por lote a productos próximos a vencer para que vendedoras y bodega vean el precio promocional."
               : activeSection === "invoice-change-requests"
@@ -19884,6 +20576,277 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               </div>
             </article>
           </section>
+        ) : activeSection === "financial-reports" ? (
+          <section className="accounting-layout">
+            {financialReportsError ? <p className="form-feedback error">{financialReportsError}</p> : null}
+
+            <article className="database-card">
+              <div className="accounting-block-header">
+                <div>
+                  <p className="section-label">Finanzas</p>
+                  <h2>P&G y Balance (AWG)</h2>
+                  <p>
+                    El estado de resultados muestra ventas, costos y utilidad del periodo. El balance resume activos,
+                    pasivos y patrimonio a la fecha de corte.
+                  </p>
+                </div>
+              </div>
+
+              <div className="financial-report-tabs">
+                <button
+                  type="button"
+                  className={`secondary-action-button${financialReportsTab === "profit-and-loss" ? " is-active" : ""}`}
+                  onClick={() => setFinancialReportsTab("profit-and-loss")}
+                >
+                  Estado de resultados (P&G)
+                </button>
+                <button
+                  type="button"
+                  className={`secondary-action-button${financialReportsTab === "balance" ? " is-active" : ""}`}
+                  onClick={() => setFinancialReportsTab("balance")}
+                >
+                  Balance general
+                </button>
+              </div>
+
+              <div className="filter-grid cartera-date-filter-grid">
+                <label className="field">
+                  <span>Desde</span>
+                  <input
+                    type="date"
+                    value={financialReportsStartDate}
+                    onChange={(event) => {
+                      const nextRange = normalizeCarteraDateRange(event.target.value, financialReportsEndDate);
+                      setFinancialReportsStartDate(nextRange.startDate);
+                      setFinancialReportsEndDate(nextRange.endDate);
+                    }}
+                  />
+                </label>
+                <label className="field">
+                  <span>Hasta</span>
+                  <input
+                    type="date"
+                    value={financialReportsEndDate}
+                    onChange={(event) => {
+                      const nextRange = normalizeCarteraDateRange(financialReportsStartDate, event.target.value);
+                      setFinancialReportsStartDate(nextRange.startDate);
+                      setFinancialReportsEndDate(nextRange.endDate);
+                    }}
+                  />
+                </label>
+                <label className="field">
+                  <span>Tienda</span>
+                  <SearchableStoreSelect
+                    stores={storeOptions}
+                    value={financialReportsStoreId}
+                    onChange={setFinancialReportsStoreId}
+                    placeholder="Todas las tiendas (opcional)"
+                    disabled={storeOptions.length === 0}
+                  />
+                </label>
+                <div className="cartera-date-presets">
+                  <button
+                    type="button"
+                    className="secondary-action-button"
+                    onClick={() => {
+                      const today = getBusinessDateKey();
+                      setFinancialReportsStartDate(today);
+                      setFinancialReportsEndDate(today);
+                    }}
+                  >
+                    Hoy
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-action-button"
+                    onClick={() => {
+                      const today = getBusinessDateKey();
+                      setFinancialReportsStartDate(addDaysToBusinessDateKey(today, -4));
+                      setFinancialReportsEndDate(today);
+                    }}
+                  >
+                    Ultimos 5 dias
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-action-button"
+                    onClick={() => {
+                      setFinancialReportsStartDate(getBusinessMonthStartDateKey());
+                      setFinancialReportsEndDate(getBusinessDateKey());
+                    }}
+                  >
+                    Este mes
+                  </button>
+                  {financialReportsStoreId ? (
+                    <button
+                      type="button"
+                      className="secondary-action-button"
+                      onClick={() => setFinancialReportsStoreId("")}
+                    >
+                      Todas las tiendas
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
+              <p className="management-table-meta">
+                Periodo: {financialReportsStartDate || "..."} a {financialReportsEndDate || "..."}
+                {financialReportsStoreId
+                  ? ` · Tienda: ${storeOptionsById.get(financialReportsStoreId)?.label ?? financialReportsData?.filters.storeName ?? "Seleccionada"}`
+                  : " · Todas las tiendas"}
+                {financialReportsTab === "balance"
+                  ? ` · Corte al ${financialReportsEndDate || "..."}`
+                  : ""}
+              </p>
+
+              {isLoadingFinancialReports ? (
+                <p className="management-table-meta">Cargando reportes financieros...</p>
+              ) : financialReportsData ? (
+                <>
+                  {financialReportsTab === "profit-and-loss" ? (
+                    <>
+                      <div className="accounting-kpi-grid">
+                        <article className="kpi-card tone-cyan">
+                          <p>Ventas facturadas</p>
+                          <strong>{formatAwgCurrency(financialReportsData.profitAndLoss.metrics.revenue)}</strong>
+                        </article>
+                        <article className="kpi-card tone-slate">
+                          <p>Utilidad bruta</p>
+                          <strong>{formatAwgCurrency(financialReportsData.profitAndLoss.metrics.grossProfit)}</strong>
+                        </article>
+                        <article className="kpi-card tone-amber">
+                          <p>Gastos operativos</p>
+                          <strong>{formatAwgCurrency(financialReportsData.profitAndLoss.metrics.operatingExpenses)}</strong>
+                        </article>
+                        <article className="kpi-card tone-cyan">
+                          <p>Utilidad neta</p>
+                          <strong>{formatAwgCurrency(financialReportsData.profitAndLoss.metrics.netIncome)}</strong>
+                        </article>
+                      </div>
+
+                      <div className="financial-statement">
+                        <div className="financial-statement-header">
+                          <h3>Estado de resultados</h3>
+                          <p>{financialReportsData.profitAndLoss.metrics.invoiceCount} facturas en el periodo</p>
+                        </div>
+                        {financialReportsData.profitAndLoss.lines.map((line) => (
+                          <div
+                            key={line.key}
+                            className={[
+                              "financial-statement-row",
+                              line.level === 1 ? "is-level-1" : "",
+                              line.tone === "subtotal" ? "is-subtotal" : "",
+                              line.tone === "total" ? "is-total" : "",
+                              line.tone === "reference" ? "is-reference" : "",
+                            ].filter(Boolean).join(" ")}
+                          >
+                            <span>{line.label}</span>
+                            <strong>
+                              {line.tone === "subtotal" && line.amount === 0
+                                ? ""
+                                : `${formatAwgCurrency(line.amount)} AWG`}
+                            </strong>
+                          </div>
+                        ))}
+                      </div>
+
+                      {financialReportsData.profitAndLoss.storeBreakdown &&
+                      financialReportsData.profitAndLoss.storeBreakdown.length > 0 ? (
+                        <div className="table-wrap">
+                          <div className="management-table-header">
+                            <div>
+                              <h3>Desglose por tienda</h3>
+                              <p>Ventas y utilidad bruta por cliente en el periodo seleccionado.</p>
+                            </div>
+                          </div>
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Tienda</th>
+                                <th>Ventas</th>
+                                <th>Costo ventas</th>
+                                <th>Utilidad bruta</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {financialReportsData.profitAndLoss.storeBreakdown.map((row) => (
+                                <tr key={row.storeId}>
+                                  <td>{row.storeName}</td>
+                                  <td>{formatAwgCurrency(row.revenue)}</td>
+                                  <td>{formatAwgCurrency(row.costOfGoodsSold)}</td>
+                                  <td>{formatAwgCurrency(row.grossProfit)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <div className="accounting-kpi-grid">
+                        <article className="kpi-card tone-cyan">
+                          <p>Total activos</p>
+                          <strong>{formatAwgCurrency(financialReportsData.balance.metrics.totalAssets)}</strong>
+                        </article>
+                        <article className="kpi-card tone-amber">
+                          <p>Cuentas por cobrar</p>
+                          <strong>{formatAwgCurrency(financialReportsData.balance.metrics.accountsReceivable)}</strong>
+                        </article>
+                        <article className="kpi-card tone-slate">
+                          <p>Efectivo estimado</p>
+                          <strong>{formatAwgCurrency(financialReportsData.balance.metrics.cashEstimate)}</strong>
+                        </article>
+                        <article className="kpi-card tone-cyan">
+                          <p>Patrimonio</p>
+                          <strong>{formatAwgCurrency(financialReportsData.balance.metrics.totalEquity)}</strong>
+                        </article>
+                      </div>
+
+                      <div className="financial-statement">
+                        <div className="financial-statement-header">
+                          <h3>Balance general</h3>
+                          <p>Corte al {financialReportsData.balance.asOfDate}</p>
+                        </div>
+                        {financialReportsData.balance.lines.map((line) => (
+                          <div
+                            key={line.key}
+                            className={[
+                              "financial-statement-row",
+                              line.level === 1 ? "is-level-1" : "",
+                              line.tone === "subtotal" ? "is-subtotal" : "",
+                              line.tone === "total" ? "is-total" : "",
+                              line.tone === "reference" ? "is-reference" : "",
+                            ].filter(Boolean).join(" ")}
+                          >
+                            <span>{line.label}</span>
+                            <strong>
+                              {line.tone === "subtotal" && line.amount === 0
+                                ? ""
+                                : `${formatAwgCurrency(line.amount)} AWG`}
+                            </strong>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {financialReportsData.notes.length > 0 ? (
+                    <div className="financial-report-notes">
+                      <h3>Notas del reporte</h3>
+                      <ul>
+                        {financialReportsData.notes.map((note) => (
+                          <li key={note}>{note}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <p className="management-table-meta">Selecciona un periodo para generar el reporte.</p>
+              )}
+            </article>
+          </section>
         ) : activeSection === "promotions" ? (
           <section className="accounting-layout">
             <article className="database-card">
@@ -20004,6 +20967,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 {logisticsAccountingStatuses.deleteInvoice.message}
               </p>
             ) : null}
+            {logisticsAccountingStatuses.expenses ? (
+              <p className={`form-feedback ${logisticsAccountingStatuses.expenses.tone}`}>
+                {logisticsAccountingStatuses.expenses.message}
+              </p>
+            ) : null}
 
             <article className="database-card">
               <div className="accounting-block-header">
@@ -20012,10 +20980,21 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <h2>Contabilidad mensual (AWG)</h2>
                   <p>Facturas despachadas a clientes segun catalogo, con utilidad en florines.</p>
                 </div>
-                <button className="primary-action-button" type="button" onClick={() => {
-                  setLogisticsInvoiceForm(createInitialLogisticsInvoiceForm());
-                  setLogisticsAccountingModalKind("logistics-invoice");
-                }}>Registrar factura</button>
+                <div className="management-table-header-actions">
+                  <button
+                    className="ghost-button ghost-button--accent"
+                    type="button"
+                    onClick={() => {
+                      setLogisticsAccountingModalKind("logistics-expense");
+                    }}
+                  >
+                    Registrar gastos
+                  </button>
+                  <button className="primary-action-button" type="button" onClick={() => {
+                    setLogisticsInvoiceForm(createInitialLogisticsInvoiceForm());
+                    setLogisticsAccountingModalKind("logistics-invoice");
+                  }}>Registrar factura</button>
+                </div>
               </div>
 
               <div className="filter-grid">
@@ -20159,6 +21138,54 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     ) : (
                       <tr>
                         <td colSpan={8} className="empty-table-cell">No hay facturas registradas para el mes seleccionado.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            <article className="database-card">
+              <div className="management-table-header">
+                <div>
+                  <p className="section-label">Costos operacionales</p>
+                  <h3>Gastos del mes</h3>
+                  <p>Registra nomina, arriendo, combustible y otros gastos logisticos del mes seleccionado.</p>
+                </div>
+                <p className="management-table-meta">
+                  {logisticsMonthlyExpenseRows.length} gasto{logisticsMonthlyExpenseRows.length === 1 ? "" : "s"} · {formatAwgCurrency(logisticsMonthlyExpenses)} AWG
+                </p>
+              </div>
+
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Concepto</th>
+                      <th>Categoria</th>
+                      <th>Monto (AWG)</th>
+                      <th>Notas</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isLoadingLogisticsAccounting ? (
+                      <tr>
+                        <td colSpan={5} className="empty-table-cell">Cargando gastos operacionales...</td>
+                      </tr>
+                    ) : logisticsMonthlyExpenseRows.length > 0 ? (
+                      logisticsMonthlyExpenseRows.map((expense) => (
+                        <tr key={expense._id ?? `${expense.name}-${expense.expenseDate}`}>
+                          <td>{String(expense.expenseDate).slice(0, 10)}</td>
+                          <td>{expense.name}</td>
+                          <td>{formatLogisticsExpenseCategoryLabel(expense.category)}</td>
+                          <td>{formatAwgCurrency(expense.amountAwg)}</td>
+                          <td>{expense.notes || "-"}</td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={5} className="empty-table-cell">No hay gastos operacionales registrados para el mes seleccionado.</td>
                       </tr>
                     )}
                   </tbody>
@@ -20453,26 +21480,22 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <div className="modal-header">
                     <div>
                       <p className="section-label">Gastos operacionales</p>
-                      <h2>Nuevo gasto logistico</h2>
+                      <h2>Registrar gasto operacional</h2>
+                      <p>Nomina, arriendo, combustible, mantenimiento y otros costos del mes.</p>
                     </div>
                     <button className="modal-close-button" type="button" onClick={() => setLogisticsAccountingModalKind(null)}>Cerrar</button>
                   </div>
                   <form className="creation-form" onSubmit={(event) => void handleCreateLogisticsExpense(event)}>
                     <label className="field field-full">
                       <span>Concepto</span>
-                      <input type="text" name="name" placeholder="Combustible, imprevisto..." required />
+                      <input type="text" name="name" placeholder="Nomina marzo, arriendo bodega, combustible..." required />
                     </label>
                     <label className="field">
                       <span>Categoria</span>
-                      <select name="category" required>
-                        {[
-                          { value: "fuel", label: "Combustible" },
-                          { value: "maintenance", label: "Mantenimiento" },
-                          { value: "unforeseen", label: "Imprevisto" },
-                          { value: "delivery", label: "Despacho" },
-                          { value: "tolls", label: "Peajes" },
-                          { value: "other", label: "Otro" },
-                        ].map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                      <select name="category" defaultValue="fuel" required>
+                        {logisticsExpenseCategoryOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
                       </select>
                     </label>
                     <label className="field">
@@ -20481,7 +21504,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </label>
                     <label className="field">
                       <span>Fecha</span>
-                      <input type="date" name="expenseDate" required />
+                      <input type="date" name="expenseDate" defaultValue={new Date().toISOString().slice(0, 10)} required />
                     </label>
                     <label className="field field-full">
                       <span>Notas</span>
@@ -20491,7 +21514,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <p className={`form-feedback ${logisticsAccountingStatuses["expenses"].tone} form-span-full`}>{logisticsAccountingStatuses["expenses"].message}</p>
                     ) : null}
                     <div className="form-actions form-span-full">
-                      <button className="primary-action-button" type="submit">Crear gasto</button>
+                      <button className="primary-action-button" type="submit">Registrar gasto</button>
                     </div>
                   </form>
                 </div>
@@ -21863,6 +22886,310 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               <p className="route-empty-state">No fue posible cargar el desempeno de productos.</p>
             )}
           </section>
+        ) : activeSection === "order-planner" ? (
+          <section className="stores-layout order-planner-layout">
+            <article className="creation-selector-block">
+              <p className="section-label">Abastecimiento inteligente</p>
+              <h2>Planificador de pedidos</h2>
+              <p className="route-helper-text">
+                Usa el historial de pedidos entregados para estimar consumo, detectar riesgo de quiebre de stock
+                y calcular cuanto conviene pedir segun los dias de cobertura que quieras mantener.
+              </p>
+            </article>
+
+            {orderPlannerError ? <p className="form-feedback error">{orderPlannerError}</p> : null}
+
+            <article className="database-card">
+              <div className="filter-grid order-planner-filter-grid">
+                <label className="field">
+                  <span>Desde</span>
+                  <input
+                    type="date"
+                    value={orderPlannerStartDate}
+                    onChange={(event) => {
+                      const nextRange = normalizeCarteraDateRange(event.target.value, orderPlannerEndDate);
+                      setOrderPlannerStartDate(nextRange.startDate);
+                      setOrderPlannerEndDate(nextRange.endDate);
+                    }}
+                  />
+                </label>
+                <label className="field">
+                  <span>Hasta</span>
+                  <input
+                    type="date"
+                    value={orderPlannerEndDate}
+                    onChange={(event) => {
+                      const nextRange = normalizeCarteraDateRange(orderPlannerStartDate, event.target.value);
+                      setOrderPlannerStartDate(nextRange.startDate);
+                      setOrderPlannerEndDate(nextRange.endDate);
+                    }}
+                  />
+                </label>
+                <label className="field">
+                  <span>Cobertura deseada (dias)</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={90}
+                    value={orderPlannerCoverageDays}
+                    onChange={(event) => setOrderPlannerCoverageDays(event.target.value)}
+                  />
+                </label>
+                <label className="field">
+                  <span>Categoria</span>
+                  <select
+                    value={orderPlannerCategoryFilter}
+                    onChange={(event) => {
+                      setOrderPlannerCategoryFilter(event.target.value);
+                      setSelectedOrderPlannerProductId("");
+                    }}
+                  >
+                    <option value="">Todas</option>
+                    {categoryOptions.map((category) => (
+                      <option key={category.value} value={category.value}>{category.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Buscar producto</span>
+                  <input
+                    type="text"
+                    value={orderPlannerSearchQuery}
+                    placeholder="Nombre o SKU"
+                    onChange={(event) => setOrderPlannerSearchQuery(event.target.value)}
+                  />
+                </label>
+                <div className="cartera-date-presets order-planner-presets">
+                  <button
+                    type="button"
+                    className="secondary-action-button"
+                    onClick={() => {
+                      setOrderPlannerStartDate(addDaysToBusinessDateKey(getBusinessDateKey(), -6));
+                      setOrderPlannerEndDate(getBusinessDateKey());
+                    }}
+                  >
+                    Ultimos 7 dias
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-action-button"
+                    onClick={() => {
+                      setOrderPlannerStartDate(addDaysToBusinessDateKey(getBusinessDateKey(), -29));
+                      setOrderPlannerEndDate(getBusinessDateKey());
+                    }}
+                  >
+                    Ultimos 30 dias
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-action-button"
+                    onClick={() => {
+                      setOrderPlannerStartDate(getBusinessMonthStartDateKey());
+                      setOrderPlannerEndDate(getBusinessDateKey());
+                    }}
+                  >
+                    Este mes
+                  </button>
+                  <button
+                    type="button"
+                    className={`secondary-action-button${orderPlannerAlertsOnly ? " is-active" : ""}`}
+                    onClick={() => setOrderPlannerAlertsOnly((current) => !current)}
+                  >
+                    Solo alertas
+                  </button>
+                </div>
+              </div>
+
+              <p className="management-table-meta">
+                Periodo analizado: {orderPlannerStartDate} a {orderPlannerEndDate}
+                {orderPlannerData ? ` · ${orderPlannerData.summary.periodDays} dias` : ""}
+                {orderPlannerCoverageDays ? ` · Cobertura objetivo: ${orderPlannerCoverageDays} dias` : ""}
+              </p>
+
+              {isLoadingOrderPlanner ? (
+                <p className="route-empty-state">Calculando planificador...</p>
+              ) : orderPlannerData ? (
+                <>
+                  <div className="accounting-kpi-grid order-planner-kpi-grid">
+                    <article className="kpi-card tone-slate">
+                      <p>Productos analizados</p>
+                      <strong>{orderPlannerData.summary.totalProducts}</strong>
+                    </article>
+                    <article className="kpi-card tone-amber">
+                      <p>Alertas criticas</p>
+                      <strong>{orderPlannerData.summary.criticalCount}</strong>
+                    </article>
+                    <article className="kpi-card tone-cyan">
+                      <p>Unidades sugeridas a pedir</p>
+                      <strong>{orderPlannerData.summary.suggestedOrderUnits}</strong>
+                    </article>
+                    <article className="kpi-card tone-slate">
+                      <p>Unidades vendidas en periodo</p>
+                      <strong>{orderPlannerData.summary.totalUnitsSold}</strong>
+                    </article>
+                  </div>
+
+                  {orderPlannerData.weeklyTrend.length > 0 ? (
+                    <div className="order-planner-weekly-trend">
+                      <h3>Consumo semanal en el periodo</h3>
+                      <div className="order-planner-weekly-bars">
+                        {orderPlannerData.weeklyTrend.map((week) => {
+                          const maxUnits = Math.max(...orderPlannerData.weeklyTrend.map((row) => row.totalUnits), 1);
+                          const heightPercent = Math.max(8, Math.round((week.totalUnits / maxUnits) * 100));
+
+                          return (
+                            <div key={week.weekStart} className="order-planner-weekly-bar">
+                              <div className="order-planner-weekly-bar-fill" style={{ height: `${heightPercent}%` }} />
+                              <strong>{week.totalUnits}</strong>
+                              <span>{week.weekLabel}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="order-planner-legend">
+                    <span><i className="planner-pill planner-pill--critical" /> Critico: quiebre en 7 dias o bajo minimo</span>
+                    <span><i className="planner-pill planner-pill--warning" /> Alerta: menos de 14 dias o riesgo de vencimiento</span>
+                    <span><i className="planner-pill planner-pill--watch" /> Vigilar: inventario menor a la cobertura objetivo</span>
+                  </div>
+
+                  <div className="table-wrap">
+                    <table className="data-table order-planner-table">
+                      <thead>
+                        <tr>
+                          <th>Estado</th>
+                          <th>SKU</th>
+                          <th>Producto</th>
+                          <th>Stock</th>
+                          <th>Vendido</th>
+                          <th>Consumo/dia</th>
+                          <th>Dias rest.</th>
+                          <th>Sugerido</th>
+                          <th>Rotacion</th>
+                          <th>Tendencia</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {orderPlannerData.products
+                          .filter((product) => {
+                            const query = orderPlannerSearchQuery.trim().toLowerCase();
+
+                            if (!query) {
+                              return true;
+                            }
+
+                            return (
+                              product.productName.toLowerCase().includes(query)
+                              || product.productSku.toLowerCase().includes(query)
+                            );
+                          })
+                          .map((product) => (
+                            <tr
+                              key={product.productId}
+                              className={`order-planner-row ${selectedOrderPlannerProductId === product.productId ? "is-selected" : ""}`}
+                              onClick={() => setSelectedOrderPlannerProductId(product.productId)}
+                              title={product.alertMessage}
+                            >
+                              <td>
+                                <span className={`planner-pill planner-pill--${product.alertLevel}`}>
+                                  {formatOrderPlannerAlertLabel(product.alertLevel)}
+                                </span>
+                              </td>
+                              <td>{product.productSku}</td>
+                              <td>
+                                <strong>{product.productName}</strong>
+                                <br />
+                                <small>{product.category || "Sin categoria"}</small>
+                              </td>
+                              <td>{product.currentStock}</td>
+                              <td>{product.unitsSoldInPeriod}</td>
+                              <td>{product.avgDailyUnits}</td>
+                              <td>{product.daysUntilStockout ?? "-"}</td>
+                              <td><strong>{product.suggestedOrderQty}</strong></td>
+                              <td>{product.rotationLabel}</td>
+                              <td>{formatOrderPlannerTrend(product.trend, product.trendPercent)}</td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {selectedOrderPlannerProductId && orderPlannerData.selectedProduct ? (
+                    <article className="database-card order-planner-detail-card">
+                      <div className="management-table-header">
+                        <div>
+                          <h3>
+                            Tiendas que consumieron {orderPlannerData.selectedProduct.productName}
+                          </h3>
+                          <p>
+                            {orderPlannerData.selectedProduct.unitsSoldInPeriod} unidades en el periodo · SKU {orderPlannerData.selectedProduct.productSku}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="secondary-action-button"
+                          onClick={() => setSelectedOrderPlannerProductId("")}
+                        >
+                          Cerrar detalle
+                        </button>
+                      </div>
+                      <div className="table-wrap">
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th>Tienda</th>
+                              <th>Direccion</th>
+                              <th>Unidades</th>
+                              <th>Pedidos</th>
+                              <th>Participacion</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {orderPlannerData.selectedProduct.stores.length > 0 ? (
+                              orderPlannerData.selectedProduct.stores.map((store) => (
+                                <tr key={store.storeId}>
+                                  <td>{store.storeName}</td>
+                                  <td>{store.address || "-"}</td>
+                                  <td>{store.unitsSold}</td>
+                                  <td>{store.orderCount}</td>
+                                  <td>{store.sharePercent}%</td>
+                                </tr>
+                              ))
+                            ) : (
+                              <tr>
+                                <td colSpan={5} className="empty-table-cell">
+                                  No hubo consumo de este producto en tiendas durante el periodo.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </article>
+                  ) : (
+                    <p className="management-table-meta">
+                      Selecciona un producto en la tabla para ver que tiendas lo consumieron en el periodo.
+                    </p>
+                  )}
+
+                  {orderPlannerData.notes.length > 0 ? (
+                    <div className="financial-report-notes">
+                      <h3>Como leer este planificador</h3>
+                      <ul>
+                        {orderPlannerData.notes.map((note) => (
+                          <li key={note}>{note}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <p className="route-empty-state">Selecciona un periodo para generar recomendaciones.</p>
+              )}
+            </article>
+          </section>
         ) : activeSection === "inventory" ? (
           <section className="database-layout">
             <div className="management-overview">
@@ -21891,27 +23218,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   )}
               </div>
 
-              <div className="management-action-panel">
-                <p className="section-label">Crear</p>
-                <h2>Nuevo registro</h2>
-                <p>Abre la pagina de entrada para registrar inventario y cargar archivos Excel.</p>
-                <button className="primary-action-button" type="button" onClick={openInventoryEntryPage}>
-                  Registrar inventario
-                </button>
-              </div>
+              {inventoryError ? <p className="form-feedback error">{inventoryError}</p> : null}
             </div>
-
-                <label className="field inventory-name-filter-field">
-                  <span>Filtrar por nombre</span>
-                  <input
-                    type="text"
-                    value={inventoryNameFilter}
-                    placeholder="Escribe el nombre del producto"
-                    onChange={(event) => setInventoryNameFilter(event.target.value)}
-                  />
-                </label>
-
-            {inventoryError ? <p className="form-feedback error">{inventoryError}</p> : null}
 
             <article className="database-card inventory-expiring-card">
               <div className="creation-header database-header">
@@ -21946,6 +23254,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     onDownloadPdf={() => downloadCurrentInventoryPdf()}
                     onDownloadExcel={() => downloadCurrentInventoryExcel()}
                   />
+                  <button className="primary-action-button" type="button" onClick={openInventoryEntryModal}>
+                    Registrar inventario
+                  </button>
                 </div>
               </div>
 
@@ -21959,6 +23270,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 onToggleProductLots={toggleInventoryProductLots}
               />
             </article>
+
+            {renderInventoryEntryGroupsSection()}
 
             <article className="database-card">
               <div className="creation-header database-header">
@@ -22219,113 +23532,175 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
             {isInventoryEntryModalOpen ? (
               <AppModalOverlay onDismiss={closeInventoryEntryModal}>
-                <div className="modal-card inventory-entry-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                <div className="modal-card inventory-entry-modal inventory-entry-modal--warehouse" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                   <div className="modal-header">
                     <div>
                       <p className="section-label">Entrada de inventario</p>
                       <h2>Registrar inventario</h2>
-                      <p>Selecciona los productos que ingresan, define la tasa USD@AWG y revisa el costo convertido en florines.</p>
+                      <p>Agrega productos con cantidad, costo, precio de venta y fecha de caducidad. Los valores iniciales salen de la ficha del producto, pero puedes ajustarlos por lote.</p>
                     </div>
                     <button className="modal-close-button" type="button" onClick={closeInventoryEntryModal}>Cerrar</button>
                   </div>
 
-                  <form className="inventory-adjustment-form" onSubmit={handleInventoryEntrySubmit}>
-                    <div className="inventory-entry-top-grid">
+                  <form className="inventory-adjustment-form inventory-entry-form--warehouse" onSubmit={handleInventoryEntrySubmit}>
+                    <div className="inventory-entry-form-top">
                       <label className="field field-full">
                         <span>Bodega</span>
                         <select
                           value={inventoryEntryWarehouseId}
                           onChange={(event) => setInventoryEntryWarehouseId(event.target.value)}
-                            disabled={availableWarehouseOptions.length === 0}
+                          disabled={warehouseOptions.length === 0}
                         >
                           <option value="">Selecciona una bodega</option>
-                            {availableWarehouseOptions.map((warehouse) => (
+                          {warehouseOptions.map((warehouse) => (
                             <option key={warehouse.value} value={warehouse.value}>{warehouse.label}</option>
                           ))}
                         </select>
                       </label>
 
-                      <label className="field field-full">
-                        <span>USD@AWG</span>
-                        <input
-                          type="number"
-                          min="0"
-                          step="any"
-                          value={inventoryUsdToAwgRate}
-                          placeholder="1.79"
-                          onChange={(event) => setInventoryUsdToAwgRate(event.target.value)}
-                        />
-                      </label>
+                      <div className="inventory-entry-warehouse-add">
+                        <label className="field field-full">
+                          <span>Producto</span>
+                          <SearchableProductSelect
+                            products={productOptions}
+                            value={inventoryEntryItemDraft.productId}
+                            onChange={(productId) => {
+                              const selectedProduct = productOptions.find((product) => product.value === productId);
+                              setInventoryEntryItemDraft((current) => ({
+                                ...current,
+                                productId,
+                                costUsd: selectedProduct ? String(selectedProduct.arubaPurchaseCostUsd) : "",
+                                salePriceAwg: selectedProduct ? String(selectedProduct.salePrice) : "",
+                              }));
+                            }}
+                            disabled={productOptions.length === 0}
+                          />
+                        </label>
+
+                        <label className="field">
+                          <span>Cantidad</span>
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={inventoryEntryItemDraft.quantity}
+                            placeholder="0"
+                            onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, quantity: event.target.value }))}
+                          />
+                        </label>
+
+                        <label className="field">
+                          <span>Costo unitario (USD)</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={inventoryEntryItemDraft.costUsd}
+                            placeholder="0.00"
+                            onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, costUsd: event.target.value }))}
+                          />
+                        </label>
+
+                        <label className="field">
+                          <span>Precio de venta (AWG)</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={inventoryEntryItemDraft.salePriceAwg}
+                            placeholder="0.00"
+                            onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, salePriceAwg: event.target.value }))}
+                          />
+                        </label>
+
+                        <label className="field">
+                          <span>Fecha de caducidad</span>
+                          <input
+                            type="date"
+                            value={inventoryEntryItemDraft.expirationDate}
+                            onChange={(event) => setInventoryEntryItemDraft((current) => ({
+                              ...current,
+                              expirationDate: event.target.value,
+                              lotName: current.lotName.trim() ? current.lotName : buildDefaultInventoryLotName(event.target.value),
+                            }))}
+                          />
+                        </label>
+
+                        <label className="field">
+                          <span>Nombre del lote</span>
+                          <input
+                            type="text"
+                            value={inventoryEntryItemDraft.lotName}
+                            placeholder={buildDefaultInventoryLotName(inventoryEntryItemDraft.expirationDate)}
+                            onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, lotName: event.target.value }))}
+                          />
+                        </label>
+
+                        <button className="small-add-button" type="button" onClick={addWarehouseInventoryEntryItem}>
+                          Agregar a la tabla
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="inventory-entry-products">
-                      {inventoryEntryItems.map((item, index) => (
-                        <article key={item.id} className="inventory-entry-row">
-                          <label className="field field-full">
-                            <span>{`Producto ${index + 1}`}</span>
-                            <select
-                              value={item.productId}
-                              onChange={(event) => updateInventoryEntryRow(item.id, "productId", event.target.value)}
-                            >
-                              <option value="">Selecciona un producto</option>
-                              {productOptions.map((product) => (
-                                <option key={product.value} value={product.value}>{`${product.label} (${product.sku})`}</option>
-                              ))}
-                            </select>
-                          </label>
+                    <div className="inventory-entry-table-panel">
+                      <p className="management-table-meta">{inventoryEntryItems.length} producto{inventoryEntryItems.length === 1 ? "" : "s"} en la entrada</p>
+                      <div className="table-wrap table-wrap--warehouse-items">
+                        <table className="data-table data-table--inventory-entry">
+                          <thead>
+                            <tr>
+                              <th>Producto</th>
+                              <th>SKU</th>
+                              <th>Cant.</th>
+                              <th>Costo u. (USD)</th>
+                              <th>Venta (AWG)</th>
+                              <th>Lote</th>
+                              <th>Vence</th>
+                              <th>Acc.</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {inventoryEntryItems.length > 0 ? (
+                              inventoryEntryItems.map((item) => {
+                                const selectedProduct = productOptions.find((product) => product.value === item.productId);
 
-                          <label className="field field-full">
-                            <span>Cantidad</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={item.quantity}
-                              placeholder="0"
-                              onChange={(event) => updateInventoryEntryRow(item.id, "quantity", event.target.value)}
-                            />
-                          </label>
-
-                          <label className="field field-full">
-                            <span>Costo USD total del lote</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="any"
-                              value={item.costUsd}
-                              placeholder="0.00"
-                              onChange={(event) => updateInventoryEntryRow(item.id, "costUsd", event.target.value)}
-                            />
-                          </label>
-
-                          <label className="field field-full">
-                            <span>Costo AWG total (calculado)</span>
-                            <input type="number" readOnly value={getInventoryEntryCostAwg(item.costUsd)} placeholder="0.00" />
-                          </label>
-
-                          <button
-                            className="ghost-button inventory-entry-remove"
-                            type="button"
-                            onClick={() => removeInventoryEntryRow(item.id)}
-                            disabled={inventoryEntryItems.length <= 1}
-                          >
-                            Quitar
-                          </button>
-                        </article>
-                      ))}
+                                return (
+                                  <tr key={item.id}>
+                                    <td>{selectedProduct?.label ?? "Producto"}</td>
+                                    <td>{selectedProduct?.sku ?? "-"}</td>
+                                    <td>{item.quantity}</td>
+                                    <td>{item.costUsd || selectedProduct?.arubaPurchaseCostUsd || "0"}</td>
+                                    <td>{item.salePriceAwg || selectedProduct?.salePrice || "0"}</td>
+                                    <td>{item.lotName || buildDefaultInventoryLotName(item.expirationDate)}</td>
+                                    <td>{item.expirationDate ? String(item.expirationDate).slice(0, 10) : "-"}</td>
+                                    <td>
+                                      <button
+                                        className="ghost-button inventory-entry-remove"
+                                        type="button"
+                                        onClick={() => removeInventoryEntryRow(item.id, true)}
+                                      >
+                                        Quitar
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            ) : (
+                              <tr>
+                                <td colSpan={8} className="empty-table-cell">Agrega productos con cantidad, costo, venta y caducidad.</td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
 
-                    <div className="catalog-form-actions inventory-adjustment-actions">
-                      <button className="ghost-button ghost-button--accent" type="button" onClick={addInventoryEntryRow}>
-                        Agregar producto
+                    {inventoryEntryStatus ? <p className={`form-feedback inventory-entry-form-feedback ${inventoryEntryStatus.tone}`}>{inventoryEntryStatus.message}</p> : null}
+
+                    <div className="inventory-entry-submit-actions">
+                      <button className="submit-button" type="submit" disabled={isSavingInventoryEntry || inventoryEntryItems.length === 0}>
+                        {isSavingInventoryEntry ? "Registrando inventario..." : "Guardar entrada de inventario"}
                       </button>
                     </div>
-
-                    {inventoryEntryStatus ? <p className={`form-feedback ${inventoryEntryStatus.tone}`}>{inventoryEntryStatus.message}</p> : null}
-
-                    <button className="submit-button" type="submit" disabled={isSavingInventoryEntry}>
-                      {isSavingInventoryEntry ? "Registrando inventario..." : "Guardar entrada de inventario"}
-                    </button>
                   </form>
                 </div>
               </AppModalOverlay>
@@ -23259,6 +24634,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                     </p>
                                   );
                                 })}
+                                {request.proposedInvoiceNumber !== request.invoiceNumber ? (
+                                    <p>
+                                      Consecutivo: {request.invoiceNumber ? `#${request.invoiceNumber}` : "Sin numero"} → #{request.proposedInvoiceNumber}
+                                    </p>
+                                  ) : null}
                                 {request.requestNotes ? <p>Nota: {request.requestNotes}</p> : null}
                               </div>
                             </details>
@@ -23452,16 +24832,82 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               <div className="management-table-header">
                 <div>
                   <h2>Pedidos completados</h2>
-                  <p>Pedidos ya despachados y cerrados. Puedes reimprimir la factura desde aqui.</p>
+                  <p>Pedidos ya despachados y cerrados. Filtra por fecha de entrega y exporta a QuickBooks.</p>
                 </div>
-                <p className="management-table-meta">{warehouseCompletedOrders.length} pedidos</p>
+                <div className="management-table-header-actions">
+                  <button
+                    className="ghost-button ghost-button--accent"
+                    type="button"
+                    disabled={isDownloadingQuickBooksExport || filteredWarehouseCompletedOrders.length === 0}
+                    onClick={() => void handleDownloadQuickBooksExport()}
+                  >
+                    {isDownloadingQuickBooksExport ? "Generando CSV..." : "Exportar QuickBooks"}
+                  </button>
+                  <p className="management-table-meta">{filteredWarehouseCompletedOrders.length} pedidos</p>
+                </div>
               </div>
+
+              <div className="filter-grid cartera-date-filter-grid">
+                <label className="field">
+                  <span>Desde</span>
+                  <input
+                    type="date"
+                    value={completedOrdersStartDate}
+                    onChange={(event) => {
+                      const nextRange = normalizeCarteraDateRange(event.target.value, completedOrdersEndDate);
+                      setCompletedOrdersStartDate(nextRange.startDate);
+                      setCompletedOrdersEndDate(nextRange.endDate);
+                    }}
+                  />
+                </label>
+                <label className="field">
+                  <span>Hasta</span>
+                  <input
+                    type="date"
+                    value={completedOrdersEndDate}
+                    onChange={(event) => {
+                      const nextRange = normalizeCarteraDateRange(completedOrdersStartDate, event.target.value);
+                      setCompletedOrdersStartDate(nextRange.startDate);
+                      setCompletedOrdersEndDate(nextRange.endDate);
+                    }}
+                  />
+                </label>
+                <div className="cartera-date-presets">
+                  <button
+                    type="button"
+                    className="secondary-action-button"
+                    onClick={() => {
+                      const today = getBusinessDateKey();
+                      setCompletedOrdersStartDate(today);
+                      setCompletedOrdersEndDate(today);
+                    }}
+                  >
+                    Hoy
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-action-button"
+                    onClick={() => {
+                      setCompletedOrdersStartDate(getBusinessMonthStartDateKey());
+                      setCompletedOrdersEndDate(getBusinessDateKey());
+                    }}
+                  >
+                    Este mes
+                  </button>
+                </div>
+              </div>
+              <p className="management-table-meta">
+                Periodo: {completedOrdersStartDate} a {completedOrdersEndDate}
+                {" · "}
+                El CSV sigue la plantilla de importacion de facturas con impuestos de QuickBooks.
+              </p>
 
               <div className="table-wrap">
                 <table className="data-table">
                   <thead>
                     <tr>
                       <th>Fecha</th>
+                      <th>Factura</th>
                       <th>Vendedor</th>
                       <th>Cliente</th>
                       <th>Ruta</th>
@@ -23472,16 +24918,17 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <tbody>
                     {isLoadingWarehouseOrders ? (
                       <tr>
-                        <td colSpan={6} className="empty-table-cell">Cargando pedidos completados...</td>
+                        <td colSpan={7} className="empty-table-cell">Cargando pedidos completados...</td>
                       </tr>
-                    ) : warehouseCompletedOrders.length > 0 ? (
-                      warehouseCompletedOrders.map((order) => {
+                    ) : filteredWarehouseCompletedOrders.length > 0 ? (
+                      filteredWarehouseCompletedOrders.map((order) => {
                         const totalUnits = order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
                         const isDeletingOrder = deletingWarehouseOrderId === order._id;
 
                         return (
                           <tr key={order._id}>
-                            <td>{formatSellerOrderDate(order.updatedAt)}</td>
+                            <td>{formatDeliveryDateLabel(getOrderDeliveryDateKey(order))}</td>
+                            <td>{order.invoiceNumber ? `#${order.invoiceNumber}` : "-"}</td>
                             <td>{order.salesRepName}</td>
                             <td>{order.storeName}</td>
                             <td>{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
@@ -23541,7 +24988,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       })
                     ) : (
                       <tr>
-                        <td colSpan={6} className="empty-table-cell">Todavia no hay pedidos completados.</td>
+                        <td colSpan={7} className="empty-table-cell">No hay pedidos completados en el periodo seleccionado.</td>
                       </tr>
                     )}
                   </tbody>
@@ -23824,14 +25271,35 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 <div>
                   <p className="section-label">Correccion de factura</p>
                   <h2>{invoiceChangeOrder.storeName}</h2>
-                  <p>{invoiceChangeOrder.salesRepName} · {formatSellerOrderDate(invoiceChangeOrder.updatedAt)}</p>
+                  <p>
+                    {invoiceChangeOrder.salesRepName} · {formatSellerOrderDate(invoiceChangeOrder.updatedAt)}
+                    {invoiceChangeOriginalNumber ? ` · Factura #${invoiceChangeOriginalNumber}` : ""}
+                  </p>
                 </div>
                 <button className="modal-close-button" type="button" onClick={closeInvoiceChangeModal}>Cerrar</button>
               </div>
 
               <p className="route-helper-text">
-                Ajusta cantidades o quita productos. Los cambios no se aplican de inmediato: se enviaran a gerencia para aprobacion.
+                Ajusta cantidades, quita productos o corrige el consecutivo de factura. Los cambios no se aplican de inmediato: se enviaran a gerencia para aprobacion.
               </p>
+
+              {(sessionUser?.role === "management" || sessionUser?.role === "contabilidad") ? (
+                <label className="field">
+                  <span>Numero de factura / consecutivo</span>
+                  <input
+                    className="warehouse-order-qty-input"
+                    type="number"
+                    min={MIN_INVOICE_NUMBER}
+                    step="1"
+                    value={invoiceChangeNumberDraft}
+                    placeholder={`Minimo ${MIN_INVOICE_NUMBER}`}
+                    onChange={(event) => {
+                      setInvoiceChangeNumberDraft(event.target.value);
+                      setInvoiceChangeStatus(null);
+                    }}
+                  />
+                </label>
+              ) : null}
 
               <div className="table-wrap table-wrap--warehouse-items">
                 <table className="data-table data-table--warehouse-order-items">

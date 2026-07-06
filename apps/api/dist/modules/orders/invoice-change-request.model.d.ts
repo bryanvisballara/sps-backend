@@ -55,6 +55,7 @@ export declare const InvoiceChangeRequest: import("mongoose").Model<{
     proposedInvoiceAmountAwg: number;
     currentPaymentMethod: "datafono" | "transferencia" | "efectivo" | "credito";
     invoiceNumber?: number | null | undefined;
+    proposedInvoiceNumber?: number | null | undefined;
     reviewedAt?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps, {}, {}, {}, import("mongoose").Document<unknown, {}, {
     status: "pending" | "approved" | "rejected";
@@ -112,6 +113,7 @@ export declare const InvoiceChangeRequest: import("mongoose").Model<{
     proposedInvoiceAmountAwg: number;
     currentPaymentMethod: "datafono" | "transferencia" | "efectivo" | "credito";
     invoiceNumber?: number | null | undefined;
+    proposedInvoiceNumber?: number | null | undefined;
     reviewedAt?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps, {}, {
     timestamps: true;
@@ -171,6 +173,7 @@ export declare const InvoiceChangeRequest: import("mongoose").Model<{
     proposedInvoiceAmountAwg: number;
     currentPaymentMethod: "datafono" | "transferencia" | "efectivo" | "credito";
     invoiceNumber?: number | null | undefined;
+    proposedInvoiceNumber?: number | null | undefined;
     reviewedAt?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps & {
     _id: import("mongoose").Types.ObjectId;
@@ -234,6 +237,7 @@ export declare const InvoiceChangeRequest: import("mongoose").Model<{
     proposedInvoiceAmountAwg: number;
     currentPaymentMethod: "datafono" | "transferencia" | "efectivo" | "credito";
     invoiceNumber?: number | null | undefined;
+    proposedInvoiceNumber?: number | null | undefined;
     reviewedAt?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps, import("mongoose").Document<unknown, {}, import("mongoose").FlatRecord<{
     status: "pending" | "approved" | "rejected";
@@ -291,6 +295,7 @@ export declare const InvoiceChangeRequest: import("mongoose").Model<{
     proposedInvoiceAmountAwg: number;
     currentPaymentMethod: "datafono" | "transferencia" | "efectivo" | "credito";
     invoiceNumber?: number | null | undefined;
+    proposedInvoiceNumber?: number | null | undefined;
     reviewedAt?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps>, {}, import("mongoose").MergeType<import("mongoose").DefaultSchemaOptions, {
     timestamps: true;
@@ -350,6 +355,7 @@ export declare const InvoiceChangeRequest: import("mongoose").Model<{
     proposedInvoiceAmountAwg: number;
     currentPaymentMethod: "datafono" | "transferencia" | "efectivo" | "credito";
     invoiceNumber?: number | null | undefined;
+    proposedInvoiceNumber?: number | null | undefined;
     reviewedAt?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps> & {
     _id: import("mongoose").Types.ObjectId;
