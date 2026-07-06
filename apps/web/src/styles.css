@@ -4324,6 +4324,25 @@ h1 {
   width: min(100%, 980px);
 }
 
+.staff-order-composer-modal {
+  max-height: calc(100vh - 2rem);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.staff-order-composer-body {
+  overflow-y: auto;
+  display: grid;
+  gap: 1rem;
+  padding-right: 0.25rem;
+}
+
+.staff-order-composer-body .creation-header.database-header {
+  align-items: flex-start;
+  gap: 1rem;
+}
+
 .warehouse-credit-collection-card {
   margin-top: 18px;
   padding: 16px;

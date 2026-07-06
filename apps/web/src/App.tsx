@@ -1377,6 +1377,7 @@ const managementSidebarSections = [
       { key: "sales-rep-performance", label: "Desempeño de vendedores" },
       { key: "product-performance", label: "Desempeño de productos" },
       { key: "order-planner", label: "Planificador de pedidos" },
+      { key: "warehouse-dispatch", label: "Despacho" },
       { key: "logistics-accounting", label: "Contabilidad" },
     ],
   },
@@ -2013,8 +2014,21 @@ function isContabilidadWarehouseSection(section: ActiveSection) {
   return section === "warehouse-dispatch" || section === "warehouse-inventory";
 }
 
+function hasAccountingDispatchAccess(role: string | undefined) {
+  return role === "contabilidad" || role === "management";
+}
+
+function canCreateStaffOrders(role: string | undefined) {
+  return role === "management" || role === "contabilidad";
+}
+
+function canUseWarehousePortalFeatures(role: string | undefined) {
+  return role === "warehouse-aruba" || hasAccountingDispatchAccess(role);
+}
+
 function canAccessWarehousePortal(role: string | undefined, section: ActiveSection) {
-  return role === "warehouse-aruba" || (role === "contabilidad" && isContabilidadWarehouseSection(section));
+  return role === "warehouse-aruba"
+    || (hasAccountingDispatchAccess(role) && isContabilidadWarehouseSection(section));
 }
 
 function isProductVisibleForSession(product: Record<string, unknown>, sessionUser: SessionUser | null) {
@@ -4518,6 +4532,10 @@ export default function App() {
   const [isLoadingProductStorePerformance, setIsLoadingProductStorePerformance] = useState(false);
   const [routeForm, setRouteForm] = useState<RouteFormState>(() => createInitialRouteForm());
   const [sellerRoutes, setSellerRoutes] = useState<SalesRouteRecord[]>([]);
+  const [staffOrderRoutes, setStaffOrderRoutes] = useState<SalesRouteRecord[]>([]);
+  const [isStaffOrderComposerOpen, setIsStaffOrderComposerOpen] = useState(false);
+  const [isLoadingStaffOrderRoutes, setIsLoadingStaffOrderRoutes] = useState(false);
+  const [staffOrderRoutesError, setStaffOrderRoutesError] = useState("");
   const [isLoadingSellerRoutes, setIsLoadingSellerRoutes] = useState(false);
   const [sellerRoutesError, setSellerRoutesError] = useState("");
   const [selectedSellerRouteId, setSelectedSellerRouteId] = useState("");
@@ -4945,7 +4963,8 @@ export default function App() {
     colombiaOpsAllowedSections.has(item.key)
   ));
   const visibleSidebarItems = sessionUser?.role === "colombia-ops" ? colombiaOpsSidebarItems : sidebarItems;
-  const selectedSellerRoute = sellerRoutes.find((route) => (route._id ?? route.code) === selectedSellerRouteId) ?? null;
+  const activeComposerRoutes = isStaffOrderComposerOpen ? staffOrderRoutes : sellerRoutes;
+  const selectedSellerRoute = activeComposerRoutes.find((route) => (route._id ?? route.code) === selectedSellerRouteId) ?? null;
   const selectedSellerDay = selectedSellerRoute?.days.find((day) => day.day === selectedSellerDayKey) ?? null;
   const selectedSellerStores = (selectedSellerDay?.stores ?? []).flatMap((store) => {
     const storeOption = storeOptionsById.get(store.storeId);
@@ -5009,6 +5028,73 @@ export default function App() {
     .sort((left, right) => left.label.localeCompare(right.label));
   const selectedSellerClientForManagement = sellerManagedClientOptions.find((store) => store.value === selectedSellerClientId) ?? null;
   const selectedSellerRouteKey = selectedSellerRoute ? (selectedSellerRoute._id ?? selectedSellerRoute.code) : "";
+  const isSellerOrderFlowActive = sessionUser?.role === "sales-rep-aruba"
+    || (canCreateStaffOrders(sessionUser?.role) && isStaffOrderComposerOpen);
+  const isLoadingComposerRoutes = isStaffOrderComposerOpen ? isLoadingStaffOrderRoutes : isLoadingSellerRoutes;
+  const composerRoutesError = isStaffOrderComposerOpen ? staffOrderRoutesError : sellerRoutesError;
+
+  function resolveStaffOrderSalesRepId() {
+    if (sessionUser?.role === "sales-rep-aruba") {
+      return sessionUser.id;
+    }
+
+    return String(selectedSellerRoute?.salesRepId ?? "").trim();
+  }
+
+  function resetStaffOrderComposerDraft() {
+    setSelectedSellerRouteId("");
+    setSelectedSellerDayKey("");
+    setSelectedSellerStoreId("");
+    setSellerRouteStoreSearch("");
+    setSellerOrderDraft({});
+    setSellerGiftDraftItems([]);
+    setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
+    setSellerOrderNotesDraft("");
+    setSellerDeliveryDateDraft(getBusinessDateKey());
+    setSellerOrderStatus(null);
+    setSellerProductOfferStatus(null);
+    setSellerProductCatalog({ expiringSoon: [], products: [] });
+    setSellerProductCatalogError("");
+    setSellerClientProductsError("");
+    setSellerAssignedStore(null);
+    setSellerClientProducts([]);
+  }
+
+  function closeStaffOrderComposer() {
+    setIsStaffOrderComposerOpen(false);
+    resetStaffOrderComposerDraft();
+  }
+
+  async function openStaffOrderComposer() {
+    if (!canCreateStaffOrders(sessionUser?.role)) {
+      return;
+    }
+
+    resetStaffOrderComposerDraft();
+    setIsStaffOrderComposerOpen(true);
+    setStaffOrderRoutesError("");
+
+    try {
+      setIsLoadingStaffOrderRoutes(true);
+      const response = await fetch(`${apiBaseUrl}/management/routes`);
+      const data = (await response.json()) as SalesRouteRecord[] | { message?: string };
+
+      if (!response.ok || !Array.isArray(data)) {
+        setStaffOrderRoutes([]);
+        setStaffOrderRoutesError(Array.isArray(data) ? "No fue posible cargar las rutas." : data.message ?? "No fue posible cargar las rutas.");
+        return;
+      }
+
+      setStaffOrderRoutes(data.filter((route) => route.active !== false));
+    } catch {
+      setStaffOrderRoutes([]);
+      setStaffOrderRoutesError("No fue posible conectar con el backend.");
+    } finally {
+      setIsLoadingStaffOrderRoutes(false);
+    }
+
+    void refreshInventorySummary();
+  }
 
   function handleSelectSellerRouteStore(store: { storeId: string; routeDay: RouteDayKey | "" }) {
     if (store.routeDay && store.routeDay !== selectedSellerDayKey) {
@@ -5153,7 +5239,7 @@ export default function App() {
       ? selectedWarehouseOrderDetail.items
       : selectedWarehouseOrderDetail.items.filter((item) => warehouseOrderDraftProductIds.includes(item.productId)))
     : [];
-  const canAccountingAdjustDispatchPricing = sessionUser?.role === "contabilidad"
+  const canAccountingAdjustDispatchPricing = hasAccountingDispatchAccess(sessionUser?.role)
     && selectedWarehouseOrderDetail !== null
     && selectedWarehouseOrderDetail.status !== "delivered";
   const warehousePricedItems = selectedWarehouseOrderDetail
@@ -5224,7 +5310,7 @@ export default function App() {
     : [];
   const warehouseOrderSubtotal = warehousePricedItems.reduce((sum, item) => sum + item.lineTotal, 0);
   const isWarehouseUser = sessionUser?.role === "warehouse-aruba";
-  const canWarehouseInvoiceOrder = sessionUser?.role === "contabilidad";
+  const canWarehouseInvoiceOrder = hasAccountingDispatchAccess(sessionUser?.role);
   const warehouseOrderDiscountAmount = selectedWarehouseOrderDetail?.status === "dispatched"
     ? roundCurrencyValue(Math.max(0, Number(warehouseOrderDiscountDraft || 0)))
     : 0;
@@ -5325,7 +5411,7 @@ export default function App() {
         const quantityChanged = savedQuantity !== draftQuantity;
         const lotChanged = expectedLotId !== String(warehouseOrderLotDraft[item.productId] ?? expectedLotId);
 
-        if (sessionUser?.role === "contabilidad") {
+        if (hasAccountingDispatchAccess(sessionUser?.role)) {
           const savedQtyNumber = Number(savedQuantity);
           const draftQtyNumber = Number(draftQuantity);
           const storedPrice = Number(item.salePriceAwg ?? 0);
@@ -6166,7 +6252,7 @@ export default function App() {
   }, [sessionUser]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "contabilidad") {
+    if (!canUseWarehousePortalFeatures(sessionUser?.role)) {
       return;
     }
 
@@ -6174,7 +6260,7 @@ export default function App() {
   }, [sessionUser, warehouseActiveSection, activeSection]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "contabilidad") {
+    if (!hasAccountingDispatchAccess(sessionUser?.role)) {
       return;
     }
 
@@ -6717,7 +6803,7 @@ export default function App() {
       return;
     }
 
-    if (activeSection !== "orders") {
+    if (activeSection !== "orders" && activeSection !== "warehouse-dispatch") {
       return;
     }
 
@@ -6832,7 +6918,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    if (sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "contabilidad") {
+    if (!canUseWarehousePortalFeatures(sessionUser?.role)) {
       setWarehouseActiveSection("inventory");
       setWarehouseOrders([]);
       setWarehouseOrdersError("");
@@ -6848,7 +6934,7 @@ export default function App() {
   }, [sessionUser, warehouseActiveSection]);
 
   useEffect(() => {
-    if ((sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "contabilidad") || !selectedWarehouseOrderDetail) {
+    if (!canUseWarehousePortalFeatures(sessionUser?.role) || !selectedWarehouseOrderDetail) {
       setWarehouseOrderChecklist({});
       setWarehouseOrderItemDraft({});
       setWarehouseOrderLotDraft({});
@@ -6882,7 +6968,7 @@ export default function App() {
   }, [inventoryRows, selectedWarehouseOrderDetail, sessionUser]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "contabilidad" || !selectedWarehouseOrderDetail) {
+    if (!hasAccountingDispatchAccess(sessionUser?.role) || !selectedWarehouseOrderDetail) {
       setAccountingOrderLineTotalDraft({});
       setAccountingOrderLineTotalManual({});
       setAccountingOrderUnitPriceDraft({});
@@ -6920,7 +7006,7 @@ export default function App() {
   }, [selectedWarehouseOrderDetail, sessionUser?.role, productOptions, inventoryRows]);
 
   useEffect(() => {
-    if ((sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "contabilidad") || warehouseActiveSection !== "orders" || !selectedWarehouseOrderDetail) {
+    if (!canUseWarehousePortalFeatures(sessionUser?.role) || warehouseActiveSection !== "orders" || !selectedWarehouseOrderDetail) {
       return;
     }
 
@@ -6958,7 +7044,7 @@ export default function App() {
   }, [sessionUser, sellerActiveSection]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "contabilidad") {
+    if (!canUseWarehousePortalFeatures(sessionUser?.role)) {
       return;
     }
 
@@ -7015,6 +7101,18 @@ export default function App() {
   }, [sellerRoutes]);
 
   useEffect(() => {
+    if (!isStaffOrderComposerOpen) {
+      return;
+    }
+
+    setSelectedSellerRouteId((current) => (
+      staffOrderRoutes.some((route) => (route._id ?? route.code) === current)
+        ? current
+        : (staffOrderRoutes[0]?._id ?? staffOrderRoutes[0]?.code ?? "")
+    ));
+  }, [staffOrderRoutes, isStaffOrderComposerOpen]);
+
+  useEffect(() => {
     if (!selectedSellerRoute) {
       setSelectedSellerDayKey("");
       return;
@@ -7045,17 +7143,19 @@ export default function App() {
   }, [selectedSellerStores]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "sales-rep-aruba") {
-      setSellerAssignedStore(null);
-      setSellerClientProducts([]);
-      setSellerClientProductsError("");
-      setSellerOrderDraft({});
-      setSellerGiftDraftItems([]);
-      setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
+    if (!isSellerOrderFlowActive) {
+      if (sessionUser?.role !== "sales-rep-aruba") {
+        setSellerAssignedStore(null);
+        setSellerClientProducts([]);
+        setSellerClientProductsError("");
+        setSellerOrderDraft({});
+        setSellerGiftDraftItems([]);
+        setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
+      }
       return;
     }
 
-    const activeStoreId = sellerActiveSection === "clients"
+    const activeStoreId = sessionUser?.role === "sales-rep-aruba" && sellerActiveSection === "clients"
       ? selectedSellerClientId
       : selectedSellerStoreId;
 
@@ -7073,16 +7173,18 @@ export default function App() {
     setSellerGiftDraftItems([]);
     setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
     void refreshSellerClientProducts(activeStoreId);
-  }, [selectedSellerStoreId, selectedSellerClientId, sellerActiveSection, sessionUser]);
+  }, [selectedSellerStoreId, selectedSellerClientId, sellerActiveSection, sessionUser, isSellerOrderFlowActive]);
 
   useEffect(() => {
-    if (sessionUser?.role !== "sales-rep-aruba") {
-      setSellerProductCatalog({ expiringSoon: [], products: [] });
-      setSellerProductCatalogError("");
+    if (!isSellerOrderFlowActive) {
+      if (sessionUser?.role !== "sales-rep-aruba") {
+        setSellerProductCatalog({ expiringSoon: [], products: [] });
+        setSellerProductCatalogError("");
+      }
       return;
     }
 
-    const catalogStoreId = sellerActiveSection === "clients"
+    const catalogStoreId = sessionUser?.role === "sales-rep-aruba" && sellerActiveSection === "clients"
       ? selectedSellerClientId
       : selectedSellerStoreId;
 
@@ -7092,7 +7194,7 @@ export default function App() {
     }
 
     void refreshSellerProductCatalog(catalogStoreId);
-  }, [sessionUser, sellerActiveSection, selectedSellerStoreId, selectedSellerClientId]);
+  }, [sessionUser, sellerActiveSection, selectedSellerStoreId, selectedSellerClientId, isSellerOrderFlowActive, selectedSellerRoute?.salesRepId]);
 
   useEffect(() => {
     setSellerCatalogPage(1);
@@ -7206,7 +7308,19 @@ export default function App() {
   }
 
   async function refreshSellerProductCatalog(storeId: string) {
-    if (!sessionUser || sessionUser.role !== "sales-rep-aruba") {
+    if (!sessionUser) {
+      return;
+    }
+
+    const isStaffComposer = canCreateStaffOrders(sessionUser.role) && isStaffOrderComposerOpen;
+
+    if (sessionUser.role !== "sales-rep-aruba" && !isStaffComposer) {
+      return;
+    }
+
+    const salesRepId = resolveStaffOrderSalesRepId();
+
+    if (!salesRepId) {
       return;
     }
 
@@ -7214,7 +7328,7 @@ export default function App() {
       setIsLoadingSellerProductCatalog(true);
       setSellerProductCatalogError("");
       const response = await fetch(
-        `${apiBaseUrl}/sales/product-catalog?salesRepId=${encodeURIComponent(sessionUser.id)}&storeId=${encodeURIComponent(storeId)}`,
+        `${apiBaseUrl}/sales/product-catalog?salesRepId=${encodeURIComponent(salesRepId)}&storeId=${encodeURIComponent(storeId)}`,
       );
       const data = (await response.json()) as SellerProductCatalog | { message?: string };
 
@@ -7239,7 +7353,14 @@ export default function App() {
   }
 
   async function handleAddProductToSellerClient(storeId: string, productId: string) {
-    if (!sessionUser || sessionUser.role !== "sales-rep-aruba") {
+    if (!sessionUser || !isSellerOrderFlowActive) {
+      return;
+    }
+
+    const salesRepId = resolveStaffOrderSalesRepId();
+
+    if (!salesRepId) {
+      setSellerProductOfferStatus({ tone: "error", message: "Selecciona una ruta con vendedor asignado." });
       return;
     }
 
@@ -7250,7 +7371,7 @@ export default function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          salesRepId: sessionUser.id,
+          salesRepId,
           productId,
         }),
       });
@@ -7350,7 +7471,14 @@ export default function App() {
   }
 
   async function handleRemoveProductFromSellerClient(storeId: string, productId: string) {
-    if (!sessionUser || sessionUser.role !== "sales-rep-aruba") {
+    if (!sessionUser || !isSellerOrderFlowActive) {
+      return;
+    }
+
+    const salesRepId = resolveStaffOrderSalesRepId();
+
+    if (!salesRepId) {
+      setSellerProductOfferStatus({ tone: "error", message: "Selecciona una ruta con vendedor asignado." });
       return;
     }
 
@@ -7370,7 +7498,7 @@ export default function App() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          salesRepId: sessionUser.id,
+          salesRepId,
           assignedProductIds: nextAssignedProductIds,
         }),
       });
@@ -7650,6 +7778,161 @@ export default function App() {
           </button>
         </div>
       </>
+    );
+  }
+
+  function renderStaffOrderComposerModal() {
+    if (!isStaffOrderComposerOpen) {
+      return null;
+    }
+
+    return (
+      <AppModalOverlay onDismiss={closeStaffOrderComposer}>
+        <div className="modal-card modal-card--wide staff-order-composer-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+          <div className="modal-header">
+            <div>
+              <p className="section-label">Nuevo pedido</p>
+              <h2>Agregar pedido</h2>
+              <p>Selecciona ruta, cliente y productos igual que en el portal del vendedor. El pedido queda a nombre del vendedor de la ruta.</p>
+            </div>
+            <button className="modal-close-button" type="button" onClick={closeStaffOrderComposer}>Cerrar</button>
+          </div>
+
+          <div className="staff-order-composer-body">
+            <article className="database-card">
+              <div className="management-table-header">
+                <div>
+                  <h2>Rutas comerciales</h2>
+                  <p>Selecciona la ruta del vendedor que visita al cliente.</p>
+                </div>
+                <p className="management-table-meta">{activeComposerRoutes.length} rutas</p>
+              </div>
+
+              {composerRoutesError ? <p className="form-feedback error">{composerRoutesError}</p> : null}
+
+              <div className="seller-route-list">
+                {isLoadingComposerRoutes ? (
+                  <article className="route-summary-card is-loading" />
+                ) : activeComposerRoutes.length > 0 ? (
+                  activeComposerRoutes.map((route) => {
+                    const routeKey = route._id ?? route.code;
+                    const isSelected = routeKey === selectedSellerRouteId;
+
+                    return (
+                      <button
+                        key={routeKey}
+                        className={`seller-route-list-item ${isSelected ? "is-active" : ""}`}
+                        type="button"
+                        onClick={() => setSelectedSellerRouteId(routeKey)}
+                      >
+                        <div>
+                          <p className="section-label">{route.weekLabel}</p>
+                          <strong>{route.name}</strong>
+                          <span>{route.salesRepName} · {route.days.length} días planeados</span>
+                        </div>
+                        <span>{route.plannedStops} tiendas</span>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <p className="route-empty-state">No hay rutas activas disponibles.</p>
+                )}
+              </div>
+            </article>
+
+            {selectedSellerRoute ? (
+              <article className="route-builder-card seller-route-workspace">
+                <div className="management-table-header">
+                  <div>
+                    <p className="section-label">Ruta activa</p>
+                    <h2>{selectedSellerRoute.name}</h2>
+                    <p>{selectedSellerRoute.weekLabel} · {selectedSellerRoute.salesRepName}</p>
+                  </div>
+                  <p className="management-table-meta">{selectedSellerRoute.plannedStops} tiendas</p>
+                </div>
+
+                <div className="seller-route-day-tabs">
+                  {selectedSellerRoute.days.map((day) => (
+                    <button
+                      key={`${selectedSellerRoute._id ?? selectedSellerRoute.code}-${day.day}`}
+                      className={`seller-route-day-button ${selectedSellerDayKey === day.day ? "is-active" : ""}`}
+                      type="button"
+                      onClick={() => {
+                        setSelectedSellerDayKey(day.day);
+                        setSellerRouteStoreSearch("");
+                      }}
+                    >
+                      <strong>{formatRouteDayLabel(day.day)}</strong>
+                      <span>{day.stores.length} clientes</span>
+                    </button>
+                  ))}
+                </div>
+
+                {selectedSellerDay ? (
+                  <>
+                    <div className="seller-route-client-panel">
+                      <label className="field field-full">
+                        <span>Buscar tienda</span>
+                        <input
+                          type="search"
+                          placeholder="Buscar entre todas las tiendas de la ruta"
+                          value={sellerRouteStoreSearch}
+                          onChange={(event) => setSellerRouteStoreSearch(event.target.value)}
+                        />
+                      </label>
+
+                      <div className="field field-full">
+                        <span>{normalizedSellerRouteStoreSearch ? "Resultados en toda la ruta" : "Cliente de la ruta"}</span>
+                        <p className="seller-route-store-search-meta">
+                          {normalizedSellerRouteStoreSearch
+                            ? `${sellerRouteStoresForPanel.length} de ${allSelectedSellerRouteStores.length} tiendas`
+                            : `${sellerRouteStoresForPanel.length} tiendas`}
+                        </p>
+                        <div className="seller-route-store-chips">
+                          {sellerRouteStoresForPanel.length > 0 ? sellerRouteStoresForPanel.map((store) => (
+                            <button
+                              key={`${store.routeDay}-${store.storeId}`}
+                              className={`seller-route-store-chip ${selectedSellerStoreId === store.storeId ? "is-active" : ""}`}
+                              type="button"
+                              onClick={() => handleSelectSellerRouteStore(store)}
+                            >
+                              {normalizedSellerRouteStoreSearch ? (
+                                <span className="seller-route-store-chip-content">
+                                  <strong>{store.storeName}</strong>
+                                  <span>{formatRouteDayLabel(store.routeDay)}</span>
+                                </span>
+                              ) : store.storeName}
+                            </button>
+                          )) : (
+                            <p className="route-empty-state">No hay tiendas que coincidan con la búsqueda.</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {selectedSellerStore ? (
+                        <p className="warehouse-selected-meta">{selectedSellerStore.storeName} · {selectedSellerStore.address || "Sin dirección"}</p>
+                      ) : null}
+
+                      {selectedSellerStoreId ? (
+                        <div className="seller-route-order-extras">
+                          {sellerOrderStatus ? <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p> : null}
+                          {renderSellerRouteOrderExtras()}
+                        </div>
+                      ) : sellerOrderStatus ? (
+                        <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p>
+                      ) : null}
+                    </div>
+
+                    {renderSellerProductCatalogPanel(selectedSellerStoreId || null, { showOrderFields: true })}
+                  </>
+                ) : (
+                  <p className="route-empty-state">Selecciona un día de la ruta para ver sus clientes.</p>
+                )}
+              </article>
+            ) : null}
+          </div>
+        </div>
+      </AppModalOverlay>
     );
   }
 
@@ -10119,7 +10402,7 @@ export default function App() {
           notes: item.notes,
         };
 
-        if (sessionUser?.role === "contabilidad") {
+        if (hasAccountingDispatchAccess(sessionUser?.role)) {
           const storedPrice = Number(item.salePriceAwg ?? 0);
           const productOption = productOptionsById.get(item.productId);
           const invRow = inventoryRowsByProductId.get(item.productId);
@@ -10198,7 +10481,7 @@ export default function App() {
       setWarehouseOrderLotDraft(
         Object.fromEntries(updatedOrder.items.map((item) => [item.productId, item.stockRowId ?? ""])),
       );
-      if (sessionUser?.role === "contabilidad") {
+      if (hasAccountingDispatchAccess(sessionUser?.role)) {
         setAccountingOrderLineTotalDraft({});
         setAccountingOrderLineTotalManual({});
         setAccountingOrderUnitPriceDraft(
@@ -10226,7 +10509,7 @@ export default function App() {
   }
 
   async function handleSaveAccountingOrderInvoiceNumber() {
-    if (!selectedWarehouseOrderDetail || sessionUser?.role !== "contabilidad") {
+    if (!selectedWarehouseOrderDetail || !hasAccountingDispatchAccess(sessionUser?.role)) {
       return;
     }
 
@@ -10318,7 +10601,7 @@ export default function App() {
   }
 
   async function handleSaveAccountingOrderChanges() {
-    if (!selectedWarehouseOrderDetail || sessionUser?.role !== "contabilidad") {
+    if (!selectedWarehouseOrderDetail || !hasAccountingDispatchAccess(sessionUser?.role)) {
       return;
     }
 
@@ -13100,7 +13383,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
   }
 
   async function handleSellerOrderSubmit() {
-    if (!sessionUser || sessionUser.role !== "sales-rep-aruba") {
+    const isStaffComposer = canCreateStaffOrders(sessionUser?.role) && isStaffOrderComposerOpen;
+
+    if (!sessionUser || (sessionUser.role !== "sales-rep-aruba" && !isStaffComposer)) {
+      return;
+    }
+
+    const salesRepId = resolveStaffOrderSalesRepId();
+
+    if (!salesRepId) {
+      setSellerOrderStatus({ tone: "error", message: "Selecciona una ruta con vendedor asignado." });
       return;
     }
 
@@ -13130,7 +13422,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           routeName: selectedSellerRoute.name,
           routeDay: selectedSellerDayKey,
           storeId: selectedSellerStore.storeId,
-          salesRepId: sessionUser.id,
+          salesRepId,
           deliveryDate: sellerDeliveryDateDraft,
           orderNotes: sellerOrderNotesDraft.trim(),
           items: sellerDraftedItems,
@@ -13146,6 +13438,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
       if (!response.ok) {
         setSellerOrderStatus({ tone: "error", message: data.message ?? "No fue posible enviar el pedido a bodega." });
+        return;
+      }
+
+      if (isStaffComposer) {
+        closeStaffOrderComposer();
+        setWarehouseOrderCompletionStatus({
+          tone: "success",
+          message: data.message ?? "Pedido enviado a bodega correctamente.",
+        });
+        await refreshWarehouseOrders();
         return;
       }
 
@@ -15841,6 +16143,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
   if (canAccessWarehousePortal(sessionUser.role, activeSection)) {
     const isContabilidadUser = sessionUser.role === "contabilidad";
+    const isManagementUser = sessionUser.role === "management";
 
     return (
       <main className="portal-shell portal-shell--field">
@@ -15874,6 +16177,40 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   ))}
                 </div>
               ))
+            ) : isManagementUser ? (
+              <>
+                <button
+                  className={`sidebar-link ${activeSection === "dashboard" ? "active" : ""}`}
+                  type="button"
+                  onClick={() => {
+                    setActiveSection("dashboard");
+                    setSelectedWarehouseOrderDetail(null);
+                    setWarehouseOrderCompletionStatus(null);
+                  }}
+                >
+                  Dashboard
+                </button>
+
+                {managementSidebarSections.map((section) => (
+                  <div key={section.key}>
+                    <p className="section-label">{section.label}</p>
+                    {section.items.map((item) => (
+                      <button
+                        key={item.key}
+                        className={`sidebar-link ${activeSection === item.key ? "active" : ""}`}
+                        type="button"
+                        onClick={() => {
+                          setActiveSection(item.key as ActiveSection);
+                          setSelectedWarehouseOrderDetail(null);
+                          setWarehouseOrderCompletionStatus(null);
+                        }}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </>
             ) : (
               <>
                 <button
@@ -15922,7 +16259,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           <header className="portal-header portal-header--field">
             <div className="portal-header-top">
               <div>
-                <p className="section-label">{`${isContabilidadUser ? "Portal Contabilidad" : "Portal Bodega"} · ${sessionUser.name}`}</p>
+                <p className="section-label">{`${isContabilidadUser ? "Portal Contabilidad" : isManagementUser ? "Portal Gerencia" : "Portal Bodega"} · ${sessionUser.name}`}</p>
                 <h1>{
                   warehouseActiveSection === "orders"
                     ? "Pedidos recibidos"
@@ -17300,7 +17637,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           key={item.key}
                           className={`sidebar-link ${activeSection === item.key ? "active" : ""}`}
                           type="button"
-                          onClick={() => setActiveSection(item.key)}
+                          onClick={() => {
+                            setActiveSection(item.key as ActiveSection);
+                            setSelectedWarehouseOrderDetail(null);
+                            setWarehouseOrderCompletionStatus(null);
+                          }}
                         >
                           {item.label}
                         </button>
@@ -17400,6 +17741,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 ? "Desempeño de productos"
               : activeSection === "order-planner"
                 ? "Planificador de pedidos"
+              : activeSection === "warehouse-dispatch"
+                ? "Despacho"
               : activeSection === "catalog"
                 ? "Catálogo"
               : activeSection === "cartera"
@@ -24782,9 +25125,18 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
         ) : activeSection === "orders" ? (
           <section className="routes-layout">
             <article className="creation-selector-block">
-              <p className="section-label">Recepcion</p>
-              <h2>Pedidos del equipo comercial</h2>
-              <p className="route-helper-text">Aqui aparecen los pedidos enviados por vendedores para revision, preparacion y despacho desde bodega.</p>
+              <div className="creation-header database-header">
+                <div>
+                  <p className="section-label">Recepcion</p>
+                  <h2>Pedidos del equipo comercial</h2>
+                  <p className="route-helper-text">Aqui aparecen los pedidos enviados por vendedores para revision, preparacion y despacho desde bodega.</p>
+                </div>
+                {canCreateStaffOrders(sessionUser?.role) ? (
+                  <button className="primary-action-button" type="button" onClick={() => void openStaffOrderComposer()}>
+                    Agregar pedido
+                  </button>
+                ) : null}
+              </div>
             </article>
 
             <article className="database-card">
@@ -25008,7 +25360,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <button className="modal-close-button" type="button" onClick={() => setSelectedWarehouseOrderDetail(null)}>Cerrar</button>
                   </div>
 
-                  {canAccountingEditOrderDetail(selectedWarehouseOrderDetail) && sessionUser?.role === "contabilidad" ? (
+                  {canAccountingEditOrderDetail(selectedWarehouseOrderDetail) && hasAccountingDispatchAccess(sessionUser?.role) ? (
                     <div className="warehouse-order-invoice-number-panel">
                       {isEditingAccountingOrderInvoice ? (
                         <div className="warehouse-order-invoice-number-editor">
@@ -25081,7 +25433,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </div>
                   ) : null}
 
-                  {canAccountingEditOrderDetail(selectedWarehouseOrderDetail) && sessionUser?.role === "contabilidad" ? (
+                  {canAccountingEditOrderDetail(selectedWarehouseOrderDetail) && hasAccountingDispatchAccess(sessionUser?.role) ? (
                     <p className="route-helper-text">
                       Ajusta cantidad y total por producto. El precio unitario se calcula automaticamente y se usara al generar despacho y factura.
                     </p>
@@ -25112,7 +25464,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           const fallbackSalePriceAwg = storedPriceAwg > 0
                             ? storedPriceAwg
                             : Number(invRow?.salePrice ?? productOption?.salePrice ?? 0);
-                          const canAccountingEditOrder = sessionUser?.role === "contabilidad"
+                          const canAccountingEditOrder = hasAccountingDispatchAccess(sessionUser?.role)
                             && canAccountingEditOrderDetail(selectedWarehouseOrderDetail);
                           const quantity = canAccountingEditOrder
                             ? Number(warehouseOrderItemDraft[item.productId] ?? item.quantity)
@@ -25213,7 +25565,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </table>
                   </div>
 
-                  {canAccountingEditOrderDetail(selectedWarehouseOrderDetail) && sessionUser?.role === "contabilidad" ? (
+                  {canAccountingEditOrderDetail(selectedWarehouseOrderDetail) && hasAccountingDispatchAccess(sessionUser?.role) ? (
                     <>
                       {accountingOrderPriceStatus ? (
                         <p className={`form-feedback ${accountingOrderPriceStatus.tone === "error" ? "error" : "success"}`}>
@@ -25259,6 +25611,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 </div>
               </AppModalOverlay>
             ) : null}
+
+            {renderStaffOrderComposerModal()}
           </section>
         ) : (
           <section className="dashboard-grid" />
