@@ -29,6 +29,7 @@ type ActiveSection =
   | "inventory"
   | "inventory-entry"
   | "orders"
+  | "create-order"
   | "routes"
   | "store-performance"
   | "sales-rep-performance"
@@ -1472,6 +1473,7 @@ const contabilidadSidebarSections = [
 
 const contabilidadAllowedSections = new Set<ActiveSection>([
   "orders",
+  "create-order",
   "catalog",
   "cartera",
   "financial-reports",
@@ -2598,15 +2600,15 @@ function InventorySummaryTable({
               return (
                 <Fragment key={row.stockRowId || `${row.productId}-${row.expirationDate ?? "sin-caducidad"}`}>
                   <tr>
-                    <td>
-                      {isCompactTable ? (
+                <td>
+                  {isCompactTable ? (
                         <button
                           className="warehouse-inventory-product warehouse-inventory-product-button"
                           type="button"
                           onClick={() => onToggleProductLots?.(row.productId)}
                           aria-expanded={isExpanded}
                         >
-                          <strong>{row.name}</strong>
+                      <strong>{row.name}</strong>
                           <span>{row.sku} · {lots.length} lote{lots.length === 1 ? "" : "s"}</span>
                         </button>
                       ) : (
@@ -2618,69 +2620,69 @@ function InventorySummaryTable({
                         >
                           {`${row.name} (${row.sku}) · ${lots.length} lote${lots.length === 1 ? "" : "s"}`}
                         </button>
-                      )}
-                    </td>
-                    <td>{row.quantity}</td>
-                    <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.unitCost)}</td>
-                    <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.totalCost)}</td>
-                    <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.salePrice)}</td>
-                    <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.totalSale)}</td>
-                    <td>{row.expirationDate ? String(row.expirationDate).slice(0, 10) : "-"}</td>
-                    <td>
-                      <div className="table-action-group">
-                        {onEditRow ? (
-                          <button
-                            className="table-action-icon"
-                            type="button"
-                            aria-label={`Modificar ${row.name}`}
-                            title="Modificar producto"
-                            onClick={() => onEditRow(row)}
-                          >
-                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                              <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zm14.71-9.04a1.003 1.003 0 000-1.42l-2.5-2.5a1.003 1.003 0 00-1.42 0l-1.83 1.83 3.75 3.75 2-1.66z" fill="currentColor" />
-                            </svg>
-                          </button>
-                        ) : null}
-                        {row.quantity > 0 ? (
-                          isCompactTable ? (
-                            <button
-                              className="warehouse-inventory-out-button"
-                              type="button"
-                              aria-label={`Sacar unidades de ${row.name}`}
-                              title="Registrar salida de inventario"
+                  )}
+                </td>
+                <td>{row.quantity}</td>
+                <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.unitCost)}</td>
+                <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.totalCost)}</td>
+                <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.salePrice)}</td>
+                <td className={isCompactTable ? "warehouse-order-col-optional" : undefined}>{formatCurrencyUpTwoDecimals(row.totalSale)}</td>
+                <td>{row.expirationDate ? String(row.expirationDate).slice(0, 10) : "-"}</td>
+                <td>
+                  <div className="table-action-group">
+                    {onEditRow ? (
+                      <button
+                        className="table-action-icon"
+                        type="button"
+                        aria-label={`Modificar ${row.name}`}
+                        title="Modificar producto"
+                        onClick={() => onEditRow(row)}
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                          <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zm14.71-9.04a1.003 1.003 0 000-1.42l-2.5-2.5a1.003 1.003 0 00-1.42 0l-1.83 1.83 3.75 3.75 2-1.66z" fill="currentColor" />
+                        </svg>
+                      </button>
+                    ) : null}
+                    {row.quantity > 0 ? (
+                      isCompactTable ? (
+                        <button
+                          className="warehouse-inventory-out-button"
+                          type="button"
+                          aria-label={`Sacar unidades de ${row.name}`}
+                          title="Registrar salida de inventario"
                               onClick={() => onAdjustRow({
                                 ...row,
                                 stockRowId: primaryLot?.stockRowId ?? row.stockRowId,
                                 quantity: primaryLot?.quantity ?? row.quantity,
                                 expirationDate: primaryLot?.expirationDate ?? row.expirationDate,
                               })}
-                            >
-                              Sacar
-                            </button>
-                          ) : (
-                            <button
-                              className="table-action-icon"
-                              type="button"
-                              aria-label="Sacar unidades del inventario"
-                              title="Registrar salida de inventario"
+                        >
+                          Sacar
+                        </button>
+                      ) : (
+                        <button
+                          className="table-action-icon"
+                          type="button"
+                          aria-label="Sacar unidades del inventario"
+                          title="Registrar salida de inventario"
                               onClick={() => onAdjustRow({
                                 ...row,
                                 stockRowId: primaryLot?.stockRowId ?? row.stockRowId,
                                 quantity: primaryLot?.quantity ?? row.quantity,
                                 expirationDate: primaryLot?.expirationDate ?? row.expirationDate,
                               })}
-                            >
-                              <svg viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M19 7h-3V6a2 2 0 0 0-2-2H10a2 2 0 0 0-2 2v1H5a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1h1v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9h1a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zM10 6h4v1h-4V6zm2 11a1 1 0 0 1-1-1v-4a1 1 0 1 1 2 0v4a1 1 0 0 1-1 1z" fill="currentColor" />
-                              </svg>
-                            </button>
-                          )
-                        ) : !onEditRow ? (
-                          <span className="warehouse-inventory-no-action" title="Sin unidades disponibles">
-                            {isCompactTable ? "-" : "Sin stock"}
-                          </span>
-                        ) : null}
-                      </div>
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M19 7h-3V6a2 2 0 0 0-2-2H10a2 2 0 0 0-2 2v1H5a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1h1v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9h1a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zM10 6h4v1h-4V6zm2 11a1 1 0 0 1-1-1v-4a1 1 0 1 1 2 0v4a1 1 0 0 1-1 1z" fill="currentColor" />
+                          </svg>
+                        </button>
+                      )
+                    ) : !onEditRow ? (
+                      <span className="warehouse-inventory-no-action" title="Sin unidades disponibles">
+                        {isCompactTable ? "-" : "Sin stock"}
+                      </span>
+                    ) : null}
+                  </div>
                     </td>
                   </tr>
                   {isExpanded ? (
@@ -2715,9 +2717,9 @@ function InventorySummaryTable({
                             ) : (
                               <span className="warehouse-inventory-no-action">-</span>
                             )}
-                          </td>
-                        </tr>
-                      ))
+                </td>
+              </tr>
+            ))
                     ) : (
                       <tr className="inventory-lot-row">
                         <td colSpan={8}>Este producto no tiene lotes registrados.</td>
@@ -4533,7 +4535,6 @@ export default function App() {
   const [routeForm, setRouteForm] = useState<RouteFormState>(() => createInitialRouteForm());
   const [sellerRoutes, setSellerRoutes] = useState<SalesRouteRecord[]>([]);
   const [staffOrderRoutes, setStaffOrderRoutes] = useState<SalesRouteRecord[]>([]);
-  const [isStaffOrderComposerOpen, setIsStaffOrderComposerOpen] = useState(false);
   const [isLoadingStaffOrderRoutes, setIsLoadingStaffOrderRoutes] = useState(false);
   const [staffOrderRoutesError, setStaffOrderRoutesError] = useState("");
   const [isLoadingSellerRoutes, setIsLoadingSellerRoutes] = useState(false);
@@ -4964,7 +4965,8 @@ export default function App() {
     colombiaOpsAllowedSections.has(item.key)
   ));
   const visibleSidebarItems = sessionUser?.role === "colombia-ops" ? colombiaOpsSidebarItems : sidebarItems;
-  const activeComposerRoutes = isStaffOrderComposerOpen ? staffOrderRoutes : sellerRoutes;
+  const isStaffOrderComposerActive = activeSection === "create-order";
+  const activeComposerRoutes = isStaffOrderComposerActive ? staffOrderRoutes : sellerRoutes;
   const selectedSellerRoute = activeComposerRoutes.find((route) => (route._id ?? route.code) === selectedSellerRouteId) ?? null;
   const selectedSellerDay = selectedSellerRoute?.days.find((day) => day.day === selectedSellerDayKey) ?? null;
   const selectedSellerStores = (selectedSellerDay?.stores ?? []).flatMap((store) => {
@@ -5030,9 +5032,9 @@ export default function App() {
   const selectedSellerClientForManagement = sellerManagedClientOptions.find((store) => store.value === selectedSellerClientId) ?? null;
   const selectedSellerRouteKey = selectedSellerRoute ? (selectedSellerRoute._id ?? selectedSellerRoute.code) : "";
   const isSellerOrderFlowActive = sessionUser?.role === "sales-rep-aruba"
-    || (canCreateStaffOrders(sessionUser?.role) && isStaffOrderComposerOpen);
-  const isLoadingComposerRoutes = isStaffOrderComposerOpen ? isLoadingStaffOrderRoutes : isLoadingSellerRoutes;
-  const composerRoutesError = isStaffOrderComposerOpen ? staffOrderRoutesError : sellerRoutesError;
+    || (canCreateStaffOrders(sessionUser?.role) && isStaffOrderComposerActive);
+  const isLoadingComposerRoutes = isStaffOrderComposerActive ? isLoadingStaffOrderRoutes : isLoadingSellerRoutes;
+  const composerRoutesError = isStaffOrderComposerActive ? staffOrderRoutesError : sellerRoutesError;
 
   function resolveStaffOrderSalesRepId() {
     if (sessionUser?.role === "sales-rep-aruba") {
@@ -5062,17 +5064,24 @@ export default function App() {
   }
 
   function closeStaffOrderComposer() {
-    setIsStaffOrderComposerOpen(false);
     resetStaffOrderComposerDraft();
+    setActiveSection("orders");
   }
 
-  async function openStaffOrderComposer() {
+  function openStaffOrderComposer() {
     if (!canCreateStaffOrders(sessionUser?.role)) {
       return;
     }
 
     resetStaffOrderComposerDraft();
-    setIsStaffOrderComposerOpen(true);
+    setActiveSection("create-order");
+  }
+
+  async function loadStaffOrderComposerRoutes() {
+    if (!canCreateStaffOrders(sessionUser?.role)) {
+      return;
+    }
+
     setStaffOrderRoutesError("");
 
     try {
@@ -5300,12 +5309,12 @@ export default function App() {
         priceSource: canAccountingAdjustDispatchPricing
           ? "manual"
           : hasFrozenPrice
-            ? "frozen"
-            : catalogItem
-              ? "catalog"
-              : productOption?.variableSalePrice
-                ? "variable"
-                : "product",
+          ? "frozen"
+          : catalogItem
+            ? "catalog"
+            : productOption?.variableSalePrice
+              ? "variable"
+              : "product",
       };
     })
     : [];
@@ -6710,7 +6719,7 @@ export default function App() {
 
         return existingItem
           ? {
-              ...item,
+        ...item,
               stockRowId: existingItem.stockRowId || item.stockRowId,
               lotName: existingItem.lotName || item.lotName,
               cost: existingItem.cost,
@@ -6784,7 +6793,7 @@ export default function App() {
       return;
     }
 
-    if (activeSection !== "inventory" && activeSection !== "catalog" && activeSection !== "dashboard" && activeSection !== "imports" && activeSection !== "orders" && activeSection !== "products" && activeSection !== "promotions") {
+    if (activeSection !== "inventory" && activeSection !== "catalog" && activeSection !== "dashboard" && activeSection !== "imports" && activeSection !== "orders" && activeSection !== "create-order" && activeSection !== "products" && activeSection !== "promotions") {
       return;
     }
 
@@ -7102,7 +7111,7 @@ export default function App() {
   }, [sellerRoutes]);
 
   useEffect(() => {
-    if (!isStaffOrderComposerOpen) {
+    if (!isStaffOrderComposerActive) {
       return;
     }
 
@@ -7111,7 +7120,15 @@ export default function App() {
         ? current
         : (staffOrderRoutes[0]?._id ?? staffOrderRoutes[0]?.code ?? "")
     ));
-  }, [staffOrderRoutes, isStaffOrderComposerOpen]);
+  }, [staffOrderRoutes, isStaffOrderComposerActive]);
+
+  useEffect(() => {
+    if (activeSection !== "create-order" || !canCreateStaffOrders(sessionUser?.role)) {
+      return;
+    }
+
+    void loadStaffOrderComposerRoutes();
+  }, [activeSection, sessionUser?.role]);
 
   useEffect(() => {
     if (!selectedSellerRoute) {
@@ -7145,11 +7162,11 @@ export default function App() {
 
   useEffect(() => {
     if (!isSellerOrderFlowActive) {
-      if (sessionUser?.role !== "sales-rep-aruba") {
-        setSellerAssignedStore(null);
-        setSellerClientProducts([]);
-        setSellerClientProductsError("");
-        setSellerOrderDraft({});
+    if (sessionUser?.role !== "sales-rep-aruba") {
+      setSellerAssignedStore(null);
+      setSellerClientProducts([]);
+      setSellerClientProductsError("");
+      setSellerOrderDraft({});
         setSellerGiftDraftItems([]);
         setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
       }
@@ -7178,9 +7195,9 @@ export default function App() {
 
   useEffect(() => {
     if (!isSellerOrderFlowActive) {
-      if (sessionUser?.role !== "sales-rep-aruba") {
-        setSellerProductCatalog({ expiringSoon: [], products: [] });
-        setSellerProductCatalogError("");
+    if (sessionUser?.role !== "sales-rep-aruba") {
+      setSellerProductCatalog({ expiringSoon: [], products: [] });
+      setSellerProductCatalogError("");
       }
       return;
     }
@@ -7313,7 +7330,7 @@ export default function App() {
       return;
     }
 
-    const isStaffComposer = canCreateStaffOrders(sessionUser.role) && isStaffOrderComposerOpen;
+    const isStaffComposer = canCreateStaffOrders(sessionUser.role) && isStaffOrderComposerActive;
 
     if (sessionUser.role !== "sales-rep-aruba" && !isStaffComposer) {
       return;
@@ -7600,15 +7617,15 @@ export default function App() {
               >
                 −
               </button>
-              <input
-                className="catalog-price-input seller-order-input"
-                type="number"
-                min="0"
-                step="any"
-                value={draft.quantity}
-                placeholder="0"
-                onChange={(event) => handleSellerOrderDraftChange(product.productId, "quantity", event.target.value)}
-              />
+            <input
+              className="catalog-price-input seller-order-input"
+              type="number"
+              min="0"
+              step="any"
+              value={draft.quantity}
+              placeholder="0"
+              onChange={(event) => handleSellerOrderDraftChange(product.productId, "quantity", event.target.value)}
+            />
               <button
                 className="seller-quantity-stepper-btn"
                 type="button"
@@ -7782,158 +7799,156 @@ export default function App() {
     );
   }
 
-  function renderStaffOrderComposerModal() {
-    if (!isStaffOrderComposerOpen) {
-      return null;
-    }
-
+  function renderStaffOrderComposerPage() {
     return (
-      <AppModalOverlay onDismiss={closeStaffOrderComposer}>
-        <div className="modal-card modal-card--wide staff-order-composer-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
-          <div className="modal-header">
+      <section className="routes-layout staff-order-composer-page">
+        <article className="creation-selector-block">
+          <div className="creation-header database-header">
             <div>
               <p className="section-label">Nuevo pedido</p>
               <h2>Agregar pedido</h2>
-              <p>Selecciona ruta, cliente y productos igual que en el portal del vendedor. El pedido queda a nombre del vendedor de la ruta.</p>
+              <p className="route-helper-text">Selecciona ruta, cliente y productos igual que en el portal del vendedor. El pedido queda a nombre del vendedor de la ruta.</p>
             </div>
-            <button className="modal-close-button" type="button" onClick={closeStaffOrderComposer}>Cerrar</button>
+            <button className="ghost-button ghost-button--back" type="button" onClick={closeStaffOrderComposer}>
+              Volver a pedidos
+            </button>
           </div>
+        </article>
 
-          <div className="staff-order-composer-body">
-            <article className="database-card">
+        <div className="staff-order-composer-body">
+          <article className="database-card">
+            <div className="management-table-header">
+              <div>
+                <h2>Rutas comerciales</h2>
+                <p>Selecciona la ruta del vendedor que visita al cliente.</p>
+              </div>
+              <p className="management-table-meta">{activeComposerRoutes.length} rutas</p>
+            </div>
+
+            {composerRoutesError ? <p className="form-feedback error">{composerRoutesError}</p> : null}
+
+            <div className="seller-route-list">
+              {isLoadingComposerRoutes ? (
+                <article className="route-summary-card is-loading" />
+              ) : activeComposerRoutes.length > 0 ? (
+                activeComposerRoutes.map((route) => {
+                  const routeKey = route._id ?? route.code;
+                  const isSelected = routeKey === selectedSellerRouteId;
+
+                  return (
+                    <button
+                      key={routeKey}
+                      className={`seller-route-list-item ${isSelected ? "is-active" : ""}`}
+                      type="button"
+                      onClick={() => setSelectedSellerRouteId(routeKey)}
+                    >
+                      <div>
+                        <p className="section-label">{route.weekLabel}</p>
+                        <strong>{route.name}</strong>
+                        <span>{route.salesRepName} · {route.days.length} días planeados</span>
+                      </div>
+                      <span>{route.plannedStops} tiendas</span>
+                    </button>
+                  );
+                })
+              ) : (
+                <p className="route-empty-state">No hay rutas activas disponibles.</p>
+              )}
+            </div>
+          </article>
+
+          {selectedSellerRoute ? (
+            <article className="route-builder-card seller-route-workspace">
               <div className="management-table-header">
                 <div>
-                  <h2>Rutas comerciales</h2>
-                  <p>Selecciona la ruta del vendedor que visita al cliente.</p>
+                  <p className="section-label">Ruta activa</p>
+                  <h2>{selectedSellerRoute.name}</h2>
+                  <p>{selectedSellerRoute.weekLabel} · {selectedSellerRoute.salesRepName}</p>
                 </div>
-                <p className="management-table-meta">{activeComposerRoutes.length} rutas</p>
+                <p className="management-table-meta">{selectedSellerRoute.plannedStops} tiendas</p>
               </div>
 
-              {composerRoutesError ? <p className="form-feedback error">{composerRoutesError}</p> : null}
-
-              <div className="seller-route-list">
-                {isLoadingComposerRoutes ? (
-                  <article className="route-summary-card is-loading" />
-                ) : activeComposerRoutes.length > 0 ? (
-                  activeComposerRoutes.map((route) => {
-                    const routeKey = route._id ?? route.code;
-                    const isSelected = routeKey === selectedSellerRouteId;
-
-                    return (
-                      <button
-                        key={routeKey}
-                        className={`seller-route-list-item ${isSelected ? "is-active" : ""}`}
-                        type="button"
-                        onClick={() => setSelectedSellerRouteId(routeKey)}
-                      >
-                        <div>
-                          <p className="section-label">{route.weekLabel}</p>
-                          <strong>{route.name}</strong>
-                          <span>{route.salesRepName} · {route.days.length} días planeados</span>
-                        </div>
-                        <span>{route.plannedStops} tiendas</span>
-                      </button>
-                    );
-                  })
-                ) : (
-                  <p className="route-empty-state">No hay rutas activas disponibles.</p>
-                )}
+              <div className="seller-route-day-tabs">
+                {selectedSellerRoute.days.map((day) => (
+                  <button
+                    key={`${selectedSellerRoute._id ?? selectedSellerRoute.code}-${day.day}`}
+                    className={`seller-route-day-button ${selectedSellerDayKey === day.day ? "is-active" : ""}`}
+                    type="button"
+                    onClick={() => {
+                      setSelectedSellerDayKey(day.day);
+                      setSellerRouteStoreSearch("");
+                    }}
+                  >
+                    <strong>{formatRouteDayLabel(day.day)}</strong>
+                    <span>{day.stores.length} clientes</span>
+                  </button>
+                ))}
               </div>
-            </article>
 
-            {selectedSellerRoute ? (
-              <article className="route-builder-card seller-route-workspace">
-                <div className="management-table-header">
-                  <div>
-                    <p className="section-label">Ruta activa</p>
-                    <h2>{selectedSellerRoute.name}</h2>
-                    <p>{selectedSellerRoute.weekLabel} · {selectedSellerRoute.salesRepName}</p>
-                  </div>
-                  <p className="management-table-meta">{selectedSellerRoute.plannedStops} tiendas</p>
-                </div>
+              {selectedSellerDay ? (
+                <>
+                  <div className="seller-route-client-panel">
+                    <label className="field field-full">
+                      <span>Buscar tienda</span>
+                      <input
+                        type="search"
+                        placeholder="Buscar entre todas las tiendas de la ruta"
+                        value={sellerRouteStoreSearch}
+                        onChange={(event) => setSellerRouteStoreSearch(event.target.value)}
+                      />
+                    </label>
 
-                <div className="seller-route-day-tabs">
-                  {selectedSellerRoute.days.map((day) => (
-                    <button
-                      key={`${selectedSellerRoute._id ?? selectedSellerRoute.code}-${day.day}`}
-                      className={`seller-route-day-button ${selectedSellerDayKey === day.day ? "is-active" : ""}`}
-                      type="button"
-                      onClick={() => {
-                        setSelectedSellerDayKey(day.day);
-                        setSellerRouteStoreSearch("");
-                      }}
-                    >
-                      <strong>{formatRouteDayLabel(day.day)}</strong>
-                      <span>{day.stores.length} clientes</span>
-                    </button>
-                  ))}
-                </div>
-
-                {selectedSellerDay ? (
-                  <>
-                    <div className="seller-route-client-panel">
-                      <label className="field field-full">
-                        <span>Buscar tienda</span>
-                        <input
-                          type="search"
-                          placeholder="Buscar entre todas las tiendas de la ruta"
-                          value={sellerRouteStoreSearch}
-                          onChange={(event) => setSellerRouteStoreSearch(event.target.value)}
-                        />
-                      </label>
-
-                      <div className="field field-full">
-                        <span>{normalizedSellerRouteStoreSearch ? "Resultados en toda la ruta" : "Cliente de la ruta"}</span>
-                        <p className="seller-route-store-search-meta">
-                          {normalizedSellerRouteStoreSearch
-                            ? `${sellerRouteStoresForPanel.length} de ${allSelectedSellerRouteStores.length} tiendas`
-                            : `${sellerRouteStoresForPanel.length} tiendas`}
-                        </p>
-                        <div className="seller-route-store-chips">
-                          {sellerRouteStoresForPanel.length > 0 ? sellerRouteStoresForPanel.map((store) => (
-                            <button
-                              key={`${store.routeDay}-${store.storeId}`}
-                              className={`seller-route-store-chip ${selectedSellerStoreId === store.storeId ? "is-active" : ""}`}
-                              type="button"
-                              onClick={() => handleSelectSellerRouteStore(store)}
-                            >
-                              {normalizedSellerRouteStoreSearch ? (
-                                <span className="seller-route-store-chip-content">
-                                  <strong>{store.storeName}</strong>
-                                  <span>{formatRouteDayLabel(store.routeDay)}</span>
-                                </span>
-                              ) : store.storeName}
-                            </button>
-                          )) : (
-                            <p className="route-empty-state">No hay tiendas que coincidan con la búsqueda.</p>
-                          )}
-                        </div>
+                    <div className="field field-full">
+                      <span>{normalizedSellerRouteStoreSearch ? "Resultados en toda la ruta" : "Cliente de la ruta"}</span>
+                      <p className="seller-route-store-search-meta">
+                        {normalizedSellerRouteStoreSearch
+                          ? `${sellerRouteStoresForPanel.length} de ${allSelectedSellerRouteStores.length} tiendas`
+                          : `${sellerRouteStoresForPanel.length} tiendas`}
+                      </p>
+                      <div className="seller-route-store-chips">
+                        {sellerRouteStoresForPanel.length > 0 ? sellerRouteStoresForPanel.map((store) => (
+                          <button
+                            key={`${store.routeDay}-${store.storeId}`}
+                            className={`seller-route-store-chip ${selectedSellerStoreId === store.storeId ? "is-active" : ""}`}
+                            type="button"
+                            onClick={() => handleSelectSellerRouteStore(store)}
+                          >
+                            {normalizedSellerRouteStoreSearch ? (
+                              <span className="seller-route-store-chip-content">
+                                <strong>{store.storeName}</strong>
+                                <span>{formatRouteDayLabel(store.routeDay)}</span>
+                              </span>
+                            ) : store.storeName}
+                          </button>
+                        )) : (
+                          <p className="route-empty-state">No hay tiendas que coincidan con la búsqueda.</p>
+                        )}
                       </div>
-
-                      {selectedSellerStore ? (
-                        <p className="warehouse-selected-meta">{selectedSellerStore.storeName} · {selectedSellerStore.address || "Sin dirección"}</p>
-                      ) : null}
-
-                      {selectedSellerStoreId ? (
-                        <div className="seller-route-order-extras">
-                          {sellerOrderStatus ? <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p> : null}
-                          {renderSellerRouteOrderExtras()}
-                        </div>
-                      ) : sellerOrderStatus ? (
-                        <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p>
-                      ) : null}
                     </div>
 
-                    {renderSellerProductCatalogPanel(selectedSellerStoreId || null, { showOrderFields: true })}
-                  </>
-                ) : (
-                  <p className="route-empty-state">Selecciona un día de la ruta para ver sus clientes.</p>
-                )}
-              </article>
-            ) : null}
-          </div>
+                    {selectedSellerStore ? (
+                      <p className="warehouse-selected-meta">{selectedSellerStore.storeName} · {selectedSellerStore.address || "Sin dirección"}</p>
+                    ) : null}
+
+                    {selectedSellerStoreId ? (
+                      <div className="seller-route-order-extras">
+                        {sellerOrderStatus ? <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p> : null}
+                        {renderSellerRouteOrderExtras()}
+                      </div>
+                    ) : sellerOrderStatus ? (
+                      <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p>
+                    ) : null}
+                  </div>
+
+                  {renderSellerProductCatalogPanel(selectedSellerStoreId || null, { showOrderFields: true })}
+                </>
+              ) : (
+                <p className="route-empty-state">Selecciona un día de la ruta para ver sus clientes.</p>
+              )}
+            </article>
+          ) : null}
         </div>
-      </AppModalOverlay>
+      </section>
     );
   }
 
@@ -7988,9 +8003,9 @@ export default function App() {
           {isLoadingSellerClientProducts ? (
             <p className="route-empty-state">Cargando productos asignados...</p>
           ) : assignedProducts.length > 0 ? (
-            <div className="seller-product-catalog-list">
-              {assignedProducts.map((product) => renderSellerAssignedProductRow(product, storeId, showOrderFields))}
-            </div>
+              <div className="seller-product-catalog-list">
+                {assignedProducts.map((product) => renderSellerAssignedProductRow(product, storeId, showOrderFields))}
+              </div>
           ) : (
             <p className="route-empty-state">Este cliente aun no tiene productos asignados.</p>
           )}
@@ -10138,21 +10153,21 @@ export default function App() {
 
     const lineItems: CommercialInvoiceLineItem[] = [
       ...warehousePricedItems.map((item) => {
-        const productOption = productOptionsById.get(item.productId);
+      const productOption = productOptionsById.get(item.productId);
 
-        return {
-          productLabel: item.productName,
-          description: resolveProductInvoiceDescription({
-            description: productOption?.description,
-            name: item.productName,
-            displaysPerBox: productOption?.displaysPerBox,
-            unitsPerBox: productOption?.unitsPerBox,
-            unitsPerBoxUnit: productOption?.unitsPerBoxUnit,
-          }),
-          quantity: item.quantity,
-          rate: item.resolvedSalePrice,
-          amount: item.lineTotal,
-        };
+      return {
+        productLabel: item.productName,
+        description: resolveProductInvoiceDescription({
+          description: productOption?.description,
+          name: item.productName,
+          displaysPerBox: productOption?.displaysPerBox,
+          unitsPerBox: productOption?.unitsPerBox,
+          unitsPerBoxUnit: productOption?.unitsPerBoxUnit,
+        }),
+        quantity: item.quantity,
+        rate: item.resolvedSalePrice,
+        amount: item.lineTotal,
+      };
       }),
       ...warehouseGiftPricedItems.map((item) => {
         const productOption = productOptionsById.get(item.productId);
@@ -10396,11 +10411,11 @@ export default function App() {
       .map((item) => {
         const quantity = Number(warehouseOrderItemDraft[item.productId] ?? item.quantity);
         const baseItem = {
-          productId: item.productId,
-          stockCurrent: item.stockCurrent,
+        productId: item.productId,
+        stockCurrent: item.stockCurrent,
           quantity,
           stockRowId: warehouseOrderLotDraft[item.productId] || item.stockRowId || "",
-          notes: item.notes,
+        notes: item.notes,
         };
 
         if (hasAccountingDispatchAccess(sessionUser?.role)) {
@@ -13437,7 +13452,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
   }
 
   async function handleSellerOrderSubmit() {
-    const isStaffComposer = canCreateStaffOrders(sessionUser?.role) && isStaffOrderComposerOpen;
+    const isStaffComposer = canCreateStaffOrders(sessionUser?.role) && isStaffOrderComposerActive;
 
     if (!sessionUser || (sessionUser.role !== "sales-rep-aruba" && !isStaffComposer)) {
       return;
@@ -15897,8 +15912,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               ))}
                             </tbody>
                           </table>
-                        </div>
-                      </div>
+                  </div>
+                </div>
                     ) : null}
                   </div>
                 </AppModalOverlay>
@@ -16549,7 +16564,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         ) : null}
                       </div>
 
-                      <div className="table-wrap table-wrap--warehouse-items">
+                    <div className="table-wrap table-wrap--warehouse-items">
                       <table className="data-table data-table--warehouse-order-items">
                         <thead>
                           <tr>
@@ -17410,7 +17425,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <p className="section-label">Obsequio</p>
                     <h2>Añadir obsequio</h2>
                     <p>Selecciona producto, lote y cantidad. Se facturara a precio 0.</p>
-                  </div>
+            </div>
                   <button className="modal-close-button" type="button" onClick={closeWarehouseAddGiftModal}>Cerrar</button>
                 </div>
 
@@ -17803,6 +17818,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 ? "Migrar productos"
               : activeSection === "orders"
                 ? "Pedidos"
+              : activeSection === "create-order"
+                ? "Agregar pedido"
               : activeSection === "store-performance"
                 ? "Desempeño de tiendas"
               : activeSection === "sales-rep-performance"
@@ -17850,6 +17867,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   ? "Registra entradas de inventario manualmente o cargando el Excel generado desde Facturación."
               : activeSection === "orders"
                 ? "Consulta los pedidos enviados por vendedores y revisa su detalle antes de preparar el despacho."
+              : activeSection === "create-order"
+                ? "Crea un pedido manualmente seleccionando ruta, cliente y productos como lo haria el vendedor."
               : activeSection === "store-performance"
                 ? "Analiza ventas por tienda, identifica lideres, detecta bajo desempeno y revisa la operacion de cada cliente."
               : activeSection === "sales-rep-performance"
@@ -20483,7 +20502,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   >
                     Pendiente
                   </button>
-                </div>
+              </div>
               </div>
               <p className="management-table-meta">
                 Periodo consultado: {carteraDateRangeLabel}
@@ -20682,7 +20701,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     ) : (
                       <tr>
                         <td colSpan={selectedCarteraStoreId ? 11 : 12} className="empty-table-cell">
-                          {selectedCarteraStore
+                    {selectedCarteraStore
                             ? `No hay facturas vencidas para ${selectedCarteraStore.label}.`
                             : "No hay facturas vencidas en cartera."}
                         </td>
@@ -21403,10 +21422,10 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   >
                     Registrar gastos
                   </button>
-                  <button className="primary-action-button" type="button" onClick={() => {
-                    setLogisticsInvoiceForm(createInitialLogisticsInvoiceForm());
-                    setLogisticsAccountingModalKind("logistics-invoice");
-                  }}>Registrar factura</button>
+                <button className="primary-action-button" type="button" onClick={() => {
+                  setLogisticsInvoiceForm(createInitialLogisticsInvoiceForm());
+                  setLogisticsAccountingModalKind("logistics-invoice");
+                }}>Registrar factura</button>
                 </div>
               </div>
 
@@ -23972,7 +23991,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </label>
 
                       <div className="inventory-entry-warehouse-add">
-                        <label className="field field-full">
+                      <label className="field field-full">
                           <span>Producto</span>
                           <SearchableProductSelect
                             products={productOptions}
@@ -23987,32 +24006,32 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               }));
                             }}
                             disabled={productOptions.length === 0}
-                          />
-                        </label>
+                        />
+                      </label>
 
                         <label className="field">
-                          <span>Cantidad</span>
-                          <input
-                            type="number"
+                            <span>Cantidad</span>
+                            <input
+                              type="number"
                             min="1"
-                            step="1"
+                              step="1"
                             value={inventoryEntryItemDraft.quantity}
-                            placeholder="0"
+                              placeholder="0"
                             onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, quantity: event.target.value }))}
-                          />
-                        </label>
+                            />
+                          </label>
 
                         <label className="field">
                           <span>Costo unitario (USD)</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="any"
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
                             value={inventoryEntryItemDraft.costUsd}
-                            placeholder="0.00"
+                              placeholder="0.00"
                             onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, costUsd: event.target.value }))}
-                          />
-                        </label>
+                            />
+                          </label>
 
                         <label className="field">
                           <span>Precio de venta (AWG)</span>
@@ -24024,7 +24043,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             placeholder="0.00"
                             onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, salePriceAwg: event.target.value }))}
                           />
-                        </label>
+                          </label>
 
                         <label className="field">
                           <span>Fecha de caducidad</span>
@@ -24086,13 +24105,13 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                     <td>{item.lotName || buildDefaultInventoryLotName(item.expirationDate)}</td>
                                     <td>{item.expirationDate ? String(item.expirationDate).slice(0, 10) : "-"}</td>
                                     <td>
-                                      <button
-                                        className="ghost-button inventory-entry-remove"
-                                        type="button"
+                          <button
+                            className="ghost-button inventory-entry-remove"
+                            type="button"
                                         onClick={() => removeInventoryEntryRow(item.id, true)}
-                                      >
-                                        Quitar
-                                      </button>
+                          >
+                            Quitar
+                          </button>
                                     </td>
                                   </tr>
                                 );
@@ -24104,15 +24123,15 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             )}
                           </tbody>
                         </table>
-                      </div>
+                    </div>
                     </div>
 
                     {inventoryEntryStatus ? <p className={`form-feedback inventory-entry-form-feedback ${inventoryEntryStatus.tone}`}>{inventoryEntryStatus.message}</p> : null}
 
                     <div className="inventory-entry-submit-actions">
                       <button className="submit-button" type="submit" disabled={isSavingInventoryEntry || inventoryEntryItems.length === 0}>
-                        {isSavingInventoryEntry ? "Registrando inventario..." : "Guardar entrada de inventario"}
-                      </button>
+                      {isSavingInventoryEntry ? "Registrando inventario..." : "Guardar entrada de inventario"}
+                    </button>
                     </div>
                   </form>
                 </div>
@@ -25192,14 +25211,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               </div>
             </article>
           </section>
+        ) : activeSection === "create-order" ? (
+          renderStaffOrderComposerPage()
         ) : activeSection === "orders" ? (
           <section className="routes-layout">
             <article className="creation-selector-block">
               <div className="creation-header database-header">
                 <div>
-                  <p className="section-label">Recepcion</p>
-                  <h2>Pedidos del equipo comercial</h2>
-                  <p className="route-helper-text">Aqui aparecen los pedidos enviados por vendedores para revision, preparacion y despacho desde bodega.</p>
+              <p className="section-label">Recepcion</p>
+              <h2>Pedidos del equipo comercial</h2>
+              <p className="route-helper-text">Aqui aparecen los pedidos enviados por vendedores para revision, preparacion y despacho desde bodega.</p>
                 </div>
                 {canCreateStaffOrders(sessionUser?.role) ? (
                   <button className="primary-action-button" type="button" onClick={() => void openStaffOrderComposer()}>
@@ -25681,8 +25702,6 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 </div>
               </AppModalOverlay>
             ) : null}
-
-            {renderStaffOrderComposerModal()}
           </section>
         ) : (
           <section className="dashboard-grid" />
