@@ -130,11 +130,22 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
     }
 
     const documentNumber = input.invoiceNumber ? String(input.invoiceNumber) : "—";
+    const invoiceValue = documentNumber === "—" ? "—" : `#${documentNumber}`;
+    const dateValue = `#${formatInvoiceDate(input.invoiceDate)}`;
+    const metadataRightX = pageWidth - margin;
+    const metadataGapPt = 28;
+    const metadataValueWidth = Math.max(
+      pdf.getTextWidth(invoiceValue),
+      pdf.getTextWidth(dateValue),
+    );
+    const metadataLabelX = metadataRightX - metadataValueWidth - metadataGapPt;
 
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(10);
-    pdf.text(`INVOICE #${documentNumber}`, pageWidth - margin, 132, { align: "right" });
-    pdf.text(`DATE ${formatInvoiceDate(input.invoiceDate)}`, pageWidth - margin, 146, { align: "right" });
+    pdf.text("INVOICE", metadataLabelX, 132, { align: "right" });
+    pdf.text(invoiceValue, metadataRightX, 132, { align: "right" });
+    pdf.text("DATE", metadataLabelX, 146, { align: "right" });
+    pdf.text(dateValue, metadataRightX, 146, { align: "right" });
 
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8);
