@@ -3042,6 +3042,29 @@ function getBusinessDateKey(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+const WAREHOUSE_DELIVERY_CUTOFF_HOUR = 18;
+
+function getArubaHour(date = new Date()) {
+  const hourPart = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Aruba",
+    hour: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+
+  return Number(hourPart.find((part) => part.type === "hour")?.value ?? 0);
+}
+
+/** Default delivery date: tomorrow if past warehouse cutoff (18:00 Aruba), otherwise today. */
+function getDefaultOrderDeliveryDateKey(date = new Date()) {
+  const todayKey = getBusinessDateKey(date);
+
+  if (getArubaHour(date) >= WAREHOUSE_DELIVERY_CUTOFF_HOUR) {
+    return addDaysToBusinessDateKey(todayKey, 1);
+  }
+
+  return todayKey;
+}
+
 function getBusinessMonthStartDateKey(date = new Date()) {
   return `${getBusinessMonthKey(date)}-01`;
 }
@@ -4840,7 +4863,7 @@ export default function App() {
   const [sellerGiftDraft, setSellerGiftDraft] = useState({ productId: "", stockRowId: "", quantity: "1" });
   const [sellerOrderNotesDraft, setSellerOrderNotesDraft] = useState("");
   const [sellerInternalOrderNotesDraft, setSellerInternalOrderNotesDraft] = useState("");
-  const [sellerDeliveryDateDraft, setSellerDeliveryDateDraft] = useState(() => getBusinessDateKey());
+  const [sellerDeliveryDateDraft, setSellerDeliveryDateDraft] = useState(() => getDefaultOrderDeliveryDateKey());
   const [sellerOrderEditDeliveryDate, setSellerOrderEditDeliveryDate] = useState(() => getBusinessDateKey());
   const [isSubmittingSellerOrder, setIsSubmittingSellerOrder] = useState(false);
   const [sellerOrderStatus, setSellerOrderStatus] = useState<CreationStatus | null>(null);
@@ -5218,7 +5241,7 @@ export default function App() {
     setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
     setSellerOrderNotesDraft("");
     setSellerInternalOrderNotesDraft("");
-    setSellerDeliveryDateDraft(getBusinessDateKey());
+    setSellerDeliveryDateDraft(getDefaultOrderDeliveryDateKey());
     setSellerOrderStatus(null);
     setSellerProductOfferStatus(null);
     setSellerProductCatalog({ expiringSoon: [], products: [] });
@@ -13849,7 +13872,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
       setSellerOrderNotesDraft("");
       setSellerInternalOrderNotesDraft("");
-      setSellerDeliveryDateDraft(getBusinessDateKey());
+      setSellerDeliveryDateDraft(getDefaultOrderDeliveryDateKey());
       setSelectedSellerStoreId("");
       setSellerOrderStatus({ tone: "success", message: data.message ?? "Pedido enviado a bodega correctamente." });
       await refreshSellerOrders(sessionUser.id);

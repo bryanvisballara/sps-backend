@@ -1025,11 +1025,21 @@ function normalizeDeliveryDate(value: unknown) {
         throw new Error("La fecha de entrega no puede ser anterior a hoy.");
       }
 
+      // Despues del corte de bodega, "hoy" ya no es despachable: usar manana.
+      if (dateKey === todayKey && getArubaHour() >= WAREHOUSE_DELIVERY_CUTOFF_HOUR) {
+        return parseBusinessDateKey(addDaysToBusinessDateKey(todayKey, 1));
+      }
+
       return parsed;
     }
   }
 
-  return new Date(`${getBusinessDateKeyFromDate()}T12:00:00`);
+  const todayKey = getBusinessDateKeyFromDate();
+  const defaultKey = getArubaHour() >= WAREHOUSE_DELIVERY_CUTOFF_HOUR
+    ? addDaysToBusinessDateKey(todayKey, 1)
+    : todayKey;
+
+  return new Date(`${defaultKey}T12:00:00`);
 }
 
 function serializeOrderDeliveryDate(value: Date | string | undefined, fallback?: Date) {
@@ -1096,28 +1106,58 @@ async function syncOverdueDeliveryDates() {
   const tomorrowKey = addDaysToBusinessDateKey(todayKey, 1);
   const arubaHour = getArubaHour(now);
 
-  const pendingOrders = await Order.find({ status: "submitted" })
-    .select({ _id: 1, deliveryDate: 1 })
+  const pendingOrders = await Order.find({ status: { $in: ["submitted", "dispatched"] } })
+    .select({ _id: 1, deliveryDate: 1, createdAt: 1, deliveryOverdue: 1, status: 1 })
     .lean();
 
   await Promise.all(pendingOrders.map(async (order) => {
     const deliveryKey = serializeOrderDeliveryDate(order.deliveryDate);
-    let nextDeliveryKey: string | null = null;
+    const createdAt = order.createdAt instanceof Date ? order.createdAt : new Date(String(order.createdAt ?? now));
+    const safeCreatedAt = Number.isNaN(createdAt.getTime()) ? now : createdAt;
+    const createdKey = getBusinessDateKeyFromDate(safeCreatedAt);
+    const createdHour = getArubaHour(safeCreatedAt);
+    const createdBeforeTodayCutoff = createdKey < todayKey
+      || (createdKey === todayKey && createdHour < WAREHOUSE_DELIVERY_CUTOFF_HOUR);
 
-    if (deliveryKey < todayKey) {
-      nextDeliveryKey = todayKey;
-    } else if (deliveryKey === todayKey && arubaHour >= WAREHOUSE_DELIVERY_CUTOFF_HOUR) {
-      nextDeliveryKey = tomorrowKey;
+    let nextDeliveryKey = deliveryKey;
+    let nextDeliveryOverdue = order.deliveryOverdue === true;
+
+    if (order.status === "submitted") {
+      if (deliveryKey < todayKey) {
+        nextDeliveryKey = todayKey;
+        nextDeliveryOverdue = true;
+      } else if (deliveryKey === todayKey && arubaHour >= WAREHOUSE_DELIVERY_CUTOFF_HOUR) {
+        nextDeliveryKey = tomorrowKey;
+        // Solo atrasado si el pedido existia antes del corte (no alcanzo a despacharse).
+        nextDeliveryOverdue = createdBeforeTodayCutoff;
+      }
     }
 
-    if (!nextDeliveryKey) {
+    // Pedidos creados despues del corte no deben quedar como atrasados
+    // solo porque su entrega quedo en manana.
+    if (
+      nextDeliveryOverdue
+      && nextDeliveryKey >= tomorrowKey
+      && !createdBeforeTodayCutoff
+    ) {
+      nextDeliveryOverdue = false;
+    }
+
+    const update: { deliveryDate?: Date; deliveryOverdue?: boolean } = {};
+
+    if (nextDeliveryKey !== deliveryKey) {
+      update.deliveryDate = parseBusinessDateKey(nextDeliveryKey);
+    }
+
+    if (nextDeliveryOverdue !== (order.deliveryOverdue === true)) {
+      update.deliveryOverdue = nextDeliveryOverdue;
+    }
+
+    if (Object.keys(update).length === 0) {
       return;
     }
 
-    await Order.findByIdAndUpdate(order._id, {
-      deliveryDate: parseBusinessDateKey(nextDeliveryKey),
-      deliveryOverdue: true,
-    });
+    await Order.findByIdAndUpdate(order._id, update);
   }));
 }
 
