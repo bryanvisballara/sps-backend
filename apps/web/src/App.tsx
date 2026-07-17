@@ -3089,6 +3089,7 @@ type WarehouseOrderListProps = {
   onSelectOrder: (order: SellerOrderRecord) => void;
   renderActions?: (order: SellerOrderRecord) => ReactNode;
   showStatus?: boolean;
+  showInvoiceNumber?: boolean;
 };
 
 function WarehouseOrderList({
@@ -3100,7 +3101,10 @@ function WarehouseOrderList({
   onSelectOrder,
   renderActions,
   showStatus = true,
+  showInvoiceNumber = false,
 }: WarehouseOrderListProps) {
+  const columnCount = 6 + Number(showStatus) + Number(showInvoiceNumber);
+
   if (isLoading) {
     return (
       <div className="table-wrap table-wrap--warehouse-items">
@@ -3112,13 +3116,14 @@ function WarehouseOrderList({
               <th>Cliente</th>
               <th className="warehouse-order-col-optional">Ruta</th>
               {showStatus ? <th>Estado</th> : null}
+              {showInvoiceNumber ? <th># Factura</th> : null}
               <th>Und.</th>
               <th>Ver</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td colSpan={showStatus ? 7 : 6} className="empty-table-cell">{loadingMessage}</td>
+              <td colSpan={columnCount} className="empty-table-cell">{loadingMessage}</td>
             </tr>
           </tbody>
         </table>
@@ -3137,13 +3142,14 @@ function WarehouseOrderList({
               <th>Cliente</th>
               <th className="warehouse-order-col-optional">Ruta</th>
               {showStatus ? <th>Estado</th> : null}
+              {showInvoiceNumber ? <th># Factura</th> : null}
               <th>Und.</th>
               <th>Ver</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td colSpan={showStatus ? 7 : 6} className="empty-table-cell">{emptyMessage}</td>
+              <td colSpan={columnCount} className="empty-table-cell">{emptyMessage}</td>
             </tr>
           </tbody>
         </table>
@@ -3183,6 +3189,7 @@ function WarehouseOrderList({
                   <th>Cliente</th>
                   <th className="warehouse-order-col-optional">Ruta</th>
                   {showStatus ? <th>Estado</th> : null}
+                  {showInvoiceNumber ? <th># Factura</th> : null}
                   <th>Und.</th>
                   <th>{renderActions ? "Acciones" : "Ver"}</th>
                 </tr>
@@ -3205,6 +3212,7 @@ function WarehouseOrderList({
                       <td>{order.storeName}</td>
                       <td className="warehouse-order-col-optional">{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
                       {showStatus ? <td>{formatSellerOrderStatus(order.status)}</td> : null}
+                      {showInvoiceNumber ? <td>{order.invoiceNumber ? `#${order.invoiceNumber}` : "-"}</td> : null}
                       <td>{`${order.items.length} prod. / ${totalUnits} und`}</td>
                       <td className={renderActions ? "table-actions-cell" : undefined}>
                         {order.items.length > 0 ? (
@@ -16917,6 +16925,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       isLoading={isLoadingWarehouseOrders}
                       emptyMessage="No hay pedidos en despacho."
                       loadingMessage="Cargando pedidos en despacho..."
+                      showInvoiceNumber
                       onSelectOrder={setSelectedWarehouseOrderDetail}
                       renderActions={(order) => {
                         const isCancellingDispatch = cancellingWarehouseDispatchOrderId === order._id;
