@@ -95,6 +95,21 @@ function resolveDueDateKey(invoiceDateKey, paymentMethod) {
 function roundMoney(value) {
     return Math.round(value * 100) / 100;
 }
+function normalizeSku(value) {
+    return String(value ?? "").trim().toUpperCase();
+}
+function resolveQuickBooksItemName(product, fallbackName = "Producto") {
+    const quickbooksName = String(product?.quickbooksName ?? "").trim();
+    if (quickbooksName) {
+        return quickbooksName;
+    }
+    const productName = String(product?.name ?? "").trim();
+    if (productName) {
+        return productName;
+    }
+    const fallback = String(fallbackName ?? "").trim();
+    return fallback || "Producto";
+}
 export async function buildQuickBooksInvoiceExportCsv(params) {
     const defaults = resolveDefaultDateRange();
     const startDate = isValidDateKey(params.startDate ?? "") ? String(params.startDate) : defaults.startDate;
@@ -121,14 +136,21 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
     ]);
     const carteraByOrderId = new Map(carteraEntries.map((entry) => [String(entry.orderId), entry]));
     const logisticsByOrderId = new Map(logisticsInvoices.map((invoice) => [String(invoice.orderId ?? ""), invoice]));
-    const productIds = Array.from(new Set(filteredOrders.flatMap((order) => [
-        ...(order.items ?? []).map((item) => String(item.productId ?? "")),
-        ...(order.giftItems ?? []).map((item) => String(item.productId ?? "")),
-    ].filter(Boolean))));
+    const productIds = Array.from(new Set(filteredOrders.flatMap((order) => {
+        const logisticsInvoice = logisticsByOrderId.get(String(order._id));
+        return [
+            ...(order.items ?? []).map((item) => String(item.productId ?? "")),
+            ...(order.giftItems ?? []).map((item) => String(item.productId ?? "")),
+            ...(logisticsInvoice?.items ?? []).map((item) => String(item.productId ?? "")),
+        ].filter(Boolean);
+    })));
     const products = productIds.length > 0
-        ? await Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1, description: 1 }).lean()
+        ? await Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1, description: 1, quickbooksName: 1 }).lean()
         : [];
     const productsById = new Map(products.map((product) => [String(product._id), product]));
+    const productsBySku = new Map(products
+        .map((product) => [normalizeSku(String(product.sku ?? "")), product])
+        .filter(([sku]) => Boolean(sku)));
     const rows = [CSV_HEADERS.join(",")];
     let lineCount = 0;
     for (const order of filteredOrders) {
@@ -151,28 +173,36 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
             String(order.orderNotes ?? "").trim(),
         ].filter(Boolean);
         const memo = memoParts.join(" · ");
+        const resolveProduct = (productId, productSku) => (productsById.get(String(productId ?? ""))
+            ?? productsBySku.get(normalizeSku(String(productSku ?? "")))
+            ?? null);
         const lineItems = logisticsInvoice?.items?.length
-            ? logisticsInvoice.items.map((item) => ({
-                productName: String(item.productName ?? "Producto"),
-                productSku: String(item.productSku ?? "-"),
-                description: String(item.productName ?? ""),
-                quantity: Number(item.quantity ?? 0),
-                rate: roundMoney(Number(item.salePriceAwg ?? 0)),
-                amount: roundMoney(Number(item.lineTotalAwg ?? 0)),
-                serviceDateKey,
-            }))
+            ? logisticsInvoice.items.map((item) => {
+                const product = resolveProduct(item.productId, item.productSku);
+                const productName = resolveQuickBooksItemName(product, String(item.productName ?? "Producto"));
+                return {
+                    productName,
+                    productSku: String(item.productSku ?? product?.sku ?? "-"),
+                    description: String(item.productName ?? product?.description ?? productName),
+                    quantity: Number(item.quantity ?? 0),
+                    rate: roundMoney(Number(item.salePriceAwg ?? 0)),
+                    amount: roundMoney(Number(item.lineTotalAwg ?? 0)),
+                    serviceDateKey,
+                };
+            })
             : [
                 ...(order.items ?? []).flatMap((item) => {
                     const quantity = Number(item.quantity ?? 0);
                     if (!Number.isFinite(quantity) || quantity <= 0) {
                         return [];
                     }
-                    const product = productsById.get(String(item.productId ?? ""));
+                    const product = resolveProduct(String(item.productId ?? ""));
                     const rate = roundMoney(Number(item.salePriceAwg ?? 0));
+                    const productName = resolveQuickBooksItemName(product, "Producto");
                     return [{
-                            productName: String(product?.name ?? "Producto"),
+                            productName,
                             productSku: String(product?.sku ?? "-"),
-                            description: String(product?.description ?? product?.name ?? item.notes ?? ""),
+                            description: String(product?.description ?? product?.name ?? item.notes ?? productName),
                             quantity,
                             rate,
                             amount: roundMoney(rate * quantity),
@@ -184,9 +214,10 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
                     if (!Number.isFinite(quantity) || quantity <= 0) {
                         return [];
                     }
-                    const product = productsById.get(String(item.productId ?? ""));
+                    const product = resolveProduct(String(item.productId ?? ""));
+                    const productName = resolveQuickBooksItemName(product, "Obsequio");
                     return [{
-                            productName: String(product?.name ?? "Obsequio"),
+                            productName,
                             productSku: String(product?.sku ?? "-"),
                             description: String(item.notes ?? product?.description ?? "Obsequio"),
                             quantity,

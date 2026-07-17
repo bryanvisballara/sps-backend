@@ -15,6 +15,8 @@ const productSchema = new Schema(
   {
     sku: { type: String, required: true, unique: true, trim: true },
     name: { type: String, required: true, trim: true },
+    /** Exact QuickBooks Online product/service name for CSV/API export. Frontend keeps using `name`. */
+    quickbooksName: { type: String, trim: true, default: "" },
     description: { type: String, trim: true, default: "" },
     category: { type: String, required: true, trim: true },
     supplier: { type: String, required: true, trim: true },
