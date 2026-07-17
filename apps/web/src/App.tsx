@@ -3095,7 +3095,9 @@ type WarehouseOrderListProps = {
   onSelectOrder: (order: SellerOrderRecord) => void;
   renderActions?: (order: SellerOrderRecord) => ReactNode;
   showStatus?: boolean;
+  showSalesRep?: boolean;
   showInvoiceNumber?: boolean;
+  showInvoiceNotes?: boolean;
   showInternalNotes?: boolean;
   selectable?: boolean;
   selectedOrderIds?: Set<string>;
@@ -3111,7 +3113,9 @@ function WarehouseOrderList({
   onSelectOrder,
   renderActions,
   showStatus = true,
+  showSalesRep = true,
   showInvoiceNumber = false,
+  showInvoiceNotes = false,
   showInternalNotes = false,
   selectable = false,
   selectedOrderIds = new Set<string>(),
@@ -3120,8 +3124,10 @@ function WarehouseOrderList({
   const columnCount = 6
     + Number(showStatus)
     + Number(showInvoiceNumber)
+    + Number(showInvoiceNotes)
     + Number(showInternalNotes)
-    + Number(selectable);
+    + Number(selectable)
+    - Number(!showSalesRep);
 
   if (isLoading) {
     return (
@@ -3131,11 +3137,13 @@ function WarehouseOrderList({
             <tr>
               {selectable ? <th aria-label="Seleccionar" /> : null}
               <th>Entrega</th>
-              <th className="warehouse-order-col-optional">Vendedor</th>
+              {showSalesRep ? <th className="warehouse-order-col-optional">Vendedor</th> : null}
+              {!showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
               <th>Cliente</th>
               <th className="warehouse-order-col-optional">Ruta</th>
               {showStatus ? <th>Estado</th> : null}
-              {showInvoiceNumber ? <th># Factura</th> : null}
+              {showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
+              {showInvoiceNotes ? <th>Observación factura</th> : null}
               {showInternalNotes ? <th>Nota interna</th> : null}
               <th>Und.</th>
               <th>Ver</th>
@@ -3159,11 +3167,13 @@ function WarehouseOrderList({
             <tr>
               {selectable ? <th aria-label="Seleccionar" /> : null}
               <th>Entrega</th>
-              <th className="warehouse-order-col-optional">Vendedor</th>
+              {showSalesRep ? <th className="warehouse-order-col-optional">Vendedor</th> : null}
+              {!showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
               <th>Cliente</th>
               <th className="warehouse-order-col-optional">Ruta</th>
               {showStatus ? <th>Estado</th> : null}
-              {showInvoiceNumber ? <th># Factura</th> : null}
+              {showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
+              {showInvoiceNotes ? <th>Observación factura</th> : null}
               {showInternalNotes ? <th>Nota interna</th> : null}
               <th>Und.</th>
               <th>Ver</th>
@@ -3208,11 +3218,13 @@ function WarehouseOrderList({
                 <tr>
                   {selectable ? <th aria-label="Seleccionar" /> : null}
                   <th>Entrega</th>
-                  <th className="warehouse-order-col-optional">Vendedor</th>
+                  {showSalesRep ? <th className="warehouse-order-col-optional">Vendedor</th> : null}
+                  {!showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
                   <th>Cliente</th>
                   <th className="warehouse-order-col-optional">Ruta</th>
                   {showStatus ? <th>Estado</th> : null}
-                  {showInvoiceNumber ? <th># Factura</th> : null}
+                  {showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
+                  {showInvoiceNotes ? <th>Observación factura</th> : null}
                   {showInternalNotes ? <th>Nota interna</th> : null}
                   <th>Und.</th>
                   <th>{renderActions ? "Acciones" : "Ver"}</th>
@@ -3242,13 +3254,19 @@ function WarehouseOrderList({
                           ) : null}
                         </div>
                       </td>
-                      <td className="warehouse-order-col-optional">{order.salesRepName}</td>
+                      {showSalesRep ? <td className="warehouse-order-col-optional">{order.salesRepName}</td> : null}
+                      {!showSalesRep && showInvoiceNumber ? <td>{order.invoiceNumber ? `#${order.invoiceNumber}` : "-"}</td> : null}
                       <td>{order.storeName}</td>
                       <td className="warehouse-order-col-optional">{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
                       {showStatus ? <td>{formatSellerOrderStatus(order.status)}</td> : null}
-                      {showInvoiceNumber ? <td>{order.invoiceNumber ? `#${order.invoiceNumber}` : "-"}</td> : null}
+                      {showSalesRep && showInvoiceNumber ? <td>{order.invoiceNumber ? `#${order.invoiceNumber}` : "-"}</td> : null}
+                      {showInvoiceNotes ? (
+                        <td className="warehouse-order-notes-cell">
+                          {order.orderNotes?.trim() || "-"}
+                        </td>
+                      ) : null}
                       {showInternalNotes ? (
-                        <td className="warehouse-order-internal-notes-cell">
+                        <td className="warehouse-order-notes-cell">
                           {order.internalOrderNotes?.trim() || "-"}
                         </td>
                       ) : null}
@@ -17161,6 +17179,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         ? "No hay pedidos en despacho dentro de las fechas seleccionadas."
                         : "No hay pedidos en despacho."}
                       loadingMessage="Cargando pedidos en despacho..."
+                      showSalesRep={false}
                       showInvoiceNumber
                       showInternalNotes
                       selectable
@@ -17241,6 +17260,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         ? "No hay pedidos recibidos para ese cliente."
                         : "No hay pedidos pendientes por procesar."}
                       loadingMessage="Cargando pedidos recibidos..."
+                      showInvoiceNotes
                       onSelectOrder={setSelectedWarehouseOrderDetail}
                     />
                   </article>
@@ -25530,6 +25550,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   ? "No hay pedidos recibidos para ese cliente."
                   : "Todavia no han llegado pedidos desde el portal de vendedores."}
                 loadingMessage="Cargando pedidos recibidos..."
+                showInvoiceNotes
                 onSelectOrder={setSelectedWarehouseOrderDetail}
                 renderActions={(order) => {
                   const isDeletingOrder = deletingWarehouseOrderId === order._id;

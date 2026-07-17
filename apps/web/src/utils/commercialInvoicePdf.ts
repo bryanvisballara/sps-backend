@@ -151,14 +151,11 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
 
     if (pageNumber === 1 && invoiceNotes) {
       const notesTop = normalizedBillToLocation && normalizedBillToLocation !== normalizedBillToName ? 174 : 160;
-      pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(9);
-      pdf.setTextColor(17, 17, 17);
-      pdf.text("NOTES", margin, notesTop);
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(9);
+      pdf.setTextColor(17, 17, 17);
       const wrappedNotes = pdf.splitTextToSize(invoiceNotes, pageWidth - margin * 2);
-      pdf.text(wrappedNotes.slice(0, 3), margin, notesTop + 12);
+      pdf.text(wrappedNotes.slice(0, 3), margin, notesTop);
     }
 
     pdf.setFont("helvetica", "normal");
@@ -298,12 +295,11 @@ export async function buildCommercialInvoiceBatchPdf(inputs: CommercialInvoiceDo
 
     if (notes) {
       const notesTop = normalizedBillToLocation && normalizedBillToLocation !== normalizedBillToName ? 174 : 160;
-      pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(9);
-      pdf.text("NOTES", margin, notesTop);
       pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(9);
+      pdf.setTextColor(17, 17, 17);
       const wrappedNotes = pdf.splitTextToSize(notes, pageWidth - margin * 2);
-      pdf.text(wrappedNotes.slice(0, 3), margin, notesTop + 12);
+      pdf.text(wrappedNotes.slice(0, 3), margin, notesTop);
     }
 
     pdf.setFont("helvetica", "normal");

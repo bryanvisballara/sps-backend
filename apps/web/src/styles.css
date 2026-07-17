@@ -3112,7 +3112,7 @@ h1 {
   resize: vertical;
 }
 
-.warehouse-order-internal-notes-cell {
+.warehouse-order-notes-cell {
   max-width: 220px;
   white-space: normal;
   word-break: break-word;
