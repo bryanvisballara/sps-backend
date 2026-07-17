@@ -148,11 +148,14 @@ export async function registerWebPushNotifications(userId: string, apiBaseUrl: s
 
     const config = await fetchPushConfig(apiBaseUrl);
 
-    if (!config) {
+    if (!config || !config.apiKey || !config.appId || !config.vapidKey) {
       return { status: "config-unavailable" };
     }
 
-    const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
+    // Bust SW cache when Firebase web config changes so Hostinger picks up a valid firebase-config.js.
+    const registration = await navigator.serviceWorker.register(
+      `/firebase-messaging-sw.js?v=${encodeURIComponent(config.appId)}`,
+    );
     await navigator.serviceWorker.ready;
 
     const { getToken, messaging } = await ensureFirebaseMessaging(config);
