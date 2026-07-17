@@ -43,10 +43,11 @@ function formatInvoiceAmount(value: number) {
 }
 
 function formatInvoiceQuantity(value: number) {
+  const quantity = Number.isFinite(value) ? value : 0;
   return new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: 2,
+    minimumFractionDigits: 0,
     maximumFractionDigits: 2,
-  }).format(Number.isFinite(value) ? value : 0);
+  }).format(quantity);
 }
 
 function sanitizePdfFileName(value: string) {

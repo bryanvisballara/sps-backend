@@ -2577,25 +2577,23 @@ async function applyCreditCollections(collections, context) {
 }
 const MIN_INVOICE_NUMBER = 12020;
 async function getNextInvoiceNumber() {
-    const activeEntries = await CarteraEntry.find({
-        active: { $ne: false },
-        invoiceNumber: { $exists: true, $ne: null, $gte: MIN_INVOICE_NUMBER },
-    })
-        .select({ invoiceNumber: 1 })
-        .lean();
-    const numberedOrders = await Order.find({
-        invoiceNumber: { $exists: true, $ne: null, $gte: MIN_INVOICE_NUMBER },
-    })
-        .select({ invoiceNumber: 1 })
-        .lean();
-    const usedNumbers = new Set([...activeEntries, ...numberedOrders]
+    const [activeEntries, numberedOrders] = await Promise.all([
+        CarteraEntry.find({
+            invoiceNumber: { $exists: true, $ne: null, $gte: MIN_INVOICE_NUMBER },
+        })
+            .select({ invoiceNumber: 1 })
+            .lean(),
+        Order.find({
+            invoiceNumber: { $exists: true, $ne: null, $gte: MIN_INVOICE_NUMBER },
+        })
+            .select({ invoiceNumber: 1 })
+            .lean(),
+    ]);
+    const usedNumbers = [...activeEntries, ...numberedOrders]
         .map((entry) => Number(entry.invoiceNumber))
-        .filter((number) => Number.isFinite(number) && number >= MIN_INVOICE_NUMBER));
-    let candidate = MIN_INVOICE_NUMBER;
-    while (usedNumbers.has(candidate)) {
-        candidate += 1;
-    }
-    return candidate;
+        .filter((number) => Number.isFinite(number) && number >= MIN_INVOICE_NUMBER);
+    const maxUsed = usedNumbers.length > 0 ? Math.max(...usedNumbers) : MIN_INVOICE_NUMBER - 1;
+    return maxUsed + 1;
 }
 async function isInvoiceNumberAvailable(invoiceNumber, excludeOrderId = "") {
     if (!Number.isFinite(invoiceNumber) || invoiceNumber < MIN_INVOICE_NUMBER) {
