@@ -2576,9 +2576,23 @@ async function applyCreditCollections(collections, context) {
     return createdCollections;
 }
 const MIN_INVOICE_NUMBER = 12020;
+/**
+ * Next automatic invoice consecutive.
+ *
+ * Business rule:
+ * - Always use (max currently assigned) + 1. Never fill gaps automatically.
+ * - Example: sequence is at 610, cancel 607, dispatch a new order → 611.
+ *   Staff may then manually change that invoice to 607 to reuse the blank.
+ *   The following automatic dispatch still gets 611 (highest assigned is still 610,
+ *   or 611 if they left it), never 607.
+ * - Only count numbers still assigned on orders or active cartera entries.
+ *   Cancelled/inactive numbers become available for manual reuse, but do not
+ *   pull the automatic sequence backwards into middle gaps.
+ */
 async function getNextInvoiceNumber() {
     const [activeEntries, numberedOrders] = await Promise.all([
         CarteraEntry.find({
+            active: { $ne: false },
             invoiceNumber: { $exists: true, $ne: null, $gte: MIN_INVOICE_NUMBER },
         })
             .select({ invoiceNumber: 1 })
