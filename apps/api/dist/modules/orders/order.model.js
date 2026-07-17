@@ -33,6 +33,7 @@ const orderSchema = new Schema({
     giftItems: { type: [orderGiftItemSchema], default: [] },
     invoiceNumber: { type: Number, min: 1 },
     orderNotes: { type: String, trim: true, default: "" },
+    internalOrderNotes: { type: String, trim: true, default: "" },
 }, { timestamps: true });
 export const Order = model("Order", orderSchema);
 //# sourceMappingURL=order.model.js.map

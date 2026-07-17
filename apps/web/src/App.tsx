@@ -6,7 +6,12 @@ import * as XLSX from "xlsx";
 import { registerWebPushNotifications, unregisterWebPushNotifications, type PushRegistrationResult } from "./pushNotifications";
 import { PushNotificationBanner } from "./PushNotificationBanner";
 import { AppModalOverlay } from "./AppModalOverlay";
-import { buildCommercialInvoicePdf, type CommercialInvoiceLineItem } from "./utils/commercialInvoicePdf";
+import {
+  buildCommercialInvoiceBatchPdf,
+  buildCommercialInvoicePdf,
+  type CommercialInvoiceDocumentInput,
+  type CommercialInvoiceLineItem,
+} from "./utils/commercialInvoicePdf";
 
 type SessionUser = {
   id: string;
@@ -806,6 +811,7 @@ type SellerOrderRecord = {
   status: "draft" | "submitted" | "picking" | "dispatched" | "delivered";
   invoiceNumber?: number | null;
   orderNotes?: string;
+  internalOrderNotes?: string;
   createdAt: string;
   updatedAt: string;
   items: Array<{
@@ -3090,6 +3096,10 @@ type WarehouseOrderListProps = {
   renderActions?: (order: SellerOrderRecord) => ReactNode;
   showStatus?: boolean;
   showInvoiceNumber?: boolean;
+  showInternalNotes?: boolean;
+  selectable?: boolean;
+  selectedOrderIds?: Set<string>;
+  onToggleOrderSelection?: (orderId: string, selected: boolean) => void;
 };
 
 function WarehouseOrderList({
@@ -3102,8 +3112,16 @@ function WarehouseOrderList({
   renderActions,
   showStatus = true,
   showInvoiceNumber = false,
+  showInternalNotes = false,
+  selectable = false,
+  selectedOrderIds = new Set<string>(),
+  onToggleOrderSelection,
 }: WarehouseOrderListProps) {
-  const columnCount = 6 + Number(showStatus) + Number(showInvoiceNumber);
+  const columnCount = 6
+    + Number(showStatus)
+    + Number(showInvoiceNumber)
+    + Number(showInternalNotes)
+    + Number(selectable);
 
   if (isLoading) {
     return (
@@ -3111,12 +3129,14 @@ function WarehouseOrderList({
         <table className="data-table data-table--warehouse-orders">
           <thead>
             <tr>
+              {selectable ? <th aria-label="Seleccionar" /> : null}
               <th>Entrega</th>
               <th className="warehouse-order-col-optional">Vendedor</th>
               <th>Cliente</th>
               <th className="warehouse-order-col-optional">Ruta</th>
               {showStatus ? <th>Estado</th> : null}
               {showInvoiceNumber ? <th># Factura</th> : null}
+              {showInternalNotes ? <th>Nota interna</th> : null}
               <th>Und.</th>
               <th>Ver</th>
             </tr>
@@ -3137,12 +3157,14 @@ function WarehouseOrderList({
         <table className="data-table data-table--warehouse-orders">
           <thead>
             <tr>
+              {selectable ? <th aria-label="Seleccionar" /> : null}
               <th>Entrega</th>
               <th className="warehouse-order-col-optional">Vendedor</th>
               <th>Cliente</th>
               <th className="warehouse-order-col-optional">Ruta</th>
               {showStatus ? <th>Estado</th> : null}
               {showInvoiceNumber ? <th># Factura</th> : null}
+              {showInternalNotes ? <th>Nota interna</th> : null}
               <th>Und.</th>
               <th>Ver</th>
             </tr>
@@ -3184,12 +3206,14 @@ function WarehouseOrderList({
             <table className="data-table data-table--warehouse-orders">
               <thead>
                 <tr>
+                  {selectable ? <th aria-label="Seleccionar" /> : null}
                   <th>Entrega</th>
                   <th className="warehouse-order-col-optional">Vendedor</th>
                   <th>Cliente</th>
                   <th className="warehouse-order-col-optional">Ruta</th>
                   {showStatus ? <th>Estado</th> : null}
                   {showInvoiceNumber ? <th># Factura</th> : null}
+                  {showInternalNotes ? <th>Nota interna</th> : null}
                   <th>Und.</th>
                   <th>{renderActions ? "Acciones" : "Ver"}</th>
                 </tr>
@@ -3200,6 +3224,16 @@ function WarehouseOrderList({
 
                   return (
                     <tr key={order._id} className={order.deliveryOverdue ? "is-overdue" : undefined}>
+                      {selectable ? (
+                        <td>
+                          <input
+                            type="checkbox"
+                            aria-label={`Seleccionar pedido de ${order.storeName}`}
+                            checked={selectedOrderIds.has(String(order._id))}
+                            onChange={(event) => onToggleOrderSelection?.(String(order._id), event.target.checked)}
+                          />
+                        </td>
+                      ) : null}
                       <td>
                         <div className="warehouse-order-delivery-cell">
                           <span>{formatDeliveryDateLabel(getOrderDeliveryDateKey(order))}</span>
@@ -3213,6 +3247,11 @@ function WarehouseOrderList({
                       <td className="warehouse-order-col-optional">{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
                       {showStatus ? <td>{formatSellerOrderStatus(order.status)}</td> : null}
                       {showInvoiceNumber ? <td>{order.invoiceNumber ? `#${order.invoiceNumber}` : "-"}</td> : null}
+                      {showInternalNotes ? (
+                        <td className="warehouse-order-internal-notes-cell">
+                          {order.internalOrderNotes?.trim() || "-"}
+                        </td>
+                      ) : null}
                       <td>{`${order.items.length} prod. / ${totalUnits} und`}</td>
                       <td className={renderActions ? "table-actions-cell" : undefined}>
                         {order.items.length > 0 ? (
@@ -4585,6 +4624,11 @@ export default function App() {
   const [completedOrdersStartDate, setCompletedOrdersStartDate] = useState(() => getBusinessMonthStartDateKey());
   const [completedOrdersEndDate, setCompletedOrdersEndDate] = useState(() => getBusinessDateKey());
   const [isDownloadingQuickBooksExport, setIsDownloadingQuickBooksExport] = useState(false);
+  const [warehouseIncomingClientFilter, setWarehouseIncomingClientFilter] = useState("");
+  const [dispatchStartDateFilter, setDispatchStartDateFilter] = useState("");
+  const [dispatchEndDateFilter, setDispatchEndDateFilter] = useState("");
+  const [selectedDispatchOrderIds, setSelectedDispatchOrderIds] = useState<Set<string>>(() => new Set());
+  const [isPrintingSelectedDispatchOrders, setIsPrintingSelectedDispatchOrders] = useState(false);
   const [selectedWarehouseOrderDetail, setSelectedWarehouseOrderDetail] = useState<SellerOrderRecord | null>(null);
   const [deletingWarehouseOrderId, setDeletingWarehouseOrderId] = useState("");
   const [cancellingWarehouseDispatchOrderId, setCancellingWarehouseDispatchOrderId] = useState("");
@@ -4684,6 +4728,7 @@ export default function App() {
   const [sellerGiftDraftItems, setSellerGiftDraftItems] = useState<SellerGiftDraftItem[]>([]);
   const [sellerGiftDraft, setSellerGiftDraft] = useState({ productId: "", stockRowId: "", quantity: "1" });
   const [sellerOrderNotesDraft, setSellerOrderNotesDraft] = useState("");
+  const [sellerInternalOrderNotesDraft, setSellerInternalOrderNotesDraft] = useState("");
   const [sellerDeliveryDateDraft, setSellerDeliveryDateDraft] = useState(() => getBusinessDateKey());
   const [sellerOrderEditDeliveryDate, setSellerOrderEditDeliveryDate] = useState(() => getBusinessDateKey());
   const [isSubmittingSellerOrder, setIsSubmittingSellerOrder] = useState(false);
@@ -5061,6 +5106,7 @@ export default function App() {
     setSellerGiftDraftItems([]);
     setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
     setSellerOrderNotesDraft("");
+    setSellerInternalOrderNotesDraft("");
     setSellerDeliveryDateDraft(getBusinessDateKey());
     setSellerOrderStatus(null);
     setSellerProductOfferStatus(null);
@@ -5384,7 +5430,31 @@ export default function App() {
     orderDeleteRequests.filter((request) => request.status === "pending").map((request) => request.orderId),
   );
   const warehouseIncomingOrders = warehouseOrders.filter((order) => order.status === "submitted");
+  const normalizedWarehouseIncomingClientFilter = warehouseIncomingClientFilter
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  const filteredWarehouseIncomingOrders = normalizedWarehouseIncomingClientFilter
+    ? warehouseIncomingOrders.filter((order) => (
+        order.storeName
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .includes(normalizedWarehouseIncomingClientFilter)
+      ))
+    : warehouseIncomingOrders;
   const warehouseDispatchOrders = warehouseOrders.filter((order) => order.status === "dispatched");
+  const filteredWarehouseDispatchOrders = warehouseDispatchOrders.filter((order) => {
+    const deliveryDate = getOrderDeliveryDateKey(order);
+    return (!dispatchStartDateFilter || deliveryDate >= dispatchStartDateFilter)
+      && (!dispatchEndDateFilter || deliveryDate <= dispatchEndDateFilter);
+  });
+  const areAllFilteredDispatchOrdersSelected = filteredWarehouseDispatchOrders.length > 0
+    && filteredWarehouseDispatchOrders.every((order) => selectedDispatchOrderIds.has(String(order._id)));
+  const selectedDispatchOrdersCount = warehouseDispatchOrders.filter((order) => (
+    selectedDispatchOrderIds.has(String(order._id))
+  )).length;
   const warehouseCompletedOrders = warehouseOrders.filter((order) => order.status === "delivered");
   const filteredWarehouseCompletedOrders = warehouseCompletedOrders.filter((order) => {
     const dateKey = getOrderDeliveryDateKey(order);
@@ -7779,15 +7849,26 @@ export default function App() {
               onChange={(event) => setSellerDeliveryDateDraft(event.target.value)}
             />
           </label>
-          <label className="field field-full seller-order-notes-field">
-            <span>Nota u observación del pedido</span>
-            <textarea
-              rows={3}
-              value={sellerOrderNotesDraft}
-              placeholder="Ejemplo: cliente pidió media paca de sal, entregar antes del mediodía..."
-              onChange={(event) => setSellerOrderNotesDraft(event.target.value)}
-            />
-          </label>
+          <div className="seller-order-notes-grid">
+            <label className="field seller-order-notes-field">
+              <span>Nota u observación del pedido en factura</span>
+              <textarea
+                rows={3}
+                value={sellerOrderNotesDraft}
+                placeholder="Ejemplo: cliente pidió media paca de sal, entregar antes del mediodía..."
+                onChange={(event) => setSellerOrderNotesDraft(event.target.value)}
+              />
+            </label>
+            <label className="field seller-order-notes-field">
+              <span>Nota u observación del pedido interno</span>
+              <textarea
+                rows={3}
+                value={sellerInternalOrderNotesDraft}
+                placeholder="Solo uso interno: instrucciones para bodega, transporte o seguimiento..."
+                onChange={(event) => setSellerInternalOrderNotesDraft(event.target.value)}
+              />
+            </label>
+          </div>
           <p>{sellerDraftedItems.length > 0 ? `${sellerDraftedItems.length} producto${sellerDraftedItems.length === 1 ? "" : "s"} listos para registrar.` : "Agrega cantidades en los productos asignados antes de enviar el pedido a bodega."}</p>
           {sellerDraftedItems.length > 0 ? (
             <p className="seller-order-estimated-total">
@@ -10202,6 +10283,7 @@ export default function App() {
       invoiceDate: getOrderInvoiceDate(order),
       billToName: order.storeName,
       billToLocation: order.deliveryZone || order.routeName || "",
+      notes: order.orderNotes ?? "",
       lineItems,
       totalAmount: warehouseInvoiceTotal,
     });
@@ -11090,6 +11172,7 @@ export default function App() {
           : getOrderInvoiceDate(order),
         billToName: order.storeName,
         billToLocation: order.deliveryZone || order.routeName,
+        notes: order.orderNotes ?? "",
         lineItems: data.items.map((item) => ({
           productLabel: item.productName,
           description: item.productDescription || "-",
@@ -11106,6 +11189,107 @@ export default function App() {
         tone: "error",
         message: error instanceof Error ? error.message : "No fue posible imprimir la factura.",
       });
+    }
+  }
+
+  function toggleDispatchOrderSelection(orderId: string, selected: boolean) {
+    setSelectedDispatchOrderIds((current) => {
+      const next = new Set(current);
+
+      if (selected) {
+        next.add(orderId);
+      } else {
+        next.delete(orderId);
+      }
+
+      return next;
+    });
+  }
+
+  function toggleAllFilteredDispatchOrders(selected: boolean) {
+    setSelectedDispatchOrderIds((current) => {
+      const next = new Set(current);
+
+      filteredWarehouseDispatchOrders.forEach((order) => {
+        const orderId = String(order._id);
+
+        if (selected) {
+          next.add(orderId);
+        } else {
+          next.delete(orderId);
+        }
+      });
+
+      return next;
+    });
+  }
+
+  async function handlePrintSelectedDispatchOrders() {
+    const selectedOrders = warehouseDispatchOrders.filter((order) => (
+      selectedDispatchOrderIds.has(String(order._id))
+    ));
+
+    if (selectedOrders.length === 0) {
+      setWarehouseOrderCompletionStatus({ tone: "error", message: "Selecciona al menos un pedido para imprimir." });
+      return;
+    }
+
+    try {
+      setIsPrintingSelectedDispatchOrders(true);
+      setWarehouseOrderCompletionStatus(null);
+
+      const documents = await Promise.all(selectedOrders.map(async (order): Promise<CommercialInvoiceDocumentInput> => {
+        const response = await fetch(`${apiBaseUrl}/warehouse/orders/${order._id}/invoice-document`);
+        const data = (await response.json()) as {
+          message?: string;
+          carteraEntry?: { invoiceNumber?: number | null; invoicedAt?: string } | null;
+          invoiceNumber?: number | null;
+          invoicedAt?: string;
+          items?: Array<{
+            productName: string;
+            productDescription?: string;
+            quantity: number;
+            rate: number;
+            amount: number;
+          }>;
+          totalAmount?: number;
+        };
+
+        if (!response.ok || !Array.isArray(data.items) || data.items.length === 0) {
+          throw new Error(data.message ?? `No fue posible cargar el despacho de ${order.storeName}.`);
+        }
+
+        return {
+          documentKind: "dispatch",
+          invoiceNumber: data.invoiceNumber ?? data.carteraEntry?.invoiceNumber ?? order.invoiceNumber ?? null,
+          invoiceDate: data.invoicedAt
+            ? new Date(data.invoicedAt)
+            : data.carteraEntry?.invoicedAt
+              ? new Date(data.carteraEntry.invoicedAt)
+              : getOrderInvoiceDate(order),
+          billToName: order.storeName,
+          billToLocation: order.deliveryZone || order.routeName,
+          notes: order.orderNotes ?? "",
+          lineItems: data.items.map((item) => ({
+            productLabel: item.productName,
+            description: item.productDescription || "-",
+            quantity: item.quantity,
+            rate: item.rate,
+            amount: item.amount,
+          })),
+          totalAmount: Number(data.totalAmount ?? 0),
+        };
+      }));
+
+      const { pdf, fileName } = await buildCommercialInvoiceBatchPdf(documents);
+      openPdfInNewTab(pdf, fileName);
+    } catch (error) {
+      setWarehouseOrderCompletionStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible imprimir los despachos seleccionados.",
+      });
+    } finally {
+      setIsPrintingSelectedDispatchOrders(false);
     }
   }
 
@@ -13506,6 +13690,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           salesRepId,
           deliveryDate: sellerDeliveryDateDraft,
           orderNotes: sellerOrderNotesDraft.trim(),
+          internalOrderNotes: sellerInternalOrderNotesDraft.trim(),
           items: sellerDraftedItems,
           giftItems: sellerGiftDraftItems.map((item) => ({
             productId: item.productId,
@@ -13536,6 +13721,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       setSellerGiftDraftItems([]);
       setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
       setSellerOrderNotesDraft("");
+      setSellerInternalOrderNotesDraft("");
       setSellerDeliveryDateDraft(getBusinessDateKey());
       setSelectedSellerStoreId("");
       setSellerOrderStatus({ tone: "success", message: data.message ?? "Pedido enviado a bodega correctamente." });
@@ -16400,11 +16586,21 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </div>
 
                     <div className="warehouse-order-detail-grid">
-                      {selectedWarehouseOrderDetail.orderNotes ? (
-                        <div className="warehouse-order-summary-card warehouse-order-summary-card--notes">
-                          <p className="section-label">Observación del vendedor</p>
-                          <p>{selectedWarehouseOrderDetail.orderNotes}</p>
-                        </div>
+                      {selectedWarehouseOrderDetail.orderNotes || selectedWarehouseOrderDetail.internalOrderNotes ? (
+                        <>
+                          {selectedWarehouseOrderDetail.orderNotes ? (
+                            <div className="warehouse-order-summary-card warehouse-order-summary-card--notes">
+                              <p className="section-label">Nota en factura</p>
+                              <p>{selectedWarehouseOrderDetail.orderNotes}</p>
+                            </div>
+                          ) : null}
+                          {selectedWarehouseOrderDetail.internalOrderNotes ? (
+                            <div className="warehouse-order-summary-card warehouse-order-summary-card--notes">
+                              <p className="section-label">Nota interna</p>
+                              <p>{selectedWarehouseOrderDetail.internalOrderNotes}</p>
+                            </div>
+                          ) : null}
+                        </>
                       ) : null}
 
                       <div className="warehouse-order-summary-card">
@@ -16915,17 +17111,61 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         <h2>Pedidos en despacho</h2>
                         <p>Pedidos agrupados por fecha de entrega programada.</p>
                       </div>
-                      <p className="management-table-meta">{warehouseDispatchOrders.length} pedidos</p>
+                      <p className="management-table-meta">{filteredWarehouseDispatchOrders.length} pedidos</p>
                     </div>
 
                     {warehouseOrdersError ? <p className="form-feedback error">{warehouseOrdersError}</p> : null}
 
+                    <div className="dispatch-bulk-toolbar">
+                      <label className="field">
+                        <span>Desde</span>
+                        <input
+                          type="date"
+                          value={dispatchStartDateFilter}
+                          onChange={(event) => setDispatchStartDateFilter(event.target.value)}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Hasta</span>
+                        <input
+                          type="date"
+                          value={dispatchEndDateFilter}
+                          onChange={(event) => setDispatchEndDateFilter(event.target.value)}
+                        />
+                      </label>
+                      <label className="dispatch-select-all">
+                        <input
+                          type="checkbox"
+                          checked={areAllFilteredDispatchOrdersSelected}
+                          disabled={filteredWarehouseDispatchOrders.length === 0}
+                          onChange={(event) => toggleAllFilteredDispatchOrders(event.target.checked)}
+                        />
+                        <span>Seleccionar todos los visibles</span>
+                      </label>
+                      <button
+                        className="primary-action-button"
+                        type="button"
+                        disabled={selectedDispatchOrdersCount === 0 || isPrintingSelectedDispatchOrders}
+                        onClick={() => void handlePrintSelectedDispatchOrders()}
+                      >
+                        {isPrintingSelectedDispatchOrders
+                          ? "Generando documento..."
+                          : `Imprimir seleccionados (${selectedDispatchOrdersCount})`}
+                      </button>
+                    </div>
+
                     <WarehouseOrderList
-                      orders={warehouseDispatchOrders}
+                      orders={filteredWarehouseDispatchOrders}
                       isLoading={isLoadingWarehouseOrders}
-                      emptyMessage="No hay pedidos en despacho."
+                      emptyMessage={dispatchStartDateFilter || dispatchEndDateFilter
+                        ? "No hay pedidos en despacho dentro de las fechas seleccionadas."
+                        : "No hay pedidos en despacho."}
                       loadingMessage="Cargando pedidos en despacho..."
                       showInvoiceNumber
+                      showInternalNotes
+                      selectable
+                      selectedOrderIds={selectedDispatchOrderIds}
+                      onToggleOrderSelection={toggleDispatchOrderSelection}
                       onSelectOrder={setSelectedWarehouseOrderDetail}
                       renderActions={(order) => {
                         const isCancellingDispatch = cancellingWarehouseDispatchOrderId === order._id;
@@ -16979,15 +17219,27 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         <h2>Pedidos recibidos</h2>
                         <p>Pedidos agrupados por fecha de entrega programada por el vendedor.</p>
                       </div>
-                      <p className="management-table-meta">{warehouseIncomingOrders.length} pedidos</p>
+                      <p className="management-table-meta">{filteredWarehouseIncomingOrders.length} pedidos</p>
                     </div>
 
                     {warehouseOrdersError ? <p className="form-feedback error">{warehouseOrdersError}</p> : null}
 
+                    <label className="field warehouse-incoming-client-filter">
+                      <span>Filtrar por cliente</span>
+                      <input
+                        type="search"
+                        value={warehouseIncomingClientFilter}
+                        placeholder="Escribe el nombre del cliente"
+                        onChange={(event) => setWarehouseIncomingClientFilter(event.target.value)}
+                      />
+                    </label>
+
                     <WarehouseOrderList
-                      orders={warehouseIncomingOrders}
+                      orders={filteredWarehouseIncomingOrders}
                       isLoading={isLoadingWarehouseOrders}
-                      emptyMessage="No hay pedidos pendientes por procesar."
+                      emptyMessage={normalizedWarehouseIncomingClientFilter
+                        ? "No hay pedidos recibidos para ese cliente."
+                        : "No hay pedidos pendientes por procesar."}
                       loadingMessage="Cargando pedidos recibidos..."
                       onSelectOrder={setSelectedWarehouseOrderDetail}
                     />
@@ -17089,9 +17341,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       onDownloadPdf={() => downloadCurrentInventoryPdf()}
                       onDownloadExcel={() => downloadCurrentInventoryExcel()}
                     />
-                    <button className="primary-action-button" type="button" onClick={openInventoryEntryModal}>
-                      Registrar inventario
-                    </button>
+                    {hasAccountingDispatchAccess(sessionUser?.role) ? (
+                      <button className="primary-action-button" type="button" onClick={openInventoryEntryModal}>
+                        Registrar inventario
+                      </button>
+                    ) : null}
                   </div>
                 </div>
 
@@ -25249,7 +25503,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <h2>Pedidos recibidos</h2>
                   <p>Pedidos recibidos en bodega que aun no se han enviado a despacho.</p>
                 </div>
-                <p className="management-table-meta">{warehouseIncomingOrders.length} pedidos</p>
+                <p className="management-table-meta">{filteredWarehouseIncomingOrders.length} pedidos</p>
               </div>
 
               {warehouseOrdersError ? <p className="form-feedback error">{warehouseOrdersError}</p> : null}
@@ -25259,10 +25513,22 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 </p>
               ) : null}
 
+              <label className="field warehouse-incoming-client-filter">
+                <span>Filtrar por cliente</span>
+                <input
+                  type="search"
+                  value={warehouseIncomingClientFilter}
+                  placeholder="Escribe el nombre del cliente"
+                  onChange={(event) => setWarehouseIncomingClientFilter(event.target.value)}
+                />
+              </label>
+
               <WarehouseOrderList
-                orders={warehouseIncomingOrders}
+                orders={filteredWarehouseIncomingOrders}
                 isLoading={isLoadingWarehouseOrders}
-                emptyMessage="Todavia no han llegado pedidos desde el portal de vendedores."
+                emptyMessage={normalizedWarehouseIncomingClientFilter
+                  ? "No hay pedidos recibidos para ese cliente."
+                  : "Todavia no han llegado pedidos desde el portal de vendedores."}
                 loadingMessage="Cargando pedidos recibidos..."
                 onSelectOrder={setSelectedWarehouseOrderDetail}
                 renderActions={(order) => {

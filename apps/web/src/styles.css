@@ -3100,9 +3100,53 @@ h1 {
   align-self: center;
 }
 
+.seller-order-notes-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+}
+
 .seller-order-notes-field textarea {
   min-height: 88px;
   resize: vertical;
+}
+
+.warehouse-order-internal-notes-cell {
+  max-width: 220px;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.warehouse-incoming-client-filter {
+  width: min(100%, 420px);
+  margin: 16px 0;
+}
+
+.dispatch-bulk-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.dispatch-bulk-toolbar .field {
+  width: min(100%, 190px);
+}
+
+.dispatch-select-all {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .seller-order-notes-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .seller-order-estimated-total {

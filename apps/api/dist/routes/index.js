@@ -914,6 +914,7 @@ function normalizeSalesOrderPayload(body) {
         };
     });
     const orderNotes = typeof payload.orderNotes === "string" ? payload.orderNotes.trim() : "";
+    const internalOrderNotes = typeof payload.internalOrderNotes === "string" ? payload.internalOrderNotes.trim() : "";
     const giftItems = normalizeOrderGiftItems(payload.giftItems);
     return {
         routeId,
@@ -923,6 +924,7 @@ function normalizeSalesOrderPayload(body) {
         salesRepId,
         deliveryDate: normalizeDeliveryDate(payload.deliveryDate),
         orderNotes,
+        internalOrderNotes,
         items,
         giftItems,
     };
@@ -1018,6 +1020,7 @@ async function mapWarehouseOrderRecord(order) {
         status: order.status,
         invoiceNumber: Number(order.invoiceNumber ?? 0) || null,
         orderNotes: typeof order.orderNotes === "string" ? order.orderNotes : "",
+        internalOrderNotes: typeof order.internalOrderNotes === "string" ? order.internalOrderNotes : "",
         createdAt: order.createdAt,
         updatedAt: order.updatedAt,
         items: order.items.map((item) => {
@@ -1954,6 +1957,7 @@ apiRouter.get("/sales/orders", async (request, response) => {
             deliveryOverdue: order.deliveryOverdue === true,
             status: order.status,
             orderNotes: typeof order.orderNotes === "string" ? order.orderNotes : "",
+            internalOrderNotes: typeof order.internalOrderNotes === "string" ? order.internalOrderNotes : "",
             createdAt: order.createdAt,
             updatedAt: order.updatedAt,
             items: order.items.map((item) => {
@@ -2033,6 +2037,7 @@ apiRouter.post("/sales/orders", async (request, response) => {
             deliveryDate: payload.deliveryDate,
             status: "submitted",
             orderNotes: payload.orderNotes,
+            internalOrderNotes: payload.internalOrderNotes,
             items: payload.items,
             giftItems: payload.giftItems,
         });
@@ -2086,6 +2091,7 @@ apiRouter.put("/sales/orders/:id", async (request, response) => {
             giftItems: payload.giftItems,
             deliveryDate: payload.deliveryDate,
             orderNotes: payload.orderNotes,
+            internalOrderNotes: payload.internalOrderNotes,
         }, { runValidators: true });
         response.json({
             message: "Pedido actualizado correctamente.",

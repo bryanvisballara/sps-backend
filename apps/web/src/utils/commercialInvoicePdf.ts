@@ -24,6 +24,7 @@ export type CommercialInvoiceDocumentInput = {
   invoiceDate: Date;
   billToName: string;
   billToLocation: string;
+  notes?: string;
   lineItems: CommercialInvoiceLineItem[];
   totalAmount: number;
 };
@@ -146,11 +147,28 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
     pdf.text("DATE", metadataLabelX, 146, { align: "right" });
     pdf.text(dateValue, metadataRightX, 146, { align: "right" });
 
+    const invoiceNotes = String(input.notes ?? "").trim();
+
+    if (pageNumber === 1 && invoiceNotes) {
+      const notesTop = normalizedBillToLocation && normalizedBillToLocation !== normalizedBillToName ? 174 : 160;
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(9);
+      pdf.setTextColor(17, 17, 17);
+      pdf.text("NOTES", margin, notesTop);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(9);
+      const wrappedNotes = pdf.splitTextToSize(invoiceNotes, pageWidth - margin * 2);
+      pdf.text(wrappedNotes.slice(0, 3), margin, notesTop + 12);
+    }
+
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8);
     pdf.setTextColor(60, 60, 60);
     pdf.text(COMPANY.bankLine, pageWidth / 2, pageHeight - 24, { align: "center" });
   };
+
+  const invoiceNotes = String(input.notes ?? "").trim();
+  const tableStartY = invoiceNotes ? 214 : 178;
 
   const tableBody = input.lineItems.map((item) => [
     item.productLabel.toUpperCase(),
@@ -161,8 +179,8 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
   ]);
 
   autoTable(pdf, {
-    startY: 178,
-    margin: { top: 178, left: margin, right: margin, bottom: 56 },
+    startY: tableStartY,
+    margin: { top: tableStartY, left: margin, right: margin, bottom: 56 },
     head: [["PRODUCT", "DESCRIPTION", "QTY", "RATE", "AMOUNT"]],
     body: tableBody,
     showHead: "everyPage",
@@ -196,7 +214,7 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
     },
   });
 
-  const finalY = (pdf as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 178;
+  const finalY = (pdf as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? tableStartY;
   const footerY = Math.min(finalY + 28, pageHeight - 48);
   const footerLabel = input.invoiceNumber ? "TOTAL AWG" : "REFERENCE TOTAL AWG";
 
@@ -217,4 +235,153 @@ export async function buildCommercialInvoicePdf(input: CommercialInvoiceDocument
   ) || (input.invoiceNumber ? "invoice" : "dispatch");
 
   return { pdf, fileName };
+}
+
+export async function buildCommercialInvoiceBatchPdf(inputs: CommercialInvoiceDocumentInput[]) {
+  if (inputs.length === 0) {
+    throw new Error("No hay despachos seleccionados para imprimir.");
+  }
+
+  const pdf = new jsPDF({ unit: "pt", format: "letter" });
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const margin = 40;
+  const logoImage = await loadImageForPdf("/invoice-logo.png");
+
+  const drawDocumentHeader = (input: CommercialInvoiceDocumentInput) => {
+    if (logoImage) {
+      pdf.addImage(logoImage.dataUrl, logoImage.format, margin, 44, 164, 48);
+    }
+
+    pdf.setTextColor(17, 17, 17);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(11);
+    pdf.text(COMPANY.legalName, pageWidth - margin, 58, { align: "right" });
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(10);
+    pdf.text(COMPANY.addressLine1, pageWidth - margin, 72, { align: "right" });
+    pdf.text(COMPANY.addressLine2, pageWidth - margin, 84, { align: "right" });
+    pdf.text(COMPANY.phone, pageWidth - margin, 96, { align: "right" });
+    pdf.text(COMPANY.email, pageWidth - margin, 108, { align: "right" });
+
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(18);
+    pdf.text("INVOICE", margin, 116);
+    pdf.setFontSize(10);
+    pdf.text("BILL TO", margin, 132);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(11);
+    pdf.text(input.billToName.toUpperCase(), margin, 146);
+
+    const normalizedBillToName = input.billToName.trim().toUpperCase();
+    const normalizedBillToLocation = input.billToLocation.trim().toUpperCase();
+
+    if (normalizedBillToLocation && normalizedBillToLocation !== normalizedBillToName) {
+      pdf.text(normalizedBillToLocation, margin, 160);
+    }
+
+    const invoiceValue = input.invoiceNumber ? `#${input.invoiceNumber}` : "—";
+    const dateValue = `#${formatInvoiceDate(input.invoiceDate)}`;
+    const metadataRightX = pageWidth - margin;
+    const metadataGapPt = 28;
+    const metadataValueWidth = Math.max(pdf.getTextWidth(invoiceValue), pdf.getTextWidth(dateValue));
+    const metadataLabelX = metadataRightX - metadataValueWidth - metadataGapPt;
+
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(10);
+    pdf.text("INVOICE", metadataLabelX, 132, { align: "right" });
+    pdf.text(invoiceValue, metadataRightX, 132, { align: "right" });
+    pdf.text("DATE", metadataLabelX, 146, { align: "right" });
+    pdf.text(dateValue, metadataRightX, 146, { align: "right" });
+
+    const notes = String(input.notes ?? "").trim();
+
+    if (notes) {
+      const notesTop = normalizedBillToLocation && normalizedBillToLocation !== normalizedBillToName ? 174 : 160;
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(9);
+      pdf.text("NOTES", margin, notesTop);
+      pdf.setFont("helvetica", "normal");
+      const wrappedNotes = pdf.splitTextToSize(notes, pageWidth - margin * 2);
+      pdf.text(wrappedNotes.slice(0, 3), margin, notesTop + 12);
+    }
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    pdf.setTextColor(60, 60, 60);
+    pdf.text(COMPANY.bankLine, pageWidth / 2, pageHeight - 24, { align: "center" });
+  };
+
+  inputs.forEach((input, inputIndex) => {
+    if (inputIndex > 0) {
+      pdf.addPage();
+    }
+
+    const tableStartY = String(input.notes ?? "").trim() ? 214 : 178;
+    const tableBody = input.lineItems.map((item) => [
+      item.productLabel.toUpperCase(),
+      item.description.toUpperCase(),
+      formatInvoiceQuantity(item.quantity),
+      formatInvoiceAmount(item.rate),
+      formatInvoiceAmount(item.amount),
+    ]);
+
+    autoTable(pdf, {
+      startY: tableStartY,
+      margin: { top: tableStartY, left: margin, right: margin, bottom: 56 },
+      head: [["PRODUCT", "DESCRIPTION", "QTY", "RATE", "AMOUNT"]],
+      body: tableBody,
+      showHead: "everyPage",
+      styles: {
+        font: "helvetica",
+        fontSize: 8.4,
+        cellPadding: 4,
+        overflow: "linebreak",
+        valign: "top",
+      },
+      headStyles: {
+        fillColor: [255, 255, 255],
+        textColor: [17, 17, 17],
+        fontStyle: "bold",
+        lineWidth: 0.2,
+        lineColor: [17, 17, 17],
+      },
+      alternateRowStyles: { fillColor: [243, 244, 246] },
+      columnStyles: {
+        0: { cellWidth: 210, overflow: "ellipsize" },
+        1: { cellWidth: 150 },
+        2: { cellWidth: 42, halign: "right" },
+        3: { cellWidth: 52, halign: "right" },
+        4: { cellWidth: 62, halign: "right" },
+      },
+      theme: "plain",
+      didDrawPage: () => drawDocumentHeader(input),
+    });
+
+    const finalY = (pdf as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? tableStartY;
+    const footerY = Math.min(finalY + 28, pageHeight - 48);
+    const footerLabel = input.invoiceNumber ? "TOTAL AWG" : "REFERENCE TOTAL AWG";
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(10);
+    pdf.setTextColor(17, 17, 17);
+    pdf.text("Thank you for choosing us", margin, footerY);
+    pdf.setFont("helvetica", "bold");
+    pdf.text(`${footerLabel} ${formatInvoiceAmount(input.totalAmount)}`, pageWidth - margin, footerY, { align: "right" });
+  });
+
+  const totalPages = pdf.getNumberOfPages();
+
+  for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
+    pdf.setPage(pageNumber);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    pdf.setTextColor(60, 60, 60);
+    pdf.text(`Page ${pageNumber} of ${totalPages}`, pageWidth - margin, 28, { align: "right" });
+  }
+
+  return {
+    pdf,
+    fileName: `despachos-seleccionados-${new Date().toISOString().slice(0, 10)}`,
+  };
 }
