@@ -148,6 +148,7 @@ type CollectionConfig = {
 type CategoryOption = {
   value: string;
   label: string;
+  market?: "colombia" | "aruba";
 };
 
 type SupplierOption = {
@@ -169,7 +170,7 @@ type StoreOption = {
   phone: string;
   managerName: string;
   assignedProductIds: string[];
-  defaultPaymentMethod: CarteraPaymentMethod | "";
+  defaultPaymentMethod: string;
 };
 
 type OperationsClientOption = {
@@ -198,6 +199,7 @@ type ProductOption = {
   label: string;
   sku: string;
   category: string;
+  arubaCategory: string;
   description: string;
   salePrice: number;
   inventoryAlert: number;
@@ -713,7 +715,7 @@ type StoreManagementSummary = {
     phoneCountryCode: string;
     phone: string;
     managerName: string;
-    defaultPaymentMethod: CarteraPaymentMethod | "";
+    defaultPaymentMethod: string;
     active: boolean;
     createdAt: string;
   };
@@ -1498,10 +1500,18 @@ const carteraPaymentMethodOptions: Array<{ value: CarteraPaymentMethod; label: s
   { value: "efectivo", label: "Efectivo" },
 ];
 
-const clientDefaultPaymentMethodFieldOptions = [
-  { value: "", label: "Sin predeterminado" },
-  ...carteraPaymentMethodOptions,
-];
+/** Exact QuickBooks Online payment terms (Lista de condiciones). */
+const quickBooksPaymentTermOptions = [
+  { value: "Pago a la recepción del servicio", label: "Pago a la recepción del servicio" },
+  { value: "Pago arriendo", label: "Pago arriendo" },
+  { value: "Pago en 15 días", label: "Pago en 15 días" },
+  { value: "Pago en 30 días", label: "Pago en 30 días" },
+  { value: "Pago en 60 días", label: "Pago en 60 días" },
+] as const;
+
+const DEFAULT_QUICKBOOKS_PAYMENT_TERM = "Pago a la recepción del servicio";
+
+const clientDefaultPaymentMethodFieldOptions = [...quickBooksPaymentTermOptions];
 
 const carteraCollectionPaymentMethodOptions: Array<{ value: CarteraCollectionPaymentMethod; label: string }> = [
   { value: "transferencia", label: "Transferencia" },
@@ -1941,7 +1951,11 @@ function getFormFieldInitialValue(field: FieldConfig, row: Record<string, unknow
   }
 
   if (field.name === "defaultPaymentMethod" && !row) {
-    return "efectivo";
+    return DEFAULT_QUICKBOOKS_PAYMENT_TERM;
+  }
+
+  if (field.name === "market" && !row) {
+    return "colombia";
   }
 
   if (!row) {
@@ -1950,6 +1964,10 @@ function getFormFieldInitialValue(field: FieldConfig, row: Record<string, unknow
 
   if (field.name === "phone") {
     return splitPhoneNumber(row.phone, row.phoneCountryCode);
+  }
+
+  if (field.name === "defaultPaymentMethod") {
+    return normalizeClientPaymentTerms(typeof row.defaultPaymentMethod === "string" ? row.defaultPaymentMethod : "");
   }
 
   const value = row[field.name];
@@ -2226,7 +2244,10 @@ function isCatalogProductSelected(
 
   const product = productsById.get(productId);
 
-  return Boolean(product && form.categoryNames.includes(product.category));
+  return Boolean(product && (
+    form.categoryNames.includes(getProductArubaCategory(product))
+    || form.categoryNames.includes(product.category)
+  ));
 }
 
 function countSelectedCatalogProducts(
@@ -2280,7 +2301,7 @@ function buildCatalogLotPreviewItem(
     lotName: lot?.lotName ?? buildDefaultInventoryLotName(lot?.expirationDate ? lot.expirationDate.slice(0, 10) : ""),
     name: product.label,
     sku: product.sku,
-    category: product.category,
+    category: getProductArubaCategory(product),
     cost: roundCurrencyValue(lot?.unitCost ?? product.arubaPurchaseCostUsd * product.arubaUsdToAwgRate),
     salePrice: roundCurrencyValue(lot?.salePrice ?? product.salePrice),
   };
@@ -2403,14 +2424,25 @@ function getCollectionConfigs(
     {
       key: "categories",
       title: "Crear categorías",
-      description: "Define familias de frutas, verduras y otros grupos de venta.",
+      description: "Define categorías COL (SECOS/REFRIGERADOS) o Aruba (grupos QuickBooks).",
       endpoint: "/management/categories",
       fields: [
-        { name: "name", label: "Nombre", type: "text", placeholder: "Frutas frescas" },
+        { name: "name", label: "Nombre", type: "text", placeholder: "ALQUERIA / SECOS" },
+        {
+          name: "market",
+          label: "Mercado",
+          type: "select",
+          options: [
+            { value: "colombia", label: "Colombia / Exportaciones" },
+            { value: "aruba", label: "Aruba (QuickBooks)" },
+          ],
+        },
+        { name: "description", label: "Descripción", type: "text", placeholder: "Opcional", optional: true },
       ],
       tableColumns: [
         { key: "code", label: "Código" },
         { key: "name", label: "Categoría" },
+        { key: "market", label: "Mercado" },
         { key: "description", label: "Descripción" },
       ],
     },
@@ -2423,7 +2455,19 @@ function getCollectionConfigs(
         { name: "sku", label: "SKU", type: "text", placeholder: "PROD-001" },
         { name: "name", label: "Nombre", type: "text", placeholder: "Mango Tommy" },
         { name: "description", label: "Descripción", type: "text", placeholder: "PACK X 12 UN", optional: true },
-        { name: "category", label: "Categoría", type: "select", options: categoryOptions },
+        {
+          name: "category",
+          label: "Categoría COL / Exportación",
+          type: "select",
+          options: categoryOptions.filter((category) => category.market !== "aruba"),
+        },
+        {
+          name: "arubaCategory",
+          label: "Categoría Aruba (QuickBooks)",
+          type: "select",
+          options: categoryOptions.filter((category) => category.market === "aruba"),
+          optional: true,
+        },
         { name: "supplier", label: "Proveedor", type: "select", options: supplierOptions },
         { name: "arubaPurchaseCostUsd", label: "Costo unitario (USD)", type: "number", placeholder: "0.00", width: "third" },
         { name: "salePrice", label: "Precio de venta (AWG)", type: "number", placeholder: "0.00", width: "third" },
@@ -2443,7 +2487,8 @@ function getCollectionConfigs(
       tableColumns: [
         { key: "sku", label: "SKU" },
         { key: "name", label: "Producto" },
-        { key: "category", label: "Categoría" },
+        { key: "category", label: "Cat. COL" },
+        { key: "arubaCategory", label: "Cat. Aruba" },
         { key: "warehouseStock", label: "Stock" },
         { key: "description", label: "Descripción" },
         { key: "arubaPurchaseCostUsd", label: "Costo (USD)" },
@@ -2886,6 +2931,11 @@ function formatPaymentMethodLabel(paymentMethod: string) {
     return "Datáfono";
   }
 
+  const quickBooksTerm = quickBooksPaymentTermOptions.find((option) => option.value === paymentMethod);
+  if (quickBooksTerm) {
+    return quickBooksTerm.label;
+  }
+
   const match = carteraPaymentMethodOptions.find((option) => option.value === paymentMethod)
     ?? carteraCollectionPaymentMethodOptions.find((option) => option.value === paymentMethod);
   return match?.label ?? paymentMethod;
@@ -2901,7 +2951,40 @@ function resolveStoreDefaultPaymentMethod(value?: string): CarteraPaymentMethod 
     return value;
   }
 
+  if (value === "Pago a la recepción del servicio") {
+    return "efectivo";
+  }
+
+  if (
+    value === "Pago arriendo"
+    || value === "Pago en 15 días"
+    || value === "Pago en 30 días"
+    || value === "Pago en 60 días"
+  ) {
+    return "credito";
+  }
+
   return "";
+}
+
+function normalizeClientPaymentTerms(value?: string) {
+  if (!value) {
+    return DEFAULT_QUICKBOOKS_PAYMENT_TERM;
+  }
+
+  if (quickBooksPaymentTermOptions.some((option) => option.value === value)) {
+    return value;
+  }
+
+  if (value === "credito") {
+    return "Pago en 30 días";
+  }
+
+  if (value === "efectivo" || value === "transferencia" || value === "datafono") {
+    return DEFAULT_QUICKBOOKS_PAYMENT_TERM;
+  }
+
+  return DEFAULT_QUICKBOOKS_PAYMENT_TERM;
 }
 
 function getAccountingLinePricing(params: {
@@ -3541,7 +3624,8 @@ function matchesSellerCatalogSearch(product: SellerCatalogProduct, query: string
   return (
     product.name.toLowerCase().includes(normalizedQuery) ||
     product.sku.toLowerCase().includes(normalizedQuery) ||
-    product.category.toLowerCase().includes(normalizedQuery)
+    product.category.toLowerCase().includes(normalizedQuery) ||
+    getProductArubaCategory(product).toLowerCase().includes(normalizedQuery)
   );
 }
 
@@ -4180,12 +4264,21 @@ function roundCurrencyValue(value: number) {
   return Math.round((Number.isFinite(value) ? value : 0) * 100) / 100;
 }
 
+function getProductArubaCategory(product: Pick<ProductOption, "arubaCategory" | "category"> | { arubaCategory?: string; category?: string }) {
+  const arubaCategory = String(product.arubaCategory ?? "").trim();
+  if (arubaCategory) {
+    return arubaCategory;
+  }
+  return String(product.category ?? "").trim();
+}
+
 function mapRecordToProductOption(product: Record<string, unknown>): ProductOption {
   return {
     value: String(product._id ?? ""),
     label: String(product.name ?? ""),
     sku: String(product.sku ?? ""),
     category: String(product.category ?? ""),
+    arubaCategory: String(product.arubaCategory ?? "").trim(),
     description: String(product.description ?? "").trim(),
     salePrice: roundCurrencyValue(Number(product.salePrice ?? 0)),
     inventoryAlert: Number(product.inventoryAlert ?? 0),
@@ -5285,12 +5378,18 @@ export default function App() {
       ? (() => {
         const fromCategories = productOptions.filter((product) => (
           product.shareWithAruba !== false
-          && catalogForm.categoryNames.includes(product.category)
+          && (
+            catalogForm.categoryNames.includes(getProductArubaCategory(product))
+            || catalogForm.categoryNames.includes(product.category)
+          )
         ));
         const directExtras = productOptions.filter((product) => (
           product.shareWithAruba !== false
           && catalogForm.productIds.includes(product.value)
-          && !catalogForm.categoryNames.includes(product.category)
+          && !(
+            catalogForm.categoryNames.includes(getProductArubaCategory(product))
+            || catalogForm.categoryNames.includes(product.category)
+          )
         ));
         const combinedProducts = new Map<string, ProductOption>();
 
@@ -7557,7 +7656,7 @@ export default function App() {
           )}
           <div>
             <strong>{product.name}</strong>
-            <small>SKU {product.sku}{product.category ? ` · ${product.category}` : ""}</small>
+            <small>SKU {product.sku}{getProductArubaCategory(product) ? ` · ${getProductArubaCategory(product)}` : ""}</small>
           </div>
         </div>
         <div className="seller-product-catalog-meta">
@@ -7690,7 +7789,7 @@ export default function App() {
                 {isRemoving ? "..." : "×"}
               </button>
             </div>
-            <small>SKU {product.sku}{product.category ? ` · ${product.category}` : ""}</small>
+            <small>SKU {product.sku}{getProductArubaCategory(product) ? ` · ${getProductArubaCategory(product)}` : ""}</small>
           </div>
         </div>
         <div className="seller-product-catalog-meta">
@@ -8231,7 +8330,11 @@ export default function App() {
       if (categoryResult.status === "fulfilled" && categoryResult.value.response.ok && Array.isArray(categoryResult.value.data)) {
         setCategoryOptions(
           categoryResult.value.data
-            .map((category) => ({ value: String(category.name ?? ""), label: String(category.name ?? "") }))
+            .map((category) => ({
+              value: String(category.name ?? ""),
+              label: String(category.name ?? ""),
+              market: String(category.market ?? "colombia") === "aruba" ? "aruba" as const : "colombia" as const,
+            }))
             .filter((category) => category.value.length > 0),
         );
       }
@@ -8271,7 +8374,7 @@ export default function App() {
               email: String(client.email ?? ""),
               phone: String(client.phone ?? ""),
               managerName: String(client.managerName ?? ""),
-              defaultPaymentMethod: resolveStoreDefaultPaymentMethod(
+              defaultPaymentMethod: normalizeClientPaymentTerms(
                 typeof client.defaultPaymentMethod === "string" ? client.defaultPaymentMethod : "",
               ),
               assignedProductIds: Array.isArray(client.assignedProductIds)
@@ -12116,7 +12219,10 @@ export default function App() {
       }
 
       const categoryProductIds = productOptions
-        .filter((product) => product.category === categoryName)
+        .filter((product) => (
+          getProductArubaCategory(product) === categoryName
+          || product.category === categoryName
+        ))
         .map((product) => product.value);
 
       return {
@@ -12130,7 +12236,10 @@ export default function App() {
   function toggleCatalogProduct(productId: string) {
     setCatalogForm((current) => {
       const product = productOptionsById.get(productId);
-      const fromSelectedCategory = Boolean(product && current.categoryNames.includes(product.category));
+      const fromSelectedCategory = Boolean(product && (
+        current.categoryNames.includes(getProductArubaCategory(product))
+        || current.categoryNames.includes(product.category)
+      ));
       const isSelected = isCatalogProductSelected(productId, current, productOptionsById);
 
       if (isSelected) {
@@ -14606,7 +14715,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       if (config.key === "categories") {
         setCategoryOptions(
           listData
-            .map((category) => ({ value: String(category.name ?? ""), label: String(category.name ?? "") }))
+            .map((category) => ({
+              value: String(category.name ?? ""),
+              label: String(category.name ?? ""),
+              market: String(category.market ?? "colombia") === "aruba" ? "aruba" as const : "colombia" as const,
+            }))
             .filter((category) => category.value.length > 0),
         );
       }
@@ -14630,7 +14743,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               email: String(client.email ?? ""),
               phone: String(client.phone ?? ""),
               managerName: String(client.managerName ?? ""),
-              defaultPaymentMethod: resolveStoreDefaultPaymentMethod(
+              defaultPaymentMethod: normalizeClientPaymentTerms(
                 typeof client.defaultPaymentMethod === "string" ? client.defaultPaymentMethod : "",
               ),
               assignedProductIds: Array.isArray(client.assignedProductIds)
@@ -14700,7 +14813,15 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
   function formatCreationCellValue(row: Record<string, unknown>, key: string) {
     if (key === "defaultPaymentMethod") {
       const defaultPaymentMethod = typeof row.defaultPaymentMethod === "string" ? row.defaultPaymentMethod : "";
-      return defaultPaymentMethod ? formatPaymentMethodLabel(defaultPaymentMethod) : "Sin predeterminado";
+      return formatPaymentMethodLabel(normalizeClientPaymentTerms(defaultPaymentMethod));
+    }
+
+    if (key === "market") {
+      return String(row.market ?? "") === "aruba" ? "Aruba (QuickBooks)" : "Colombia / Exportaciones";
+    }
+
+    if (key === "arubaCategory") {
+      return String(row.arubaCategory ?? "").trim() || "-";
     }
 
     if (key === "assignedProductIds") {
@@ -18892,10 +19013,10 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </div>
 
                     <div className="route-store-list">
-                      {categoryOptions.length === 0 ? (
-                        <p className="route-empty-state">Primero crea categorías.</p>
+                      {categoryOptions.filter((category) => category.market === "aruba").length === 0 ? (
+                        <p className="route-empty-state">Primero crea categorías Aruba (QuickBooks).</p>
                       ) : (
-                        categoryOptions.map((category) => (
+                        categoryOptions.filter((category) => category.market === "aruba").map((category) => (
                           <label className="route-store-option" key={category.value}>
                             <input
                               type="checkbox"
@@ -18904,7 +19025,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             />
                             <span>
                               <strong>{category.label}</strong>
-                              <small>Incluye todos los productos de esta categoría.</small>
+                              <small>Incluye todos los productos de esta categoría Aruba.</small>
                             </span>
                           </label>
                         ))
@@ -18949,7 +19070,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             />
                             <span>
                               <strong>{product.label}</strong>
-                              <small>SKU {product.sku}{product.category ? ` · ${product.category}` : ""}</small>
+                              <small>SKU {product.sku}{getProductArubaCategory(product) ? ` · ${getProductArubaCategory(product)}` : ""}</small>
                             </span>
                           </label>
                         ))
@@ -22652,7 +22773,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <p><strong>Gerente:</strong> {storeSummary.store.managerName || "Sin gerente"}</p>
                       <p><strong>Correo:</strong> {storeSummary.store.email || "Sin correo"}</p>
                       <p><strong>Telefono:</strong> {[storeSummary.store.phoneCountryCode, storeSummary.store.phone].filter(Boolean).join(" ") || "Sin telefono"}</p>
-                      <p><strong>Pago predeterminado:</strong> {storeSummary.store.defaultPaymentMethod ? formatPaymentMethodLabel(storeSummary.store.defaultPaymentMethod) : "Sin predeterminado"}</p>
+                      <p><strong>Pago predeterminado:</strong> {formatPaymentMethodLabel(normalizeClientPaymentTerms(storeSummary.store.defaultPaymentMethod))}</p>
                       <p><strong>Alta:</strong> {formatSellerOrderDate(String(storeSummary.store.createdAt))}</p>
                     </div>
 
@@ -23664,7 +23785,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     }}
                   >
                     <option value="">Todas</option>
-                    {categoryOptions.map((category) => (
+                    {categoryOptions.filter((category) => category.market === "aruba").map((category) => (
                       <option key={category.value} value={category.value}>{category.label}</option>
                     ))}
                   </select>

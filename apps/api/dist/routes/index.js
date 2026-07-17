@@ -37,6 +37,7 @@ import { buildFinancialReports } from "../services/financial-reports.service.js"
 import { buildOrderPlannerReport } from "../services/order-planner.service.js";
 import { buildQuickBooksBillExportCsv } from "../services/quickbooks-bill-export.service.js";
 import { buildQuickBooksInvoiceExportCsv } from "../services/quickbooks-invoice-export.service.js";
+import { normalizeQuickBooksPaymentTerm } from "../services/quickbooks-payment-terms.js";
 export const apiRouter = Router();
 const cloudinaryProductFolder = "spste/products";
 const cloudinaryImportDocumentsFolder = "spste/import-documents";
@@ -115,12 +116,15 @@ function mapImportRowsFromSheet(rows, headerRowIndex) {
     })
         .filter((row) => Object.values(row).some((value) => normalizeImportText(value).length > 0));
 }
-async function ensureImportCategory(name) {
+async function ensureImportCategory(name, market = "colombia") {
     const trimmedName = name.trim();
     if (!trimmedName) {
         throw new Error("La categoria es obligatoria para importar productos.");
     }
-    const existingCategory = await Category.findOne({ name: new RegExp(`^${trimmedName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") }).lean();
+    const existingCategory = await Category.findOne({
+        name: new RegExp(`^${trimmedName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i"),
+        market,
+    }).lean();
     if (existingCategory) {
         return existingCategory;
     }
@@ -128,6 +132,7 @@ async function ensureImportCategory(name) {
         code: buildInternalCode("CAT"),
         name: trimmedName,
         description: "Creada automaticamente desde la importacion de productos.",
+        market,
         active: true,
     });
 }
@@ -470,13 +475,7 @@ async function normalizeClientPayload(body) {
         throw new Error("El nombre comercial del cliente es obligatorio.");
     }
     const uniqueAssignedProductIds = await normalizeAssignedProductIds(payload.assignedProductIds);
-    const rawDefaultPaymentMethod = typeof payload.defaultPaymentMethod === "string"
-        ? payload.defaultPaymentMethod.trim().toLowerCase()
-        : "";
-    const allowedDefaultPaymentMethods = new Set(["credito", "transferencia", "efectivo"]);
-    const defaultPaymentMethod = allowedDefaultPaymentMethods.has(rawDefaultPaymentMethod)
-        ? rawDefaultPaymentMethod
-        : "";
+    const defaultPaymentMethod = normalizeQuickBooksPaymentTerm(payload.defaultPaymentMethod);
     return {
         name,
         managerName: typeof payload.managerName === "string" ? payload.managerName.trim() : "",
@@ -524,7 +523,12 @@ async function resolveCatalogProducts(catalog) {
         filters.push({ _id: { $in: explicitProductIds } });
     }
     if (categoryNames.length > 0) {
-        filters.push({ category: { $in: categoryNames } });
+        filters.push({
+            $or: [
+                { arubaCategory: { $in: categoryNames } },
+                { category: { $in: categoryNames } },
+            ],
+        });
     }
     if (filters.length === 0) {
         return [];
@@ -554,11 +558,13 @@ async function resolveCatalogProducts(catalog) {
         const arubaPurchaseCostUsd = Number(product.arubaPurchaseCostUsd ?? 0);
         const arubaUsdToAwgRate = Number(product.arubaUsdToAwgRate ?? 1.79);
         const arubaCostAwg = arubaPurchaseCostUsd * arubaUsdToAwgRate;
+        const arubaCategory = String(product.arubaCategory ?? "").trim();
         return {
             productId: String(product._id),
             name: product.name,
             sku: product.sku,
-            category: product.category,
+            category: arubaCategory || product.category,
+            arubaCategory,
             imageUrl: String(product.imageUrl ?? ""),
             cost: arubaCostAwg > 0 ? arubaCostAwg : latestCostMap.get(String(product._id)) ?? Number(product.cost ?? 0),
             salePrice: Number(product.salePrice ?? 0),
@@ -4263,8 +4269,10 @@ apiRouter.get("/management/ops-clients", async (_request, response) => {
     const clients = await OperationsClient.find().sort({ createdAt: -1 }).lean();
     response.json(clients);
 });
-apiRouter.get("/management/categories", async (_request, response) => {
-    const categories = await Category.find().sort({ createdAt: -1 }).lean();
+apiRouter.get("/management/categories", async (request, response) => {
+    const market = typeof request.query.market === "string" ? request.query.market.trim().toLowerCase() : "";
+    const query = market === "aruba" || market === "colombia" ? { market } : {};
+    const categories = await Category.find(query).sort({ name: 1, createdAt: -1 }).lean();
     response.json(categories);
 });
 apiRouter.get("/management/products", async (_request, response) => {
@@ -5478,6 +5486,8 @@ apiRouter.post("/management/categories", async (request, response) => {
     try {
         const payload = typeof request.body === "object" && request.body !== null ? request.body : {};
         const name = typeof payload.name === "string" ? payload.name.trim() : "";
+        const marketValue = typeof payload.market === "string" ? payload.market.trim().toLowerCase() : "colombia";
+        const market = marketValue === "aruba" ? "aruba" : "colombia";
         if (!name) {
             throw new Error("El nombre de la categoria es obligatorio.");
         }
@@ -5485,6 +5495,7 @@ apiRouter.post("/management/categories", async (request, response) => {
             code: buildInternalCode("CAT"),
             name,
             description: typeof payload.description === "string" ? payload.description.trim() : "",
+            market,
         });
         response.status(201).json(category);
     }

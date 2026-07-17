@@ -197,15 +197,20 @@ export async function buildOrderPlannerReport(params) {
     const storeAddressById = new Map(stores.map((store) => [String(store._id), String(store.address ?? "")]));
     const productMap = new Map();
     for (const product of products) {
-        if (category && String(product.category ?? "") !== category) {
-            continue;
+        if (category) {
+            const matchesAruba = String(product.arubaCategory ?? "") === category;
+            const matchesCol = String(product.category ?? "") === category;
+            if (!matchesAruba && !matchesCol) {
+                continue;
+            }
         }
         const id = String(product._id);
+        const arubaCategory = String(product.arubaCategory ?? "").trim();
         productMap.set(id, {
             productId: id,
             productSku: String(product.sku ?? ""),
             productName: String(product.name ?? ""),
-            category: String(product.category ?? ""),
+            category: arubaCategory || String(product.category ?? ""),
             supplier: String(product.supplier ?? ""),
             minStockAlert: Math.max(0, Number(product.inventoryAlert ?? 0)),
             currentStock: 0,

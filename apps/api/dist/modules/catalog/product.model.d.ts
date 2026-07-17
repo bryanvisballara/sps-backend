@@ -9,6 +9,7 @@ export declare const Product: import("mongoose").Model<{
     variableSalePrice: boolean;
     sku: string;
     quickbooksName: string;
+    arubaCategory: string;
     supplier: string;
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
@@ -36,6 +37,7 @@ export declare const Product: import("mongoose").Model<{
     variableSalePrice: boolean;
     sku: string;
     quickbooksName: string;
+    arubaCategory: string;
     supplier: string;
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
@@ -65,6 +67,7 @@ export declare const Product: import("mongoose").Model<{
     variableSalePrice: boolean;
     sku: string;
     quickbooksName: string;
+    arubaCategory: string;
     supplier: string;
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
@@ -98,6 +101,7 @@ export declare const Product: import("mongoose").Model<{
     variableSalePrice: boolean;
     sku: string;
     quickbooksName: string;
+    arubaCategory: string;
     supplier: string;
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
@@ -125,6 +129,7 @@ export declare const Product: import("mongoose").Model<{
     variableSalePrice: boolean;
     sku: string;
     quickbooksName: string;
+    arubaCategory: string;
     supplier: string;
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;
@@ -154,6 +159,7 @@ export declare const Product: import("mongoose").Model<{
     variableSalePrice: boolean;
     sku: string;
     quickbooksName: string;
+    arubaCategory: string;
     supplier: string;
     arubaPurchaseCostUsd: number;
     arubaUsdToAwgRate: number;

@@ -13,7 +13,10 @@ const productSchema = new Schema({
     /** Exact QuickBooks Online product/service name for CSV/API export. Frontend keeps using `name`. */
     quickbooksName: { type: String, trim: true, default: "" },
     description: { type: String, trim: true, default: "" },
+    /** Colombia / exports grouping (SECOS, REFRIGERADOS). */
     category: { type: String, required: true, trim: true },
+    /** Aruba / QuickBooks product group (e.g. ALQUERIA, BEBIDAS NO ALCOHOLICAS). */
+    arubaCategory: { type: String, trim: true, default: "" },
     supplier: { type: String, required: true, trim: true },
     imageUrl: { type: String, trim: true },
     cost: { type: Number, default: 0, min: 0 },

@@ -2,9 +2,13 @@ import { CarteraEntry } from "../modules/accounting/cartera-entry.model.js";
 import { LogisticsInvoice } from "../modules/accounting/logistics-invoice.model.js";
 import { Product } from "../modules/catalog/product.model.js";
 import { Order } from "../modules/orders/order.model.js";
+import { Store } from "../modules/stores/store.model.js";
+import {
+  normalizeQuickBooksPaymentTerm,
+  resolveDueDateKeyForPaymentTerm,
+} from "./quickbooks-payment-terms.js";
 
 const BUSINESS_TIMEZONE = "America/Aruba";
-const CREDIT_DUE_DAYS = 30;
 
 const CSV_HEADERS = [
   "*InvoiceNo",
@@ -104,20 +108,19 @@ function formatCsvRow(values: Array<string | number>) {
   return values.map((value) => escapeCsvField(value)).join(",");
 }
 
-function resolvePaymentTerms(paymentMethod: string) {
-  if (paymentMethod === "credito") {
-    return "Net 30";
+function resolvePaymentTerms(params: {
+  storePaymentTerm?: string;
+  paymentMethod?: string;
+}) {
+  if (params.storePaymentTerm) {
+    return normalizeQuickBooksPaymentTerm(params.storePaymentTerm);
   }
 
-  return "Due on receipt";
+  return normalizeQuickBooksPaymentTerm(params.paymentMethod);
 }
 
-function resolveDueDateKey(invoiceDateKey: string, paymentMethod: string) {
-  if (paymentMethod === "credito") {
-    return addDaysToDateKey(invoiceDateKey, CREDIT_DUE_DAYS);
-  }
-
-  return invoiceDateKey;
+function resolveDueDateKey(invoiceDateKey: string, paymentTerm: string) {
+  return resolveDueDateKeyForPaymentTerm(invoiceDateKey, paymentTerm, addDaysToDateKey);
 }
 
 function roundMoney(value: number) {
@@ -185,13 +188,18 @@ export async function buildQuickBooksInvoiceExportCsv(params: {
   }
 
   const orderIds = filteredOrders.map((order) => String(order._id));
-  const [carteraEntries, logisticsInvoices] = await Promise.all([
+  const storeIds = Array.from(new Set(filteredOrders.map((order) => String(order.storeId ?? "")).filter(Boolean)));
+  const [carteraEntries, logisticsInvoices, stores] = await Promise.all([
     CarteraEntry.find({ orderId: { $in: orderIds }, active: { $ne: false } }).lean(),
     LogisticsInvoice.find({ orderId: { $in: orderIds }, active: { $ne: false }, syncExcluded: { $ne: true } }).lean(),
+    storeIds.length > 0
+      ? Store.find({ _id: { $in: storeIds } }).select({ _id: 1, defaultPaymentMethod: 1 }).lean()
+      : Promise.resolve([]),
   ]);
 
   const carteraByOrderId = new Map(carteraEntries.map((entry) => [String(entry.orderId), entry]));
   const logisticsByOrderId = new Map(logisticsInvoices.map((invoice) => [String(invoice.orderId ?? ""), invoice]));
+  const storesById = new Map(stores.map((store) => [String(store._id), store]));
 
   const productIds = Array.from(new Set(
     filteredOrders.flatMap((order) => {
@@ -229,8 +237,12 @@ export async function buildQuickBooksInvoiceExportCsv(params: {
     const paymentMethod = String(carteraEntry?.paymentMethod ?? "credito");
     const invoiceNumber = Number(carteraEntry?.invoiceNumber ?? order.invoiceNumber ?? 0) || orderId.slice(-6);
     const customerName = String(order.storeName ?? "Cliente");
-    const terms = resolvePaymentTerms(paymentMethod);
-    const dueDateKey = resolveDueDateKey(invoiceDateKey, paymentMethod);
+    const store = storesById.get(String(order.storeId ?? ""));
+    const terms = resolvePaymentTerms({
+      storePaymentTerm: store?.defaultPaymentMethod,
+      paymentMethod,
+    });
+    const dueDateKey = resolveDueDateKey(invoiceDateKey, terms);
     const location = String(order.deliveryZone ?? "");
     const memoParts = [
       String(order.routeName ?? "").trim(),

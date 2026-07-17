@@ -52,6 +52,7 @@ import { buildFinancialReports } from "../services/financial-reports.service.js"
 import { buildOrderPlannerReport } from "../services/order-planner.service.js";
 import { buildQuickBooksBillExportCsv } from "../services/quickbooks-bill-export.service.js";
 import { buildQuickBooksInvoiceExportCsv } from "../services/quickbooks-invoice-export.service.js";
+import { normalizeQuickBooksPaymentTerm } from "../services/quickbooks-payment-terms.js";
 
 export const apiRouter = Router();
 
@@ -157,14 +158,17 @@ function mapImportRowsFromSheet(rows: unknown[][], headerRowIndex: number) {
     .filter((row) => Object.values(row).some((value) => normalizeImportText(value).length > 0));
 }
 
-async function ensureImportCategory(name: string) {
+async function ensureImportCategory(name: string, market: "colombia" | "aruba" = "colombia") {
   const trimmedName = name.trim();
 
   if (!trimmedName) {
     throw new Error("La categoria es obligatoria para importar productos.");
   }
 
-  const existingCategory = await Category.findOne({ name: new RegExp(`^${trimmedName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") }).lean();
+  const existingCategory = await Category.findOne({
+    name: new RegExp(`^${trimmedName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i"),
+    market,
+  }).lean();
 
   if (existingCategory) {
     return existingCategory;
@@ -174,6 +178,7 @@ async function ensureImportCategory(name: string) {
     code: buildInternalCode("CAT"),
     name: trimmedName,
     description: "Creada automaticamente desde la importacion de productos.",
+    market,
     active: true,
   });
 }
@@ -650,13 +655,7 @@ async function normalizeClientPayload(body: unknown) {
   }
 
   const uniqueAssignedProductIds = await normalizeAssignedProductIds(payload.assignedProductIds);
-  const rawDefaultPaymentMethod = typeof payload.defaultPaymentMethod === "string"
-    ? payload.defaultPaymentMethod.trim().toLowerCase()
-    : "";
-  const allowedDefaultPaymentMethods = new Set(["credito", "transferencia", "efectivo"]);
-  const defaultPaymentMethod = allowedDefaultPaymentMethods.has(rawDefaultPaymentMethod)
-    ? rawDefaultPaymentMethod
-    : "";
+  const defaultPaymentMethod = normalizeQuickBooksPaymentTerm(payload.defaultPaymentMethod);
 
   return {
     name,
@@ -720,7 +719,12 @@ async function resolveCatalogProducts(catalog: {
   }
 
   if (categoryNames.length > 0) {
-    filters.push({ category: { $in: categoryNames } });
+    filters.push({
+      $or: [
+        { arubaCategory: { $in: categoryNames } },
+        { category: { $in: categoryNames } },
+      ],
+    });
   }
 
   if (filters.length === 0) {
@@ -757,12 +761,14 @@ async function resolveCatalogProducts(catalog: {
       const arubaPurchaseCostUsd = Number(product.arubaPurchaseCostUsd ?? 0);
       const arubaUsdToAwgRate = Number(product.arubaUsdToAwgRate ?? 1.79);
       const arubaCostAwg = arubaPurchaseCostUsd * arubaUsdToAwgRate;
+      const arubaCategory = String(product.arubaCategory ?? "").trim();
 
       return {
         productId: String(product._id),
         name: product.name,
         sku: product.sku,
-        category: product.category,
+        category: arubaCategory || product.category,
+        arubaCategory,
         imageUrl: String(product.imageUrl ?? ""),
         cost: arubaCostAwg > 0 ? arubaCostAwg : latestCostMap.get(String(product._id)) ?? Number(product.cost ?? 0),
         salePrice: Number(product.salePrice ?? 0),
@@ -5599,8 +5605,10 @@ apiRouter.get("/management/ops-clients", async (_request, response) => {
   response.json(clients);
 });
 
-apiRouter.get("/management/categories", async (_request, response) => {
-  const categories = await Category.find().sort({ createdAt: -1 }).lean();
+apiRouter.get("/management/categories", async (request, response) => {
+  const market = typeof request.query.market === "string" ? request.query.market.trim().toLowerCase() : "";
+  const query = market === "aruba" || market === "colombia" ? { market } : {};
+  const categories = await Category.find(query).sort({ name: 1, createdAt: -1 }).lean();
   response.json(categories);
 });
 
@@ -7123,6 +7131,8 @@ apiRouter.post("/management/categories", async (request, response) => {
   try {
     const payload = typeof request.body === "object" && request.body !== null ? request.body as Record<string, unknown> : {};
     const name = typeof payload.name === "string" ? payload.name.trim() : "";
+    const marketValue = typeof payload.market === "string" ? payload.market.trim().toLowerCase() : "colombia";
+    const market = marketValue === "aruba" ? "aruba" : "colombia";
 
     if (!name) {
       throw new Error("El nombre de la categoria es obligatorio.");
@@ -7132,6 +7142,7 @@ apiRouter.post("/management/categories", async (request, response) => {
       code: buildInternalCode("CAT"),
       name,
       description: typeof payload.description === "string" ? payload.description.trim() : "",
+      market,
     });
     response.status(201).json(category);
   } catch (error) {
