@@ -199,17 +199,16 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
         if (lineItems.length === 0) {
             continue;
         }
-        lineItems.forEach((lineItem, index) => {
-            const isFirstLine = index === 0;
+        lineItems.forEach((lineItem) => {
             rows.push(formatCsvRow([
-                isFirstLine ? invoiceNumber : "",
-                isFirstLine ? customerName : "",
-                isFirstLine ? formatQuickBooksDate(invoiceDateKey) : "",
-                isFirstLine ? formatQuickBooksDate(dueDateKey) : "",
-                isFirstLine ? terms : "",
-                isFirstLine ? location : "",
-                isFirstLine ? memo : "",
-                lineItem.productSku !== "-" ? lineItem.productSku : lineItem.productName,
+                invoiceNumber,
+                customerName,
+                formatQuickBooksDate(invoiceDateKey),
+                formatQuickBooksDate(dueDateKey),
+                terms,
+                location,
+                memo,
+                lineItem.productName,
                 lineItem.description,
                 lineItem.quantity,
                 lineItem.rate,
