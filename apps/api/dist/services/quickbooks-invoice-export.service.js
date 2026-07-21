@@ -108,6 +108,14 @@ function resolveQuickBooksItemName(product, fallbackName = "Producto") {
     const fallback = String(fallbackName ?? "").trim();
     return fallback || "Producto";
 }
+function resolveQuickBooksItemDescription(product, fallback = "") {
+    const description = String(product?.description ?? "").trim();
+    if (description) {
+        return description;
+    }
+    const fallbackText = String(fallback ?? "").trim();
+    return fallbackText;
+}
 export async function buildQuickBooksInvoiceExportCsv(params) {
     const defaults = resolveDefaultDateRange();
     const startDate = isValidDateKey(params.startDate ?? "") ? String(params.startDate) : defaults.startDate;
@@ -163,7 +171,6 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
         const invoiceDateKey = carteraEntry?.invoicedAt
             ? getBusinessDateKey(new Date(carteraEntry.invoicedAt))
             : resolveOrderInvoiceDateKey(order);
-        const serviceDateKey = resolveOrderInvoiceDateKey(order);
         const paymentMethod = String(carteraEntry?.paymentMethod ?? "credito");
         const invoiceNumber = Number(carteraEntry?.invoiceNumber ?? order.invoiceNumber ?? 0) || orderId.slice(-6);
         const customerName = String(order.storeName ?? "Cliente");
@@ -190,11 +197,10 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
                 return {
                     productName,
                     productSku: String(item.productSku ?? product?.sku ?? "-"),
-                    description: String(item.productName ?? product?.description ?? productName),
+                    description: resolveQuickBooksItemDescription(product),
                     quantity: Number(item.quantity ?? 0),
                     rate: roundMoney(Number(item.salePriceAwg ?? 0)),
                     amount: roundMoney(Number(item.lineTotalAwg ?? 0)),
-                    serviceDateKey,
                 };
             })
             : [
@@ -209,11 +215,10 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
                     return [{
                             productName,
                             productSku: String(product?.sku ?? "-"),
-                            description: String(product?.description ?? product?.name ?? item.notes ?? productName),
+                            description: resolveQuickBooksItemDescription(product, String(item.notes ?? "")),
                             quantity,
                             rate,
                             amount: roundMoney(rate * quantity),
-                            serviceDateKey,
                         }];
                 }),
                 ...(order.giftItems ?? []).flatMap((item) => {
@@ -226,11 +231,10 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
                     return [{
                             productName,
                             productSku: String(product?.sku ?? "-"),
-                            description: String(item.notes ?? product?.description ?? "Obsequio"),
+                            description: resolveQuickBooksItemDescription(product, String(item.notes ?? "Obsequio")),
                             quantity,
                             rate: 0,
                             amount: 0,
-                            serviceDateKey,
                         }];
                 }),
             ];
@@ -253,7 +257,7 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
                 lineItem.amount,
                 "Exempt",
                 0,
-                formatQuickBooksDate(lineItem.serviceDateKey),
+                "",
             ]));
             lineCount += 1;
         });
