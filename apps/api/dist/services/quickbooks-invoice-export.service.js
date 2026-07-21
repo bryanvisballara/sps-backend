@@ -3,6 +3,7 @@ import { LogisticsInvoice } from "../modules/accounting/logistics-invoice.model.
 import { Product } from "../modules/catalog/product.model.js";
 import { Order } from "../modules/orders/order.model.js";
 import { Store } from "../modules/stores/store.model.js";
+import { formatQuickBooksCsvHeaderRow, formatQuickBooksCsvRow, joinQuickBooksCsvRows, } from "./quickbooks-csv.js";
 import { normalizeQuickBooksPaymentTerm, resolveDueDateKeyForPaymentTerm, } from "./quickbooks-payment-terms.js";
 const BUSINESS_TIMEZONE = "America/Aruba";
 const CSV_HEADERS = [
@@ -71,16 +72,6 @@ function formatQuickBooksDate(dateKey) {
     const [year, month, day] = dateKey.split("-");
     return `${day}/${month}/${year}`;
 }
-function escapeCsvField(value) {
-    const normalized = String(value ?? "");
-    if (/[",\n\r]/.test(normalized)) {
-        return `"${normalized.replace(/"/g, "\"\"")}"`;
-    }
-    return normalized;
-}
-function formatCsvRow(values) {
-    return values.map((value) => escapeCsvField(value)).join(",");
-}
 function resolvePaymentTerms(params) {
     if (params.storePaymentTerm) {
         return normalizeQuickBooksPaymentTerm(params.storePaymentTerm);
@@ -129,7 +120,7 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
     });
     if (filteredOrders.length === 0) {
         return {
-            csv: `${CSV_HEADERS.join(",")}\n`,
+            csv: joinQuickBooksCsvRows([formatQuickBooksCsvHeaderRow(CSV_HEADERS)]),
             fileName: `quickbooks-facturas-${startDate}-a-${endDate}.csv`,
             invoiceCount: 0,
             lineCount: 0,
@@ -162,7 +153,7 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
     const productsBySku = new Map(products
         .map((product) => [normalizeSku(String(product.sku ?? "")), product])
         .filter(([sku]) => Boolean(sku)));
-    const rows = [CSV_HEADERS.join(",")];
+    const rows = [formatQuickBooksCsvHeaderRow(CSV_HEADERS)];
     let lineCount = 0;
     for (const order of filteredOrders) {
         const orderId = String(order._id);
@@ -186,7 +177,7 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
             String(order.salesRepName ?? "").trim(),
             String(order.orderNotes ?? "").trim(),
         ].filter(Boolean);
-        const memo = memoParts.join(" · ");
+        const memo = memoParts.join(" - ");
         const resolveProduct = (productId, productSku) => (productsById.get(String(productId ?? ""))
             ?? productsBySku.get(normalizeSku(String(productSku ?? "")))
             ?? null);
@@ -242,7 +233,7 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
             continue;
         }
         lineItems.forEach((lineItem) => {
-            rows.push(formatCsvRow([
+            rows.push(formatQuickBooksCsvRow([
                 invoiceNumber,
                 customerName,
                 formatQuickBooksDate(invoiceDateKey),
@@ -263,7 +254,7 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
         });
     }
     return {
-        csv: `${rows.join("\n")}\n`,
+        csv: joinQuickBooksCsvRows(rows),
         fileName: `quickbooks-facturas-${startDate}-a-${endDate}.csv`,
         invoiceCount: filteredOrders.length,
         lineCount,

@@ -51,6 +51,7 @@ import {
 import { buildFinancialReports } from "../services/financial-reports.service.js";
 import { buildOrderPlannerReport } from "../services/order-planner.service.js";
 import { buildQuickBooksBillExportCsv } from "../services/quickbooks-bill-export.service.js";
+import { encodeQuickBooksCsvBuffer } from "../services/quickbooks-csv.js";
 import { buildQuickBooksInvoiceExportCsv } from "../services/quickbooks-invoice-export.service.js";
 import { normalizeQuickBooksPaymentTerm } from "../services/quickbooks-payment-terms.js";
 
@@ -2908,10 +2909,11 @@ apiRouter.get("/management/orders/quickbooks-export", async (request, response) 
     const startDate = typeof request.query.startDate === "string" ? request.query.startDate.trim() : "";
     const endDate = typeof request.query.endDate === "string" ? request.query.endDate.trim() : "";
     const exportResult = await buildQuickBooksInvoiceExportCsv({ startDate, endDate });
+    const csvBuffer = encodeQuickBooksCsvBuffer(exportResult.csv);
 
-    response.setHeader("Content-Type", "text/csv; charset=utf-8");
+    response.setHeader("Content-Type", "text/csv; charset=windows-1252");
     response.setHeader("Content-Disposition", `attachment; filename="${exportResult.fileName}"`);
-    response.send(exportResult.csv);
+    response.send(csvBuffer);
   } catch (error) {
     sendCreationError(response, error);
   }
@@ -2923,10 +2925,11 @@ apiRouter.get("/management/inventory-entries/quickbooks-export", async (request,
     const endDate = typeof request.query.endDate === "string" ? request.query.endDate.trim() : "";
     const groupId = typeof request.query.groupId === "string" ? request.query.groupId.trim() : "";
     const exportResult = await buildQuickBooksBillExportCsv({ startDate, endDate, groupId });
+    const csvBuffer = encodeQuickBooksCsvBuffer(exportResult.csv);
 
-    response.setHeader("Content-Type", "text/csv; charset=utf-8");
+    response.setHeader("Content-Type", "text/csv; charset=windows-1252");
     response.setHeader("Content-Disposition", `attachment; filename="${exportResult.fileName}"`);
-    response.send(exportResult.csv);
+    response.send(csvBuffer);
   } catch (error) {
     sendCreationError(response, error);
   }

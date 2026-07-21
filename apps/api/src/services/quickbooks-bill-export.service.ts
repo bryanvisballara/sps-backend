@@ -1,5 +1,10 @@
-import { InventoryAdjustment } from "../modules/inventory/inventory-adjustment.model.js";
 import { Product } from "../modules/catalog/product.model.js";
+import { InventoryAdjustment } from "../modules/inventory/inventory-adjustment.model.js";
+import {
+  formatQuickBooksCsvHeaderRow,
+  formatQuickBooksCsvRow,
+  joinQuickBooksCsvRows,
+} from "./quickbooks-csv.js";
 
 const BUSINESS_TIMEZONE = "America/Aruba";
 const BILL_DUE_DAYS = 30;
@@ -51,20 +56,6 @@ function resolveDefaultDateRange() {
 function formatQuickBooksDate(dateKey: string) {
   const [year, month, day] = dateKey.split("-");
   return `${day}/${month}/${year}`;
-}
-
-function escapeCsvField(value: string | number) {
-  const normalized = String(value ?? "");
-
-  if (/[",\n\r]/.test(normalized)) {
-    return `"${normalized.replace(/"/g, "\"\"")}"`;
-  }
-
-  return normalized;
-}
-
-function formatCsvRow(values: Array<string | number>) {
-  return values.map((value) => escapeCsvField(value)).join(",");
 }
 
 function roundMoney(value: number) {
@@ -238,7 +229,7 @@ export async function buildQuickBooksBillExportCsv(params: {
 
   if (filteredGroups.length === 0) {
     return {
-      csv: `${CSV_HEADERS.join(",")}\n`,
+      csv: joinQuickBooksCsvRows([formatQuickBooksCsvHeaderRow(CSV_HEADERS)]),
       fileName: groupId
         ? `quickbooks-factura-proveedor-${groupId}.csv`
         : `quickbooks-facturas-proveedor-${startDate}-a-${endDate}.csv`,
@@ -247,7 +238,7 @@ export async function buildQuickBooksBillExportCsv(params: {
     };
   }
 
-  const rows: string[] = [CSV_HEADERS.join(",")];
+  const rows: string[] = [formatQuickBooksCsvHeaderRow(CSV_HEADERS)];
   let lineCount = 0;
 
   filteredGroups.forEach((group, groupIndex) => {
@@ -256,7 +247,7 @@ export async function buildQuickBooksBillExportCsv(params: {
     const billNumber = groupIndex + 1;
     const supplier = resolveGroupSupplier(group.items);
     const location = group.warehouseName || "";
-    const memo = `Entrada inventario · ${group.items.length} producto${group.items.length === 1 ? "" : "s"}`;
+    const memo = `Entrada inventario - ${group.items.length} producto${group.items.length === 1 ? "" : "s"}`;
 
     group.items.forEach((item, index) => {
       const isFirstLine = index === 0;
@@ -265,7 +256,7 @@ export async function buildQuickBooksBillExportCsv(params: {
         ? `${item.productName} (${item.productSku})`
         : item.productName;
 
-      rows.push(formatCsvRow([
+      rows.push(formatQuickBooksCsvRow([
         isFirstLine ? billNumber : "",
         isFirstLine ? supplier : "",
         isFirstLine ? formatQuickBooksDate(billDateKey) : "",
@@ -282,7 +273,7 @@ export async function buildQuickBooksBillExportCsv(params: {
   });
 
   return {
-    csv: `${rows.join("\n")}\n`,
+    csv: joinQuickBooksCsvRows(rows),
     fileName: groupId
       ? `quickbooks-factura-proveedor-${groupId}.csv`
       : `quickbooks-facturas-proveedor-${startDate}-a-${endDate}.csv`,
