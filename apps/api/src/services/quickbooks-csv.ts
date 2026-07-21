@@ -15,13 +15,26 @@ export function sanitizeQuickBooksCsvText(value: unknown): string {
     .trim();
 }
 
-/** Always quote data fields so commas inside product names never shift columns. */
+/**
+ * Quote only when needed. QBO treats quoted dates like `"17/07/2026"` as empty
+ * InvoiceDate/DueDate; leave dates and amounts bare, and never emit `""` for blanks.
+ */
 export function escapeQuickBooksCsvField(value: string | number): string {
-  const raw = typeof value === "number" && Number.isFinite(value)
-    ? String(value)
-    : sanitizeQuickBooksCsvText(value);
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
 
-  return `"${raw.replace(/"/g, "\"\"")}"`;
+  const raw = sanitizeQuickBooksCsvText(value);
+
+  if (!raw) {
+    return "";
+  }
+
+  if (/[",\n\r]/.test(raw)) {
+    return `"${raw.replace(/"/g, "\"\"")}"`;
+  }
+
+  return raw;
 }
 
 export function formatQuickBooksCsvRow(values: Array<string | number>): string {

@@ -4,7 +4,10 @@
  * and fail Terms / Item name matching. Export Windows-1252-compatible bytes.
  */
 export declare function sanitizeQuickBooksCsvText(value: unknown): string;
-/** Always quote data fields so commas inside product names never shift columns. */
+/**
+ * Quote only when needed. QBO treats quoted dates like `"17/07/2026"` as empty
+ * InvoiceDate/DueDate; leave dates and amounts bare, and never emit `""` for blanks.
+ */
 export declare function escapeQuickBooksCsvField(value: string | number): string;
 export declare function formatQuickBooksCsvRow(values: Array<string | number>): string;
 /** Keep header names unquoted to match the Intuit import template exactly. */
