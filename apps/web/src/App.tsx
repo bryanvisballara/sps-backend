@@ -51,7 +51,8 @@ type ActiveSection =
   | "warehouse-dispatch"
   | "warehouse-inventory"
   | "invoice-change-requests"
-  | "order-delete-requests";
+  | "order-delete-requests"
+  | "order-edit-history";
 
 type KpiCard = {
   label: string;
@@ -1415,7 +1416,7 @@ const managementSidebarSections = [
       { key: "sales-rep-performance", label: "Desempeño de vendedores" },
       { key: "product-performance", label: "Desempeño de productos" },
       { key: "order-planner", label: "Planificador de pedidos" },
-      { key: "warehouse-dispatch", label: "Pedidos" },
+      { key: "warehouse-dispatch", label: "Pedidos bodega" },
       { key: "logistics-accounting", label: "Contabilidad" },
     ],
   },
@@ -1423,13 +1424,14 @@ const managementSidebarSections = [
     key: "ventas",
     label: "Ventas",
     items: [
-      { key: "orders", label: "Pedidos" },
+      { key: "orders", label: "Recepción pedidos" },
       { key: "catalog", label: "Catálogo" },
       { key: "cartera", label: "Cartera" },
       { key: "financial-reports", label: "P&G y Balance" },
       { key: "promotions", label: "Promociones" },
       { key: "invoice-change-requests", label: "Solicitudes factura" },
       { key: "order-delete-requests", label: "Solicitudes borrado" },
+      { key: "order-edit-history", label: "Historial ediciones" },
     ],
   },
   {
@@ -1483,18 +1485,19 @@ const contabilidadSidebarSections = [
     key: "ventas",
     label: "Ventas",
     items: [
-      { key: "orders", label: "Pedidos" },
+      { key: "orders", label: "Recepción pedidos" },
       { key: "catalog", label: "Catálogo" },
       { key: "cartera", label: "Cartera" },
       { key: "financial-reports", label: "P&G y Balance" },
       { key: "promotions", label: "Promociones" },
+      { key: "order-edit-history", label: "Historial ediciones" },
     ],
   },
   {
     key: "bodega",
     label: "Bodega",
     items: [
-      { key: "warehouse-dispatch", label: "Pedidos" },
+      { key: "warehouse-dispatch", label: "Pedidos bodega" },
       { key: "warehouse-inventory", label: "Inventario" },
     ],
   },
@@ -1515,6 +1518,7 @@ const contabilidadAllowedSections = new Set<ActiveSection>([
   "cartera",
   "financial-reports",
   "promotions",
+  "order-edit-history",
   "warehouse-dispatch",
   "warehouse-inventory",
   "products",
@@ -3370,6 +3374,9 @@ function WarehouseOrderList({
                       <td>
                         <div className="warehouse-order-delivery-cell">
                           <span>{formatDeliveryDateLabel(getOrderDeliveryDateKey(order))}</span>
+                          <span className="warehouse-order-created-time">
+                            Creado {formatSellerOrderTime(order.createdAt)}
+                          </span>
                           {order.deliveryOverdue ? (
                             <span className="warehouse-order-overdue-badge">Atrasado</span>
                           ) : null}
@@ -4830,6 +4837,13 @@ export default function App() {
   const [isLoadingWarehouseOrderEditLogs, setIsLoadingWarehouseOrderEditLogs] = useState(false);
   const [sellerOrderEditLogs, setSellerOrderEditLogs] = useState<OrderEditLogRecord[]>([]);
   const [isLoadingSellerOrderEditLogs, setIsLoadingSellerOrderEditLogs] = useState(false);
+  const [managementOrderEditLogs, setManagementOrderEditLogs] = useState<OrderEditLogRecord[]>([]);
+  const [isLoadingManagementOrderEditLogs, setIsLoadingManagementOrderEditLogs] = useState(false);
+  const [managementOrderEditLogsError, setManagementOrderEditLogsError] = useState("");
+  const [orderEditHistoryStartDate, setOrderEditHistoryStartDate] = useState(() => getBusinessMonthStartDateKey());
+  const [orderEditHistoryEndDate, setOrderEditHistoryEndDate] = useState(() => getBusinessDateKey());
+  const [orderEditHistorySourceFilter, setOrderEditHistorySourceFilter] = useState("");
+  const [orderEditHistorySearch, setOrderEditHistorySearch] = useState("");
   const [deletingWarehouseOrderId, setDeletingWarehouseOrderId] = useState("");
   const [cancellingWarehouseDispatchOrderId, setCancellingWarehouseDispatchOrderId] = useState("");
   const [warehouseOrderChecklist, setWarehouseOrderChecklist] = useState<Record<string, boolean>>({});
@@ -7194,6 +7208,18 @@ export default function App() {
   }, [activeSection, sessionUser]);
 
   useEffect(() => {
+    if (sessionUser?.role !== "management" && sessionUser?.role !== "contabilidad") {
+      return;
+    }
+
+    if (activeSection !== "order-edit-history") {
+      return;
+    }
+
+    void refreshManagementOrderEditLogs();
+  }, [activeSection, sessionUser, orderEditHistoryStartDate, orderEditHistoryEndDate, orderEditHistorySourceFilter]);
+
+  useEffect(() => {
     if (sessionUser?.role !== "management" && sessionUser?.role !== "warehouse-aruba" && sessionUser?.role !== "contabilidad") {
       return;
     }
@@ -7732,6 +7758,61 @@ export default function App() {
       setSellerOrderEditLogs([]);
     } finally {
       setIsLoadingSellerOrderEditLogs(false);
+    }
+  }
+
+  async function refreshManagementOrderEditLogs(options?: {
+    startDate?: string;
+    endDate?: string;
+    source?: string;
+    search?: string;
+  }) {
+    const startDate = options?.startDate ?? orderEditHistoryStartDate;
+    const endDate = options?.endDate ?? orderEditHistoryEndDate;
+    const source = options?.source ?? orderEditHistorySourceFilter;
+    const search = options?.search ?? orderEditHistorySearch;
+    const params = new URLSearchParams();
+
+    if (startDate) {
+      params.set("startDate", startDate);
+    }
+
+    if (endDate) {
+      params.set("endDate", endDate);
+    }
+
+    if (source) {
+      params.set("source", source);
+    }
+
+    if (search.trim()) {
+      params.set("search", search.trim());
+    }
+
+    params.set("limit", "300");
+
+    try {
+      setIsLoadingManagementOrderEditLogs(true);
+      setManagementOrderEditLogsError("");
+      const response = await fetch(`${apiBaseUrl}/management/order-edit-logs?${params.toString()}`);
+      const data = (await response.json()) as OrderEditLogRecord[] | { message?: string };
+
+      if (!response.ok || !Array.isArray(data)) {
+        setManagementOrderEditLogs([]);
+        setManagementOrderEditLogsError(
+          !Array.isArray(data) && data.message
+            ? data.message
+            : "No fue posible cargar el historial de ediciones.",
+        );
+        return;
+      }
+
+      setManagementOrderEditLogs(data);
+    } catch {
+      setManagementOrderEditLogs([]);
+      setManagementOrderEditLogsError("No fue posible conectar con el backend.");
+    } finally {
+      setIsLoadingManagementOrderEditLogs(false);
     }
   }
 
@@ -13222,7 +13303,13 @@ export default function App() {
           };
         }
 
-        return buildCatalogLotPreviewItem(product, selectedLot);
+        const nextItem = buildCatalogLotPreviewItem(product, selectedLot);
+
+        // Keep the client-specific sale price the user already set in this catalog.
+        return {
+          ...nextItem,
+          salePrice: item.salePrice,
+        };
       }),
     );
   }
@@ -13645,22 +13732,30 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
     });
     await refreshCatalogs();
     setSelectedCatalogId(savedCatalogId);
-    await refreshCatalogPreview(savedCatalogId);
+    // Do not refresh preview here: callers may still have unsaved price edits in state.
     return savedCatalogId;
   }
 
-  async function saveCatalogPricingForSelectedClients(catalogId = selectedCatalogId) {
+  async function saveCatalogPricingForSelectedClients(
+    catalogId = selectedCatalogId,
+    items = catalogPreviewItems,
+    clientIds = selectedCatalogClientIds,
+  ) {
     if (!catalogId) {
       throw new Error("Selecciona un catalogo antes de guardar precios.");
+    }
+
+    if (clientIds.length === 0) {
+      throw new Error("Selecciona al menos un cliente antes de guardar precios.");
     }
 
     const response = await fetch(`${apiBaseUrl}/management/catalogs/${catalogId}/client-pricing`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        clientIds: selectedCatalogClientIds,
+        clientIds,
         markupPercent: Number(catalogPricingMarkup || 0),
-        items: catalogPreviewItems.map((item) => ({
+        items: items.map((item) => ({
           productId: item.productId,
           stockRowId: item.stockRowId,
           lotName: item.lotName,
@@ -13678,7 +13773,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
     try {
       window.localStorage.setItem(
         `spste:catalog-assigned-clients:${catalogId}`,
-        JSON.stringify(selectedCatalogClientIds),
+        JSON.stringify(clientIds),
       );
     } catch {
       // Ignore private-mode / storage quota errors.
@@ -13698,20 +13793,24 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       return;
     }
 
+    const pricingItemsSnapshot = catalogPreviewItems.map((item) => ({ ...item }));
+    const clientIdsSnapshot = [...selectedCatalogClientIds];
+
     try {
       setIsSavingCatalogPricing(true);
       setCatalogPricingStatus(null);
       const catalogId = await ensureCatalogSelectedForPricing();
-      await saveCatalogPricingForSelectedClients(catalogId);
+      await saveCatalogPricingForSelectedClients(catalogId, pricingItemsSnapshot, clientIdsSnapshot);
       await refreshCatalogs();
       setSelectedCatalogId(catalogId);
+      setSelectedCatalogClientIds(clientIdsSnapshot);
       await Promise.all([
-        refreshCatalogPreview(catalogId),
+        refreshCatalogPreview(catalogId, clientIdsSnapshot[0]),
         refreshCatalogAssignedClients(catalogId),
       ]);
       setCatalogPricingStatus({
         tone: "success",
-        message: `Catalogo guardado para ${selectedCatalogClientIds.length} cliente${selectedCatalogClientIds.length === 1 ? "" : "s"}. Este guardado alimenta los pedidos del portal de bodega.`,
+        message: `Precios guardados solo para ${clientIdsSnapshot.length} cliente${clientIdsSnapshot.length === 1 ? "" : "s"} seleccionado${clientIdsSnapshot.length === 1 ? "" : "s"}. Estos precios alimentan los pedidos del portal de bodega.`,
       });
     } catch (error) {
       setCatalogPricingStatus({
@@ -19217,7 +19316,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               : activeSection === "products-import"
                 ? "Migrar productos"
               : activeSection === "orders"
-                ? "Pedidos"
+                ? "Recepción de pedidos"
               : activeSection === "create-order"
                 ? "Agregar pedido"
               : activeSection === "store-performance"
@@ -19229,7 +19328,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               : activeSection === "order-planner"
                 ? "Planificador de pedidos"
               : activeSection === "warehouse-dispatch"
-                ? "Pedidos"
+                ? "Pedidos bodega"
               : activeSection === "catalog"
                 ? "Catálogo"
               : activeSection === "cartera"
@@ -19242,6 +19341,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 ? "Solicitudes de factura"
               : activeSection === "order-delete-requests"
                 ? "Solicitudes de borrado"
+              : activeSection === "order-edit-history"
+                ? "Historial de ediciones"
               : activeSection === "imports"
                 ? "Exportaciones"
                 : activeSection === "import-billing"
@@ -19266,7 +19367,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 : activeSection === "inventory-entry"
                   ? "Registra entradas de inventario manualmente o cargando el Excel generado desde Facturación."
               : activeSection === "orders"
-                ? "Consulta los pedidos enviados por vendedores y revisa su detalle antes de preparar el despacho."
+                ? "Revisa pedidos de vendedores, agrega pedidos manuales y consulta completados con exportacion QuickBooks."
               : activeSection === "create-order"
                 ? "Crea un pedido manualmente seleccionando ruta, cliente y productos como lo haria el vendedor."
               : activeSection === "store-performance"
@@ -19277,6 +19378,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 ? "Identifica productos estrella, productos rezagados y oportunidades para mejorar rotacion e inventario."
               : activeSection === "order-planner"
                 ? "Analiza consumo historico, estima dias de inventario y sugiere cuanto pedir segun la rotacion y la cobertura deseada."
+              : activeSection === "warehouse-dispatch"
+                ? "Vista de operacion de bodega: recibir pedidos, imprimir y facturar, y editar pedidos completados."
               : activeSection === "catalog"
                 ? "Arma catálogos por categorías o productos, luego define el precio de venta por cliente con un porcentaje global o ajustes manuales."
               : activeSection === "cartera"
@@ -19289,6 +19392,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 ? "Revisa y aprueba correcciones solicitadas sobre facturas ya completadas. Al aprobar, se actualizan la factura y el inventario."
               : activeSection === "order-delete-requests"
                 ? "Revisa y aprueba solicitudes para borrar pedidos. Al aprobar, se elimina el pedido y su factura en cartera."
+              : activeSection === "order-edit-history"
+                ? "Consulta quien edito pedidos, en que fecha/hora y que cambio (vendedores, bodega, gerencia y contabilidad)."
               : activeSection === "imports"
                 ? "Registra contenedores, define gastos generales de exportación y distribuye el costo real entre los productos recibidos."
                 : activeSection === "import-billing"
@@ -20089,7 +20194,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 <div>
                   <p className="section-label">Catálogo por cliente</p>
                   <h2>Define los precios de venta</h2>
-                  <p>Agrega los clientes destino y define un catálogo general para reutilizar el mismo PDF y la misma estructura de precios.</p>
+                  <p>Agrega los clientes destino. Los precios de venta se guardan solo para esos clientes (no cambian el precio base del producto).</p>
                 </div>
               </div>
 
@@ -20181,7 +20286,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               ) : null}
 
               <p className="warehouse-selected-meta">
-                Usa <strong>Guardar cambios</strong> para dejar guardados los precios por cliente que luego se usan en el portal de bodega.
+                Usa <strong>Guardar cambios</strong> para guardar estos precios solo en los clientes seleccionados. Luego se usan en el portal de bodega.
               </p>
 
               {catalogPreviewError ? <p className="form-feedback error">{catalogPreviewError}</p> : null}
@@ -26649,6 +26754,167 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               </div>
             </article>
           </section>
+        ) : activeSection === "order-edit-history" ? (
+          <section className="routes-layout">
+            <article className="creation-selector-block">
+              <p className="section-label">Ventas</p>
+              <h2>Historial de ediciones</h2>
+              <p className="route-helper-text">
+                Tabla de control de cambios en pedidos: quien edito, fecha, hora y que se modifico.
+              </p>
+            </article>
+
+            <article className="database-card">
+              <div className="management-table-header">
+                <div>
+                  <h2>Ediciones registradas</h2>
+                  <p>Filtra por periodo, origen o busca por cliente, consecutivo o usuario.</p>
+                </div>
+                <p className="management-table-meta">{managementOrderEditLogs.length} registros</p>
+              </div>
+
+              <div className="filter-grid cartera-date-filter-grid">
+                <label className="field">
+                  <span>Desde</span>
+                  <input
+                    type="date"
+                    value={orderEditHistoryStartDate}
+                    onChange={(event) => {
+                      const nextRange = normalizeCarteraDateRange(event.target.value, orderEditHistoryEndDate);
+                      setOrderEditHistoryStartDate(nextRange.startDate);
+                      setOrderEditHistoryEndDate(nextRange.endDate);
+                    }}
+                  />
+                </label>
+                <label className="field">
+                  <span>Hasta</span>
+                  <input
+                    type="date"
+                    value={orderEditHistoryEndDate}
+                    onChange={(event) => {
+                      const nextRange = normalizeCarteraDateRange(orderEditHistoryStartDate, event.target.value);
+                      setOrderEditHistoryStartDate(nextRange.startDate);
+                      setOrderEditHistoryEndDate(nextRange.endDate);
+                    }}
+                  />
+                </label>
+                <label className="field">
+                  <span>Origen</span>
+                  <select
+                    value={orderEditHistorySourceFilter}
+                    onChange={(event) => setOrderEditHistorySourceFilter(event.target.value)}
+                  >
+                    <option value="">Todos</option>
+                    <option value="seller">Vendedor</option>
+                    <option value="warehouse">Bodega</option>
+                    <option value="management">Gerencia</option>
+                    <option value="contabilidad">Contabilidad</option>
+                  </select>
+                </label>
+                <div className="cartera-date-presets">
+                  <button
+                    type="button"
+                    className="secondary-action-button"
+                    onClick={() => {
+                      const today = getBusinessDateKey();
+                      setOrderEditHistoryStartDate(today);
+                      setOrderEditHistoryEndDate(today);
+                    }}
+                  >
+                    Hoy
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-action-button"
+                    onClick={() => {
+                      setOrderEditHistoryStartDate(getBusinessMonthStartDateKey());
+                      setOrderEditHistoryEndDate(getBusinessDateKey());
+                    }}
+                  >
+                    Este mes
+                  </button>
+                </div>
+              </div>
+
+              <label className="field warehouse-incoming-client-filter">
+                <span>Buscar</span>
+                <input
+                  type="search"
+                  value={orderEditHistorySearch}
+                  placeholder="Cliente, consecutivo o nombre de quien edito"
+                  onChange={(event) => setOrderEditHistorySearch(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void refreshManagementOrderEditLogs({ search: orderEditHistorySearch });
+                    }
+                  }}
+                />
+              </label>
+              <div className="catalog-form-actions" style={{ marginBottom: 16 }}>
+                <button
+                  className="submit-button"
+                  type="button"
+                  disabled={isLoadingManagementOrderEditLogs}
+                  onClick={() => void refreshManagementOrderEditLogs({ search: orderEditHistorySearch })}
+                >
+                  {isLoadingManagementOrderEditLogs ? "Buscando..." : "Buscar"}
+                </button>
+              </div>
+
+              {managementOrderEditLogsError ? (
+                <p className="form-feedback error">{managementOrderEditLogsError}</p>
+              ) : null}
+
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Fecha y hora</th>
+                      <th>Quien edito</th>
+                      <th>Rol</th>
+                      <th>Cliente</th>
+                      <th>Consecutivo</th>
+                      <th>Accion</th>
+                      <th>Que se edito</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isLoadingManagementOrderEditLogs ? (
+                      <tr>
+                        <td colSpan={7} className="empty-table-cell">Cargando historial de ediciones...</td>
+                      </tr>
+                    ) : managementOrderEditLogs.length > 0 ? (
+                      managementOrderEditLogs.map((entry) => (
+                        <tr key={entry._id}>
+                          <td>{formatSellerOrderDate(entry.editedAt || entry.createdAt)}</td>
+                          <td>{entry.editedByUserName || "-"}</td>
+                          <td>{formatOrderEditRoleLabel(entry.editedByRole)}</td>
+                          <td>{entry.storeName || "-"}</td>
+                          <td>{entry.invoiceNumber ? `#${entry.invoiceNumber}` : "-"}</td>
+                          <td>{formatOrderEditActionLabel(entry.action)}</td>
+                          <td>
+                            {(entry.changes.length > 0
+                              ? entry.changes
+                              : [{ field: entry.action, summary: formatOrderEditActionLabel(entry.action), before: "", after: "" }]
+                            ).map((change, index) => (
+                              <p key={`${entry._id}-${change.field}-${index}`} className="route-helper-text" style={{ margin: "0 0 4px" }}>
+                                {change.summary || `${change.field}: ${change.before || "-"} → ${change.after || "-"}`}
+                              </p>
+                            ))}
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={7} className="empty-table-cell">No hay ediciones registradas en ese periodo.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          </section>
         ) : activeSection === "create-order" ? (
           renderStaffOrderComposerPage()
         ) : activeSection === "orders" ? (
@@ -26657,8 +26923,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               <div className="creation-header database-header">
                 <div>
               <p className="section-label">Recepcion</p>
-              <h2>Pedidos del equipo comercial</h2>
-              <p className="route-helper-text">Aqui aparecen los pedidos enviados por vendedores para revision, preparacion y despacho desde bodega.</p>
+              <h2>Recepción de pedidos</h2>
+              <p className="route-helper-text">Pedidos enviados por vendedores. Aqui puedes revisarlos, crear pedidos manuales y consultar los ya completados.</p>
                 </div>
                 {canCreateStaffOrders(sessionUser?.role) ? (
                   <button className="primary-action-button" type="button" onClick={() => void openStaffOrderComposer()}>
@@ -26672,7 +26938,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               <div className="management-table-header">
                 <div>
                   <h2>Pedidos recibidos</h2>
-                  <p>Pedidos recibidos en bodega que aun no se han enviado a despacho.</p>
+                  <p>Pedidos pendientes de imprimir y facturar en bodega.</p>
                 </div>
                 <p className="management-table-meta">{filteredWarehouseIncomingOrders.length} pedidos</p>
               </div>
@@ -26726,7 +26992,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               <div className="management-table-header">
                 <div>
                   <h2>Pedidos completados</h2>
-                  <p>Pedidos ya despachados y cerrados. Filtra por fecha de entrega y exporta a QuickBooks.</p>
+                  <p>Pedidos ya facturados y cerrados. Filtra por fecha de entrega y exporta a QuickBooks.</p>
                 </div>
                 <div className="management-table-header-actions">
                   <button

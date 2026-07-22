@@ -4222,6 +4222,66 @@ apiRouter.get("/warehouse/orders/:id/edit-logs", async (request, response) => {
   }
 });
 
+apiRouter.get("/management/order-edit-logs", async (request, response) => {
+  try {
+    const startDate = typeof request.query.startDate === "string" ? request.query.startDate.trim() : "";
+    const endDate = typeof request.query.endDate === "string" ? request.query.endDate.trim() : "";
+    const source = typeof request.query.source === "string" ? request.query.source.trim().toLowerCase() : "";
+    const search = typeof request.query.search === "string" ? request.query.search.trim() : "";
+    const limitRaw = Number(request.query.limit ?? 200);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 500) : 200;
+
+    const filter: Record<string, unknown> = {};
+
+    if (startDate || endDate) {
+      const editedAt: Record<string, Date> = {};
+
+      if (startDate) {
+        const start = new Date(`${startDate}T00:00:00.000Z`);
+        if (!Number.isNaN(start.getTime())) {
+          editedAt.$gte = start;
+        }
+      }
+
+      if (endDate) {
+        const end = new Date(`${endDate}T23:59:59.999Z`);
+        if (!Number.isNaN(end.getTime())) {
+          editedAt.$lte = end;
+        }
+      }
+
+      if (Object.keys(editedAt).length > 0) {
+        filter.editedAt = editedAt;
+      }
+    }
+
+    if (source && ["seller", "warehouse", "management", "contabilidad", "system"].includes(source)) {
+      filter.source = source;
+    }
+
+    if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const searchRegex = new RegExp(escaped, "i");
+      const invoiceNumber = Number(search.replace(/^#/, ""));
+      filter.$or = [
+        { storeName: searchRegex },
+        { editedByUserName: searchRegex },
+        { orderId: searchRegex },
+        ...(Number.isFinite(invoiceNumber) && invoiceNumber > 0 ? [{ invoiceNumber }] : []),
+      ];
+    }
+
+    const logs = await OrderEditLog.find(filter)
+      .sort({ editedAt: -1, createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    response.json(logs.map((entry) => mapOrderEditLogRecord(entry)));
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
 apiRouter.post("/warehouse/orders/:id/reprint-log", async (request, response) => {
   try {
     const order = await Order.findById(request.params.id).lean();
@@ -6351,16 +6411,23 @@ apiRouter.get("/management/catalogs/:id/preview", async (request, response) => {
     }
 
     const clientId = typeof request.query.clientId === "string" ? request.query.clientId.trim() : "";
-    const [catalogProducts, clientPricing, assignedClientRows] = await Promise.all([
+    const [catalogProducts, assignedClientRows] = await Promise.all([
       resolveCatalogProducts(catalog),
-      clientId
-        ? CatalogClientPricing.findOne({ catalogId: catalog._id, clientId }).lean()
-        : Promise.resolve(null),
       CatalogClientPricing.find({
         catalogId: catalog._id,
         active: { $ne: false },
       }).select({ clientId: 1, clientName: 1 }).sort({ clientName: 1 }).lean(),
     ]);
+
+    // Without a specific clientId, reuse the most recently saved client pricing.
+    // Catalog saves write the same item prices to every selected client, so this
+    // restores the last edited client prices instead of falling back to product defaults.
+    const clientPricing = clientId
+      ? await CatalogClientPricing.findOne({ catalogId: catalog._id, clientId, active: { $ne: false } }).lean()
+      : await CatalogClientPricing.findOne({
+          catalogId: catalog._id,
+          active: { $ne: false },
+        }).sort({ updatedAt: -1 }).lean();
 
     const catalogProductMap = new Map(catalogProducts.map((item) => [item.productId, item]));
     const savedItems = Array.isArray(clientPricing?.items) ? clientPricing.items : [];

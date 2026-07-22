@@ -3657,6 +3657,12 @@ h1 {
   gap: 4px;
 }
 
+.warehouse-order-created-time {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .warehouse-order-overdue-badge {
   display: inline-flex;
   align-items: center;
