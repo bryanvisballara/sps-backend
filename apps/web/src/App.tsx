@@ -3278,7 +3278,7 @@ function WarehouseOrderList({
       {showConsecutivo ? <th>Consecutivo</th> : null}
       {showSalesRep ? <th className="warehouse-order-col-optional">Vendedor</th> : null}
       {!showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
-      <th>Cliente</th>
+      <th className="warehouse-order-client-col">Cliente</th>
       <th className="warehouse-order-col-optional">Ruta</th>
       {showStatus ? <th>Estado</th> : null}
       {showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
@@ -3380,7 +3380,7 @@ function WarehouseOrderList({
                       ) : null}
                       {showSalesRep ? <td className="warehouse-order-col-optional">{order.salesRepName}</td> : null}
                       {!showSalesRep && showInvoiceNumber ? <td>{order.invoiceNumber ? `#${order.invoiceNumber}` : "-"}</td> : null}
-                      <td>{order.storeName}</td>
+                      <td className="warehouse-order-client-cell">{order.storeName}</td>
                       <td className="warehouse-order-col-optional">{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
                       {showStatus ? <td>{formatSellerOrderStatus(order.status)}</td> : null}
                       {showSalesRep && showInvoiceNumber ? <td>{order.invoiceNumber ? `#${order.invoiceNumber}` : "-"}</td> : null}
@@ -5575,9 +5575,7 @@ export default function App() {
       const defaultSalePrice = hasLotPromotion
         ? lotPromotionPrice
         : (hasFrozenPrice && !selectedLotChanged ? roundCurrencyValue(storedSalePrice) : liveSalePrice);
-      const quantity = selectedWarehouseOrderDetail.status === "delivered"
-        ? Number(item.quantity ?? 0)
-        : Number(warehouseOrderItemDraft[item.productId] ?? item.quantity ?? 0);
+      const quantity = Number(warehouseOrderItemDraft[item.productId] ?? item.quantity ?? 0);
       const defaultLineTotal = roundCurrencyValue(defaultSalePrice * quantity);
       const accountingPricing = canAccountingAdjustDispatchPricing
         ? getAccountingLinePricing({
@@ -5809,9 +5807,9 @@ export default function App() {
 
   if (warehouseOrderItemsDirty) {
     warehouseOrderCompletionHints.push(
-      selectedWarehouseOrderDetail?.status === "dispatched"
-        ? "Guarda los cambios del pedido antes de facturarlo y terminarlo."
-        : "Guarda los cambios del pedido antes de imprimir y enviarlo a despacho.",
+      selectedWarehouseOrderDetail?.status === "delivered"
+        ? "Guarda los cambios del pedido antes de reimprimir la factura."
+        : "Guarda los cambios del pedido antes de imprimir y facturar.",
     );
   }
 
@@ -17724,72 +17722,83 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           </>
                         ) : null}
                         <strong>{formatAwgCurrency(warehouseInvoiceTotal)} AWG</strong>
-                        {canEditCompletedWarehouseOrders && (selectedWarehouseOrderDetail.status === "dispatched" || selectedWarehouseOrderDetail.status === "delivered") ? (
+                        {Number(selectedWarehouseOrderDetail.invoiceNumber ?? 0) > 0 || selectedWarehouseOrderDetail.status === "delivered" || selectedWarehouseOrderDetail.status === "dispatched" ? (
                           <div className="warehouse-order-invoice-number-panel warehouse-order-invoice-number-panel--card">
-                            {isEditingAccountingOrderInvoice ? (
-                              <div className="warehouse-order-invoice-number-editor">
-                                <label className="field">
-                                  <span>Numero de consecutivo / factura</span>
-                                  <input
-                                    className="warehouse-order-qty-input"
-                                    type="number"
-                                    min={MIN_INVOICE_NUMBER}
-                                    step="1"
-                                    value={accountingOrderInvoiceDraft}
-                                    disabled={isSavingAccountingOrderInvoice}
-                                    onChange={(event) => {
-                                      setAccountingOrderInvoiceDraft(event.target.value);
-                                      setAccountingOrderInvoiceStatus(null);
-                                    }}
-                                  />
-                                </label>
-                                <div className="catalog-form-actions">
+                            {hasAccountingDispatchAccess(sessionUser?.role) && (selectedWarehouseOrderDetail.status === "dispatched" || selectedWarehouseOrderDetail.status === "delivered") ? (
+                              isEditingAccountingOrderInvoice ? (
+                                <div className="warehouse-order-invoice-number-editor">
+                                  <label className="field">
+                                    <span>Numero de consecutivo / factura</span>
+                                    <input
+                                      className="warehouse-order-qty-input"
+                                      type="number"
+                                      min={MIN_INVOICE_NUMBER}
+                                      step="1"
+                                      value={accountingOrderInvoiceDraft}
+                                      disabled={isSavingAccountingOrderInvoice}
+                                      onChange={(event) => {
+                                        setAccountingOrderInvoiceDraft(event.target.value);
+                                        setAccountingOrderInvoiceStatus(null);
+                                      }}
+                                    />
+                                  </label>
+                                  <div className="catalog-form-actions">
+                                    <button
+                                      className="submit-button"
+                                      type="button"
+                                      disabled={isSavingAccountingOrderInvoice}
+                                      onClick={() => void handleSaveAccountingOrderInvoiceNumber()}
+                                    >
+                                      {isSavingAccountingOrderInvoice ? "Guardando..." : "Guardar"}
+                                    </button>
+                                    <button
+                                      className="ghost-button ghost-button--cancel"
+                                      type="button"
+                                      disabled={isSavingAccountingOrderInvoice}
+                                      onClick={() => {
+                                        setIsEditingAccountingOrderInvoice(false);
+                                        setAccountingOrderInvoiceStatus(null);
+                                        setAccountingOrderInvoiceDraft(
+                                          Number(selectedWarehouseOrderDetail.invoiceNumber ?? 0) > 0
+                                            ? String(selectedWarehouseOrderDetail.invoiceNumber)
+                                            : "",
+                                        );
+                                      }}
+                                    >
+                                      Cancelar
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="warehouse-order-invoice-number-summary">
+                                  <p>
+                                    Factura asignada:{" "}
+                                    <strong>
+                                      {Number(selectedWarehouseOrderDetail.invoiceNumber ?? 0) > 0
+                                        ? `#${selectedWarehouseOrderDetail.invoiceNumber}`
+                                        : "pendiente"}
+                                    </strong>
+                                  </p>
                                   <button
-                                    className="submit-button"
+                                    className="warehouse-action-button warehouse-action-button--muted"
                                     type="button"
-                                    disabled={isSavingAccountingOrderInvoice}
-                                    onClick={() => void handleSaveAccountingOrderInvoiceNumber()}
+                                    onClick={() => void beginAccountingOrderInvoiceEdit()}
                                   >
-                                    {isSavingAccountingOrderInvoice ? "Guardando..." : "Guardar"}
-                                  </button>
-                                  <button
-                                    className="ghost-button ghost-button--cancel"
-                                    type="button"
-                                    disabled={isSavingAccountingOrderInvoice}
-                                    onClick={() => {
-                                      setIsEditingAccountingOrderInvoice(false);
-                                      setAccountingOrderInvoiceStatus(null);
-                                      setAccountingOrderInvoiceDraft(
-                                        Number(selectedWarehouseOrderDetail.invoiceNumber ?? 0) > 0
-                                          ? String(selectedWarehouseOrderDetail.invoiceNumber)
-                                          : "",
-                                      );
-                                    }}
-                                  >
-                                    Cancelar
+                                    Cambiar consecutivo
                                   </button>
                                 </div>
-                              </div>
+                              )
                             ) : (
-                              <div className="warehouse-order-invoice-number-summary">
-                                <p>
-                                  Factura asignada:{" "}
-                                  <strong>
-                                    {Number(selectedWarehouseOrderDetail.invoiceNumber ?? 0) > 0
-                                      ? `#${selectedWarehouseOrderDetail.invoiceNumber}`
-                                      : "pendiente"}
-                                  </strong>
-                                </p>
-                                <button
-                                  className="warehouse-action-button warehouse-action-button--muted"
-                                  type="button"
-                                  onClick={() => void beginAccountingOrderInvoiceEdit()}
-                                >
-                                  Cambiar consecutivo
-                                </button>
-                              </div>
+                              <p>
+                                Factura asignada:{" "}
+                                <strong>
+                                  {Number(selectedWarehouseOrderDetail.invoiceNumber ?? 0) > 0
+                                    ? `#${selectedWarehouseOrderDetail.invoiceNumber}`
+                                    : "pendiente"}
+                                </strong>
+                              </p>
                             )}
-                            {accountingOrderInvoiceStatus ? (
+                            {accountingOrderInvoiceStatus && hasAccountingDispatchAccess(sessionUser?.role) ? (
                               <p className={`form-feedback ${accountingOrderInvoiceStatus.tone === "error" ? "error" : "success"}`}>
                                 {accountingOrderInvoiceStatus.message}
                               </p>
@@ -17900,9 +17909,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               <td>{item.productName}</td>
                               <td className="warehouse-order-col-optional">{item.stockCurrent ?? "-"}</td>
                               <td>
-                                {selectedWarehouseOrderDetail.status === "delivered" ? (
-                                  item.quantity
-                                ) : (
+                                {canMutateSelectedWarehouseOrder ? (
                                   <input
                                     className="warehouse-order-qty-input"
                                     type="number"
@@ -17923,14 +17930,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                       setWarehouseOrderEditStatus(null);
                                     }}
                                   />
+                                ) : (
+                                  item.quantity
                                 )}
                               </td>
                               <td>
-                                {selectedWarehouseOrderDetail.status === "delivered" ? (
-                                  item.stockRowId
-                                    ? (inventoryLotsByProductId.get(item.productId) ?? []).find((lot) => lot.stockRowId === item.stockRowId)?.expirationDate?.slice(0, 10) ?? "Lote seleccionado"
-                                    : "-"
-                                ) : (
+                                {canMutateSelectedWarehouseOrder && selectedWarehouseOrderDetail.status !== "delivered" ? (
                                   <select
                                     className="warehouse-order-lot-select"
                                     value={warehouseOrderLotDraft[item.productId] ?? ""}
@@ -17951,6 +17956,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                       </option>
                                     ))}
                                   </select>
+                                ) : (
+                                  item.stockRowId
+                                    ? (inventoryLotsByProductId.get(item.productId) ?? []).find((lot) => lot.stockRowId === item.stockRowId)?.expirationDate?.slice(0, 10)
+                                      ?? (inventoryLotsByProductId.get(item.productId) ?? []).find((lot) => lot.stockRowId === item.stockRowId)?.lotName
+                                      ?? "Lote seleccionado"
+                                    : "-"
                                 )}
                               </td>
                               <td>
@@ -18099,7 +18110,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       {canMutateSelectedWarehouseOrder ? (
                         <p className="route-helper-text">
                           {selectedWarehouseOrderDetail.status === "delivered"
-                            ? "Puedes editar productos de un pedido ya facturado. Guarda los cambios y luego reimprime: no se vuelve a facturar, pero el PDF y el pedido completado quedan actualizados."
+                            ? "Puedes editar cantidades o quitar productos de un pedido ya facturado. Guarda los cambios y luego reimprime: no se vuelve a facturar, pero el PDF y el pedido completado quedan actualizados."
                             : selectedWarehouseOrderDetail.status === "dispatched"
                             ? (canWarehouseInvoiceOrder
                               ? "Ajusta cantidad y total por producto si hace falta. El precio unitario se calcula automaticamente antes de facturar."

@@ -3083,8 +3083,8 @@ apiRouter.put("/warehouse/orders/:id/invoice-number", async (request, response) 
       ? body.requestedByRole.trim()
       : "";
 
-    if (order.status === "delivered" && !canEditDeliveredWarehouseOrder(requestedByRole)) {
-      response.status(400).json({ message: "Solo gerencia, contabilidad o bodega pueden cambiar el consecutivo de un pedido ya facturado." });
+    if (!canChangeDeliveredInvoiceNumber(requestedByRole)) {
+      response.status(400).json({ message: "Solo gerencia o contabilidad pueden cambiar el consecutivo de factura." });
       return;
     }
 
@@ -3208,13 +3208,12 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
 
     if (updatedOrder.status === "delivered") {
       const carteraEntry = await CarteraEntry.findOne({ orderId: String(updatedOrder._id), active: { $ne: false } }).lean();
+      const invoiceLines = await buildWarehouseInvoiceDocumentLines(updatedOrder);
+      const newInvoiceAmountAwg = Math.round(
+        invoiceLines.reduce((sum, line) => sum + Number(line.amount ?? 0), 0) * 100,
+      ) / 100;
 
       if (carteraEntry) {
-        const invoiceLines = await buildWarehouseInvoiceDocumentLines(updatedOrder);
-        const newInvoiceAmountAwg = Math.round(
-          invoiceLines.reduce((sum, line) => sum + Number(line.amount ?? 0), 0) * 100,
-        ) / 100;
-
         await updateCarteraAfterInvoiceChange({
           carteraEntryId: String(carteraEntry._id),
           orderId: String(updatedOrder._id),
@@ -3223,6 +3222,8 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
           invoiceNumber: Number(updatedOrder.invoiceNumber ?? 0) || undefined,
         });
       }
+
+      await syncLogisticsInvoiceItemsFromOrder(updatedOrder, invoiceLines);
     }
 
     const actor = normalizeOrderEditActor(body);
@@ -3763,6 +3764,10 @@ function canEditDeliveredWarehouseOrder(role: string) {
   return role === "management" || role === "contabilidad" || role === "warehouse-aruba";
 }
 
+function canChangeDeliveredInvoiceNumber(role: string) {
+  return role === "management" || role === "contabilidad";
+}
+
 function normalizeOrderEditActor(body: Record<string, unknown> | undefined, fallback?: Partial<OrderEditActor>): OrderEditActor | null {
   const userId = String(
     (typeof body?.editedByUserId === "string" && body.editedByUserId.trim())
@@ -4075,13 +4080,18 @@ async function buildWarehouseInvoiceDocumentLines(order: {
     : [];
   const productsById = new Map(products.map((product) => [String(product._id), product]));
 
-  const regularLines = orderItems.map((item) => {
+  const regularLines = orderItems.flatMap((item) => {
     const product = productsById.get(String(item.productId ?? ""));
     const quantity = Number(item.quantity ?? 0);
+
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      return [];
+    }
+
     const rate = resolveFrozenOrderItemSalePrice(item, Number(product?.salePrice ?? 0));
     const amount = Math.round(quantity * rate * 100) / 100;
 
-    return {
+    return [{
       productId: String(item.productId ?? ""),
       productName: String(product?.name ?? "Producto"),
       productSku: String(product?.sku ?? "-"),
@@ -4089,14 +4099,18 @@ async function buildWarehouseInvoiceDocumentLines(order: {
       quantity,
       rate,
       amount,
-    };
+    }];
   });
 
-  const giftLines = giftItems.map((item) => {
+  const giftLines = giftItems.flatMap((item) => {
     const product = productsById.get(String(item.productId ?? ""));
     const quantity = Number(item.quantity ?? 0);
 
-    return {
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      return [];
+    }
+
+    return [{
       productId: String(item.productId ?? ""),
       productName: String(product?.name ?? "Producto"),
       productSku: String(product?.sku ?? "-"),
@@ -4104,10 +4118,89 @@ async function buildWarehouseInvoiceDocumentLines(order: {
       quantity,
       rate: 0,
       amount: 0,
-    };
+    }];
   });
 
   return [...regularLines, ...giftLines];
+}
+
+async function syncLogisticsInvoiceItemsFromOrder(
+  order: {
+    _id?: unknown;
+    storeName?: unknown;
+    salesRepName?: unknown;
+    routeName?: unknown;
+    updatedAt?: unknown;
+    createdAt?: unknown;
+  },
+  invoiceLines: Array<{
+    productId: string;
+    productName: string;
+    productSku: string;
+    quantity: number;
+    rate: number;
+    amount: number;
+  }>,
+) {
+  const orderId = String(order._id ?? "").trim();
+
+  if (!orderId) {
+    return;
+  }
+
+  const existingInvoice = await LogisticsInvoice.findOne({
+    orderId,
+    active: { $ne: false },
+  }).lean();
+
+  if (!existingInvoice || existingInvoice.syncExcluded) {
+    return;
+  }
+
+  const previousCostByProductId = new Map(
+    (Array.isArray(existingInvoice.items) ? existingInvoice.items : []).map((item) => [
+      String(item.productId ?? ""),
+      Number(item.unitCostAwg ?? 0),
+    ]),
+  );
+
+  const items = invoiceLines.map((line) => {
+    const unitCostAwg = Math.max(0, Number(previousCostByProductId.get(line.productId) ?? 0));
+    const lineTotalAwg = Number(line.amount ?? 0);
+    const quantity = Number(line.quantity ?? 0);
+
+    return {
+      productId: line.productId,
+      productName: line.productName,
+      productSku: line.productSku,
+      quantity,
+      salePriceAwg: Number(line.rate ?? 0),
+      lineTotalAwg,
+      unitCostAwg,
+      lineUtilityAwg: Math.round((lineTotalAwg - unitCostAwg * quantity) * 100) / 100,
+    };
+  });
+
+  const totalRevenueAwg = Math.round(items.reduce((sum, item) => sum + Number(item.lineTotalAwg ?? 0), 0) * 100) / 100;
+  const totalCostAwg = Math.round(
+    items.reduce((sum, item) => sum + Number(item.unitCostAwg ?? 0) * Number(item.quantity ?? 0), 0) * 100,
+  ) / 100;
+
+  await LogisticsInvoice.findByIdAndUpdate(
+    existingInvoice._id,
+    {
+      storeName: String(order.storeName ?? existingInvoice.storeName ?? "Cliente"),
+      salesRepName: String(order.salesRepName ?? existingInvoice.salesRepName ?? ""),
+      routeName: String(order.routeName ?? existingInvoice.routeName ?? ""),
+      items,
+      totalRevenueAwg,
+      totalCostAwg,
+      totalUtilityAwg: Math.round((totalRevenueAwg - totalCostAwg) * 100) / 100,
+      notes: String(existingInvoice.notes ?? "") || "Actualizada desde edicion de pedido facturado.",
+      active: true,
+    },
+    { runValidators: true },
+  );
 }
 
 apiRouter.get("/warehouse/orders/:id/edit-logs", async (request, response) => {
@@ -4184,41 +4277,22 @@ apiRouter.get("/warehouse/orders/:id/invoice-document", async (request, response
 
     const mappedOrder = await mapWarehouseOrderRecord(order);
     const carteraEntry = await CarteraEntry.findOne({ orderId: String(order._id), active: { $ne: false } }).lean();
-    const logisticsInvoice = await LogisticsInvoice.findOne({ orderId: String(order._id), active: { $ne: false } }).lean();
-    const fallbackLines = await buildWarehouseInvoiceDocumentLines(order);
-    const sourceItems = logisticsInvoice?.items?.length
-      ? logisticsInvoice.items.map((item) => ({
-        productId: String(item.productId ?? ""),
-        productName: String(item.productName ?? "Producto"),
-        productSku: String(item.productSku ?? "-"),
-        quantity: Number(item.quantity ?? 0),
-        rate: Number(item.salePriceAwg ?? 0),
-        amount: Number(item.lineTotalAwg ?? 0),
-      }))
-      : fallbackLines;
-    const productIds = sourceItems
-      .map((item) => String(item.productId ?? "").trim())
-      .filter(Boolean);
-    const invoiceProducts = productIds.length > 0
-      ? await Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1, description: 1 }).lean()
-      : [];
-    const invoiceProductsById = new Map(invoiceProducts.map((product) => [String(product._id), product]));
-    const items = sourceItems.map((item) => {
-      const product = invoiceProductsById.get(String(item.productId ?? ""));
-
-      return {
-        productName: String(item.productName ?? product?.name ?? "Producto"),
-        productSku: String(item.productSku ?? product?.sku ?? "-"),
-        productDescription: String(product?.description ?? "").trim()
-          || String(item.productName ?? "Producto"),
-        quantity: Number(item.quantity ?? 0),
-        rate: Number(item.rate ?? 0),
-        amount: Number(item.amount ?? 0),
-      };
-    });
-    const totalAmount = carteraEntry
-      ? Number(carteraEntry.invoiceAmountAwg ?? 0)
-      : items.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+    // Always use the live order lines so reprints reflect warehouse/accounting edits.
+    // LogisticsInvoice can keep a stale snapshot after products are removed.
+    const sourceItems = await buildWarehouseInvoiceDocumentLines(order);
+    const items = sourceItems.map((item) => ({
+      productName: String(item.productName ?? "Producto"),
+      productSku: String(item.productSku ?? "-"),
+      productDescription: String(item.productDescription ?? "").trim() || String(item.productName ?? "Producto"),
+      quantity: Number(item.quantity ?? 0),
+      rate: Number(item.rate ?? 0),
+      amount: Number(item.amount ?? 0),
+    }));
+    const linesTotalAmount = Math.round(
+      items.reduce((sum, item) => sum + Number(item.amount ?? 0), 0) * 100,
+    ) / 100;
+    // Keep PDF total aligned with printed lines (not a stale cartera/logistics mismatch).
+    const totalAmount = linesTotalAmount;
     let invoiceNumber = Number(carteraEntry?.invoiceNumber ?? order.invoiceNumber ?? 0) || null;
 
     if (!invoiceNumber && order.status !== "submitted") {
