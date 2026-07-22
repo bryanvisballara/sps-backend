@@ -5146,6 +5146,223 @@ async function handleDeleteInventoryEntryGroup(request, response) {
 }
 apiRouter.delete("/management/inventory-entries/:groupId", handleDeleteInventoryEntryGroup);
 apiRouter.post("/management/inventory-entries/:groupId/delete", handleDeleteInventoryEntryGroup);
+apiRouter.put("/management/inventory-entries/:groupId", async (request, response) => {
+    try {
+        const groupId = typeof request.params.groupId === "string" ? request.params.groupId.trim() : "";
+        if (!groupId) {
+            response.status(400).json({ message: "No fue posible identificar la entrada de inventario." });
+            return;
+        }
+        const existingAdjustments = await InventoryAdjustment.find({
+            source: "inventory-entry",
+            entryGroupId: groupId,
+        }).lean();
+        if (existingAdjustments.length === 0) {
+            response.status(404).json({ message: "La entrada de inventario ya no existe." });
+            return;
+        }
+        const warehouseId = typeof request.body?.warehouseId === "string" ? request.body.warehouseId.trim() : "";
+        const usdToAwgRate = Number(request.body?.usdToAwgRate ?? 0);
+        const entryDateRaw = typeof request.body?.entryDate === "string" ? request.body.entryDate.trim() : "";
+        const rawItems = Array.isArray(request.body?.items) ? request.body.items : [];
+        if (!Number.isFinite(usdToAwgRate) || usdToAwgRate <= 0) {
+            response.status(400).json({ message: "Ingresa una tasa valida en USD@AWG mayor a cero." });
+            return;
+        }
+        if (rawItems.length === 0) {
+            response.status(400).json({ message: "Agrega al menos un producto para actualizar el inventario." });
+            return;
+        }
+        let entryDate = new Date(existingAdjustments[0]?.createdAt ?? Date.now());
+        if (entryDateRaw) {
+            const parsedEntryDate = /^\d{4}-\d{2}-\d{2}$/.test(entryDateRaw)
+                ? new Date(`${entryDateRaw}T12:00:00.000Z`)
+                : new Date(entryDateRaw);
+            if (Number.isNaN(parsedEntryDate.getTime())) {
+                response.status(400).json({ message: "La fecha de ingreso no es valida." });
+                return;
+            }
+            entryDate = parsedEntryDate;
+        }
+        const items = rawItems.map((entry, index) => {
+            if (typeof entry !== "object" || entry === null) {
+                throw new Error(`El producto #${index + 1} no es valido.`);
+            }
+            const item = entry;
+            const productId = typeof item.productId === "string" ? item.productId.trim() : "";
+            const quantity = Number(item.quantity ?? 0);
+            const costUsd = Number(item.costUsd ?? 0);
+            const salePriceAwg = Number(item.salePriceAwg ?? 0);
+            const expirationDateValue = typeof item.expirationDate === "string" ? item.expirationDate.trim() : "";
+            const lotName = typeof item.lotName === "string" ? item.lotName.trim() : "";
+            const productWeightKg = Number(item.productWeightKg ?? 0);
+            if (!productId) {
+                throw new Error(`El producto #${index + 1} no tiene identificador valido.`);
+            }
+            if (!Number.isFinite(quantity) || quantity <= 0) {
+                throw new Error(`La cantidad del producto #${index + 1} debe ser mayor a cero.`);
+            }
+            if (!Number.isFinite(costUsd) || costUsd < 0) {
+                throw new Error(`El costo del producto #${index + 1} debe ser cero o mayor.`);
+            }
+            if (!Number.isFinite(salePriceAwg) || salePriceAwg < 0) {
+                throw new Error(`La venta AWG del producto #${index + 1} debe ser cero o mayor.`);
+            }
+            return { productId, quantity, costUsd, salePriceAwg, expirationDateValue, lotName, productWeightKg };
+        });
+        const warehouse = warehouseId
+            ? await Warehouse.findById(warehouseId).lean()
+            : await Warehouse.findOne({ active: { $ne: false } }).sort({ createdAt: 1 }).lean();
+        if (!warehouse || warehouse.active === false) {
+            response.status(400).json({ message: "Selecciona una bodega activa para actualizar inventario." });
+            return;
+        }
+        // Reverse previous stock impact (same rules as delete).
+        const warehouseCache = new Map();
+        const removals = new Map();
+        for (const adjustment of existingAdjustments) {
+            const productId = String(adjustment.productId ?? "").trim();
+            const quantity = Number(adjustment.quantity ?? 0);
+            const previousWarehouseId = String(adjustment.entryWarehouseId ?? "").trim();
+            const previousWarehouseName = String(adjustment.entryWarehouseName ?? "").trim();
+            const warehouseCacheKey = previousWarehouseId || `name:${previousWarehouseName.toLowerCase()}`;
+            if (!productId || !(quantity > 0)) {
+                continue;
+            }
+            if (!warehouseCache.has(warehouseCacheKey)) {
+                const previousWarehouse = previousWarehouseId
+                    ? await Warehouse.findById(previousWarehouseId).lean()
+                    : previousWarehouseName
+                        ? await Warehouse.findOne({ name: previousWarehouseName }).lean()
+                        : null;
+                warehouseCache.set(warehouseCacheKey, previousWarehouse);
+            }
+            const previousWarehouse = warehouseCache.get(warehouseCacheKey);
+            if (!previousWarehouse?.code) {
+                response.status(400).json({
+                    message: "No fue posible revertir el inventario anterior porque la bodega original no es identificable.",
+                });
+                return;
+            }
+            const removalKey = `${productId}::${String(previousWarehouse.code)}`;
+            const currentRemoval = removals.get(removalKey) ?? {
+                productId,
+                warehouseCode: String(previousWarehouse.code),
+                quantity: 0,
+            };
+            currentRemoval.quantity += quantity;
+            removals.set(removalKey, currentRemoval);
+        }
+        for (const [removalKey, removal] of removals.entries()) {
+            const stockRows = await WarehouseStock.find({
+                productId: removal.productId,
+                warehouseCode: removal.warehouseCode,
+            }).lean();
+            const totalAvailable = stockRows.reduce((sum, stockRow) => sum + Number(stockRow.availableUnits ?? 0), 0);
+            if (totalAvailable < removal.quantity) {
+                response.status(400).json({
+                    message: `No se puede editar: faltan ${removal.quantity - totalAvailable} unidad${removal.quantity - totalAvailable === 1 ? "" : "es"} en inventario (ya consumidas).`,
+                });
+                return;
+            }
+            let remaining = removal.quantity;
+            for (const stockRow of [...stockRows].sort(compareWarehouseStockLotsByConsumptionPriority).reverse()) {
+                if (remaining <= 0) {
+                    break;
+                }
+                const rowAvailable = Number(stockRow.availableUnits ?? 0);
+                const deductedFromRow = Math.min(rowAvailable, remaining);
+                if (deductedFromRow <= 0) {
+                    continue;
+                }
+                const nextAvailableUnits = rowAvailable - deductedFromRow;
+                remaining -= deductedFromRow;
+                await WarehouseStock.findByIdAndUpdate(stockRow._id, {
+                    availableUnits: nextAvailableUnits,
+                    status: resolveWarehouseStockStatus(nextAvailableUnits, Number(stockRow.minUnits ?? 0)),
+                }, { runValidators: true });
+            }
+        }
+        await InventoryAdjustment.deleteMany({
+            _id: { $in: existingAdjustments.map((adjustment) => adjustment._id) },
+        });
+        const uniqueProductIds = Array.from(new Set(items.map((item) => item.productId)));
+        const products = await Product.find({ _id: { $in: uniqueProductIds }, active: { $ne: false } }).lean();
+        const productsById = new Map(products.map((product) => [String(product._id), product]));
+        for (const item of items) {
+            const product = productsById.get(item.productId);
+            if (!product) {
+                response.status(404).json({ message: `El producto ${item.productId} no existe o esta inactivo.` });
+                return;
+            }
+            const normalizedExpirationDate = normalizeOptionalDateValue(item.expirationDateValue);
+            const lotName = item.lotName || buildDefaultLotName(normalizedExpirationDate);
+            const unitCostUsd = item.costUsd;
+            const existingStockRow = await WarehouseStock.findOne({
+                productId: product._id,
+                warehouseCode: warehouse.code,
+                expirationDate: normalizedExpirationDate,
+                unitCostUsd: roundLotPriceValue(unitCostUsd),
+                salePriceAwg: roundLotPriceValue(item.salePriceAwg),
+            }).lean();
+            const currentAvailableUnits = Number(existingStockRow?.availableUnits ?? 0);
+            const nextAvailableUnits = currentAvailableUnits + item.quantity;
+            const minUnits = Number(existingStockRow?.minUnits ?? product.inventoryAlert ?? 0);
+            await WarehouseStock.findOneAndUpdate({
+                productId: product._id,
+                warehouseCode: warehouse.code,
+                expirationDate: normalizedExpirationDate,
+                unitCostUsd: roundLotPriceValue(unitCostUsd),
+                salePriceAwg: roundLotPriceValue(item.salePriceAwg),
+            }, {
+                productId: product._id,
+                warehouseCode: warehouse.code,
+                expirationDate: normalizedExpirationDate,
+                lotName,
+                unitCostUsd: roundLotPriceValue(unitCostUsd),
+                usdToAwgRate,
+                salePriceAwg: roundLotPriceValue(item.salePriceAwg),
+                availableUnits: nextAvailableUnits,
+                minUnits,
+                status: resolveWarehouseStockStatus(nextAvailableUnits, minUnits),
+            }, {
+                upsert: true,
+                new: true,
+                setDefaultsOnInsert: true,
+                runValidators: true,
+            });
+            await Product.findByIdAndUpdate(product._id, {
+                arubaPurchaseCostUsd: unitCostUsd,
+                arubaUsdToAwgRate: usdToAwgRate,
+                salePrice: item.salePriceAwg,
+                productWeightKg: item.productWeightKg,
+                expirationDate: item.expirationDateValue ? new Date(item.expirationDateValue) : null,
+            }, {
+                runValidators: true,
+            });
+            await InventoryAdjustment.create({
+                productId: product._id,
+                quantity: item.quantity,
+                reason: "Entrada de inventario",
+                notes: "Registro de entrada editado.",
+                entryGroupId: groupId,
+                entryWarehouseId: String(warehouse._id),
+                entryWarehouseName: String(warehouse.name ?? ""),
+                entryUsdToAwgRate: usdToAwgRate,
+                entryCostUsd: unitCostUsd,
+                source: "inventory-entry",
+                createdAt: entryDate,
+                updatedAt: entryDate,
+            });
+        }
+        response.json({
+            message: `Entrada de inventario actualizada (${items.length} producto${items.length === 1 ? "" : "s"}).`,
+        });
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
 apiRouter.post("/management/inventory-entries/fix-legacy-unit-costs", async (_request, response) => {
     try {
         const legacyAdjustments = await InventoryAdjustment.find({

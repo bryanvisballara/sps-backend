@@ -4553,6 +4553,10 @@ export default function App() {
   const [inventoryError, setInventoryError] = useState("");
   const [inventoryAdjustmentStatus, setInventoryAdjustmentStatus] = useState<CreationStatus | null>(null);
   const [isInventoryEntryModalOpen, setIsInventoryEntryModalOpen] = useState(false);
+  const [isInventoryEntryEditModalOpen, setIsInventoryEntryEditModalOpen] = useState(false);
+  const [editingInventoryEntryGroupId, setEditingInventoryEntryGroupId] = useState("");
+  const [inventoryEntryEditDate, setInventoryEntryEditDate] = useState("");
+  const [isSavingInventoryEntryEdit, setIsSavingInventoryEntryEdit] = useState(false);
   const [inventoryEntryWarehouseId, setInventoryEntryWarehouseId] = useState("");
   const [inventoryUsdToAwgRate, setInventoryUsdToAwgRate] = useState("1.79");
   const [inventoryEntryItems, setInventoryEntryItems] = useState<InventoryEntryDraftItem[]>(() => [
@@ -9343,29 +9347,147 @@ export default function App() {
     const hasAllRowsEditableData = selectedGroup.items.every((item) => Number.isFinite(Number(item.entryCostUsd ?? 0)));
 
     if (!warehouseId || !(usdToAwgRate > 0) || !hasAllRowsEditableData) {
-      setInventoryEntryStatus({ tone: "error", message: "Esta entrada no tiene todos los datos necesarios para cargarla en modo edicion." });
+      setInventoryEntryGroupsFeedback({
+        tone: "error",
+        message: "Esta entrada no tiene todos los datos necesarios para editarla.",
+      });
       return;
     }
 
+    const parsedCreatedAt = new Date(selectedGroup.createdAt);
+    setEditingInventoryEntryGroupId(groupId);
+    setInventoryEntryEditDate(
+      Number.isNaN(parsedCreatedAt.getTime())
+        ? getBusinessDateKey()
+        : getBusinessDateKey(parsedCreatedAt),
+    );
     setInventoryEntryWarehouseId(warehouseId);
     setInventoryUsdToAwgRate(String(usdToAwgRate));
-    setInventoryEntryItems(selectedGroup.items.map((item) => ({
-      id: createInventoryEntryDraftItem(item.productId).id,
-      productId: item.productId,
-      quantity: String(item.quantity),
-      costUsd: String(Number(item.entryCostUsd ?? 0)),
-      salePriceAwg: String(productOptions.find((option) => option.value === item.productId)?.salePrice ?? ""),
-      expirationDate: "",
-      lotName: "",
-      productWeightKg: String(productOptions.find((option) => option.value === item.productId)?.productWeightKg ?? ""),
-    })));
-    setInventoryEntryStatus({
-      tone: "success",
-      message: `Entrada cargada para editar (${selectedGroup.productCount} producto${selectedGroup.productCount === 1 ? "" : "s"}).`,
-    });
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    setInventoryEntryItems(selectedGroup.items.map((item) => {
+      const product = productOptions.find((option) => option.value === item.productId);
+
+      return {
+        id: createInventoryEntryDraftItem(item.productId).id,
+        productId: item.productId,
+        quantity: String(item.quantity),
+        costUsd: String(Number(item.entryCostUsd ?? 0)),
+        salePriceAwg: String(product?.salePrice ?? ""),
+        expirationDate: "",
+        lotName: "",
+        productWeightKg: String(product?.productWeightKg ?? ""),
+      };
+    }));
+    setInventoryEntryStatus(null);
+    setInventoryEntryGroupsFeedback(null);
+    setIsInventoryEntryEditModalOpen(true);
   }
 
+  function closeInventoryEntryEditModal() {
+    setIsInventoryEntryEditModalOpen(false);
+    setEditingInventoryEntryGroupId("");
+    setInventoryEntryEditDate("");
+    setIsSavingInventoryEntryEdit(false);
+    setInventoryEntryStatus(null);
+  }
+
+  async function handleInventoryEntryEditSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!editingInventoryEntryGroupId) {
+      setInventoryEntryStatus({ tone: "error", message: "No fue posible identificar la entrada a editar." });
+      return;
+    }
+
+    if (!inventoryEntryWarehouseId) {
+      setInventoryEntryStatus({ tone: "error", message: "Selecciona una bodega." });
+      return;
+    }
+
+    const usdToAwgRate = Number(inventoryUsdToAwgRate || 0);
+
+    if (!Number.isFinite(usdToAwgRate) || usdToAwgRate <= 0) {
+      setInventoryEntryStatus({ tone: "error", message: "Ingresa una TRM USD@AWG valida." });
+      return;
+    }
+
+    if (!inventoryEntryEditDate.trim()) {
+      setInventoryEntryStatus({ tone: "error", message: "Ingresa la fecha de ingreso." });
+      return;
+    }
+
+    if (inventoryEntryItems.length === 0) {
+      setInventoryEntryStatus({ tone: "error", message: "Agrega al menos un producto." });
+      return;
+    }
+
+    try {
+      setIsSavingInventoryEntryEdit(true);
+      setInventoryEntryStatus(null);
+
+      const normalizedItems = inventoryEntryItems.map((item, index) => {
+        const productId = item.productId.trim();
+        const quantity = Number(item.quantity || 0);
+        const costUsd = Number(item.costUsd || 0);
+        const salePriceAwg = Number(item.salePriceAwg || 0);
+        const productWeightKg = Number(item.productWeightKg || 0);
+
+        if (!productId) {
+          throw new Error(`El producto #${index + 1} no tiene identificador valido.`);
+        }
+
+        if (!Number.isFinite(quantity) || quantity <= 0) {
+          throw new Error(`La cantidad del producto #${index + 1} debe ser mayor a cero.`);
+        }
+
+        if (!Number.isFinite(costUsd) || costUsd < 0) {
+          throw new Error(`El costo USD del producto #${index + 1} debe ser cero o mayor.`);
+        }
+
+        return {
+          productId,
+          quantity,
+          costUsd,
+          salePriceAwg: Number.isFinite(salePriceAwg) ? salePriceAwg : 0,
+          expirationDate: item.expirationDate.trim(),
+          lotName: item.lotName.trim() || buildDefaultInventoryLotName(item.expirationDate),
+          productWeightKg: Number.isFinite(productWeightKg) ? productWeightKg : 0,
+        };
+      });
+
+      const response = await fetch(
+        `${apiBaseUrl}/management/inventory-entries/${encodeURIComponent(editingInventoryEntryGroupId)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            warehouseId: inventoryEntryWarehouseId,
+            usdToAwgRate,
+            entryDate: inventoryEntryEditDate.trim(),
+            items: normalizedItems,
+          }),
+        },
+      );
+      const data = (await response.json()) as { message?: string };
+
+      if (!response.ok) {
+        throw new Error(data.message ?? "No fue posible actualizar la entrada de inventario.");
+      }
+
+      await refreshInventorySummary();
+      setInventoryEntryGroupsFeedback({
+        tone: "success",
+        message: data.message ?? "Entrada de inventario actualizada.",
+      });
+      closeInventoryEntryEditModal();
+    } catch (error) {
+      setInventoryEntryStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible actualizar la entrada.",
+      });
+    } finally {
+      setIsSavingInventoryEntryEdit(false);
+    }
+  }
   function openInventoryEntryHistoryGroupDetails(groupId: string) {
     setSelectedInventoryEntryHistoryGroupId(groupId);
   }
@@ -11567,6 +11689,11 @@ export default function App() {
     );
   }
 
+  function getInventoryEntryGroupTotalCostAwg(group: InventoryEntryHistoryGroup) {
+    const rate = Number(group.usdToAwgRate ?? 0);
+    return getInventoryEntryGroupTotalCostUsd(group) * (rate > 0 ? rate : 0);
+  }
+
   function renderInventoryEntryGroupsSection() {
     return (
       <>
@@ -11630,7 +11757,7 @@ export default function App() {
                   <th>Bodega</th>
                   <th>Productos</th>
                   <th>Unidades</th>
-                  <th>Costo total (USD)</th>
+                  <th>Costo total (AWG)</th>
                   <th>Acciones</th>
                 </tr>
               </thead>
@@ -11639,16 +11766,31 @@ export default function App() {
                   filteredInventoryEntryHistoryGroups.map((group) => {
                     const isDeletingGroup = deletingInventoryEntryHistoryGroupId === group.id;
                     const isExportingGroup = downloadingInventoryQuickBooksGroupId === group.id;
+                    const canEditGroup = Number(group.usdToAwgRate || 0) > 0
+                      && group.items.every((item) => Number.isFinite(Number(item.entryCostUsd ?? 0)));
 
                     return (
                       <tr key={`inventory-entry-group-${group.id}`}>
-                        <td>{String(group.createdAt).slice(0, 10)}</td>
+                        <td>{getBusinessDateKey(new Date(group.createdAt))}</td>
                         <td>{group.warehouseName || "-"}</td>
                         <td>{group.productCount}</td>
                         <td>{group.totalUnits}</td>
-                        <td>{formatUsdCurrency(getInventoryEntryGroupTotalCostUsd(group))}</td>
+                        <td>{formatAwgCurrency(getInventoryEntryGroupTotalCostAwg(group))}</td>
                         <td>
                           <div className="table-action-group">
+                            <button
+                              className="table-action-icon"
+                              type="button"
+                              aria-label="Editar registro de inventario ingresado"
+                              title={canEditGroup ? "Editar" : "No editable"}
+                              disabled={!canEditGroup || isDeletingGroup || isExportingGroup || isInventoryEntryEditModalOpen}
+                              onClick={() => loadInventoryEntryHistoryGroupForEdit(group.id)}
+                            >
+                              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zm14.71-9.04a1.003 1.003 0 000-1.42l-2.5-2.5a1.003 1.003 0 00-1.42 0l-1.83 1.83 3.75 3.75 2-1.66z" fill="currentColor" />
+                              </svg>
+                            </button>
+
                             <button
                               className="table-action-icon"
                               type="button"
@@ -11712,7 +11854,7 @@ export default function App() {
                   <p className="section-label">Detalle de ingreso</p>
                   <h2>Inventario ingresado</h2>
                   <p>
-                    {`${selectedInventoryEntryHistoryGroup.productCount} productos · ${selectedInventoryEntryHistoryGroup.totalUnits} unidades · ${formatUsdCurrency(getInventoryEntryGroupTotalCostUsd(selectedInventoryEntryHistoryGroup))} USD`}
+                    {`${selectedInventoryEntryHistoryGroup.productCount} productos · ${selectedInventoryEntryHistoryGroup.totalUnits} unidades · ${formatAwgCurrency(getInventoryEntryGroupTotalCostAwg(selectedInventoryEntryHistoryGroup))} · TRM ${Number(selectedInventoryEntryHistoryGroup.usdToAwgRate || 0).toFixed(2)}`}
                   </p>
                 </div>
                 <button className="modal-close-button" type="button" onClick={closeInventoryEntryHistoryGroupDetails}>Cerrar</button>
@@ -11725,26 +11867,167 @@ export default function App() {
                       <th>Producto</th>
                       <th>Cantidad</th>
                       <th>Costo USD/u</th>
-                      <th>Total USD</th>
+                      <th>Costo AWG/u</th>
+                      <th>Total AWG</th>
                     </tr>
                   </thead>
                   <tbody>
                     {selectedInventoryEntryHistoryGroup.items.map((item) => {
                       const unitCostUsd = Number(item.entryCostUsd ?? 0);
-                      const totalCostUsd = unitCostUsd * Number(item.quantity ?? 0);
+                      const rate = Number(selectedInventoryEntryHistoryGroup.usdToAwgRate ?? 0);
+                      const unitCostAwg = unitCostUsd * rate;
+                      const totalCostAwg = unitCostAwg * Number(item.quantity ?? 0);
 
                       return (
                         <tr key={`entry-history-item-${selectedInventoryEntryHistoryGroup.id}-${item.id}`}>
                           <td>{`${item.productName} (${item.productSku})`}</td>
                           <td>{item.quantity}</td>
                           <td>{formatUsdCurrency(unitCostUsd)}</td>
-                          <td>{formatUsdCurrency(totalCostUsd)}</td>
+                          <td>{formatAwgCurrency(unitCostAwg)}</td>
+                          <td>{formatAwgCurrency(totalCostAwg)}</td>
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
               </div>
+            </div>
+          </AppModalOverlay>
+        ) : null}
+
+        {isInventoryEntryEditModalOpen ? (
+          <AppModalOverlay onDismiss={closeInventoryEntryEditModal}>
+            <div className="modal-card inventory-entry-modal inventory-entry-modal--warehouse" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+              <div className="modal-header">
+                <div>
+                  <p className="section-label">Editar ingreso</p>
+                  <h2>Editar inventario ingresado</h2>
+                  <p>Actualiza fecha, bodega, TRM, costos y productos de este lote de entrada.</p>
+                </div>
+                <button className="modal-close-button" type="button" onClick={closeInventoryEntryEditModal}>Cerrar</button>
+              </div>
+
+              <form className="inventory-adjustment-form inventory-entry-form--warehouse" onSubmit={(event) => void handleInventoryEntryEditSubmit(event)}>
+                <div className="inventory-entry-form-top">
+                  <label className="field">
+                    <span>Fecha de ingreso</span>
+                    <input
+                      type="date"
+                      value={inventoryEntryEditDate}
+                      onChange={(event) => setInventoryEntryEditDate(event.target.value)}
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Bodega</span>
+                    <select
+                      value={inventoryEntryWarehouseId}
+                      onChange={(event) => setInventoryEntryWarehouseId(event.target.value)}
+                      disabled={warehouseOptions.length === 0}
+                    >
+                      <option value="">Selecciona una bodega</option>
+                      {warehouseOptions.map((warehouse) => (
+                        <option key={warehouse.value} value={warehouse.value}>{warehouse.label}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="field">
+                    <span>TRM USD@AWG</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={inventoryUsdToAwgRate}
+                      placeholder="1.79"
+                      onChange={(event) => setInventoryUsdToAwgRate(event.target.value)}
+                    />
+                  </label>
+                </div>
+
+                <div className="inventory-entry-table-panel">
+                  <p className="management-table-meta">{inventoryEntryItems.length} producto{inventoryEntryItems.length === 1 ? "" : "s"} en la entrada</p>
+                  <div className="table-wrap table-wrap--warehouse-items">
+                    <table className="data-table data-table--inventory-entry">
+                      <thead>
+                        <tr>
+                          <th>Producto</th>
+                          <th>Cant.</th>
+                          <th>Costo u. (USD)</th>
+                          <th>Costo u. (AWG)</th>
+                          <th>Venta (AWG)</th>
+                          <th>Acc.</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {inventoryEntryItems.length > 0 ? (
+                          inventoryEntryItems.map((item) => {
+                            const selectedProduct = productOptions.find((product) => product.value === item.productId);
+
+                            return (
+                              <tr key={item.id}>
+                                <td>{selectedProduct?.label ?? "Producto"}</td>
+                                <td>
+                                  <input
+                                    className="catalog-price-input"
+                                    type="number"
+                                    min="1"
+                                    step="1"
+                                    value={item.quantity}
+                                    onChange={(event) => updateInventoryEntryRow(item.id, "quantity", event.target.value)}
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    className="catalog-price-input"
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    value={item.costUsd}
+                                    onChange={(event) => updateInventoryEntryRow(item.id, "costUsd", event.target.value)}
+                                  />
+                                </td>
+                                <td>{getInventoryEntryCostAwg(item.costUsd) || "0"}</td>
+                                <td>
+                                  <input
+                                    className="catalog-price-input"
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    value={item.salePriceAwg}
+                                    onChange={(event) => updateInventoryEntryRow(item.id, "salePriceAwg", event.target.value)}
+                                  />
+                                </td>
+                                <td>
+                                  <button
+                                    className="ghost-button inventory-entry-remove"
+                                    type="button"
+                                    onClick={() => removeInventoryEntryRow(item.id, true)}
+                                  >
+                                    Quitar
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        ) : (
+                          <tr>
+                            <td colSpan={6} className="empty-table-cell">Agrega al menos un producto.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {inventoryEntryStatus ? <p className={`form-feedback inventory-entry-form-feedback ${inventoryEntryStatus.tone}`}>{inventoryEntryStatus.message}</p> : null}
+
+                <div className="inventory-entry-submit-actions">
+                  <button className="submit-button" type="submit" disabled={isSavingInventoryEntryEdit || inventoryEntryItems.length === 0}>
+                    {isSavingInventoryEntryEdit ? "Guardando cambios..." : "Guardar cambios"}
+                  </button>
+                </div>
+              </form>
             </div>
           </AppModalOverlay>
         ) : null}
@@ -17634,7 +17917,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
                     <form className="inventory-adjustment-form inventory-entry-form--warehouse" onSubmit={handleInventoryEntrySubmit}>
                       <div className="inventory-entry-form-top">
-                        <label className="field field-full">
+                        <label className="field">
                           <span>Bodega</span>
                           <select
                             value={inventoryEntryWarehouseId}
@@ -17646,6 +17929,18 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               <option key={warehouse.value} value={warehouse.value}>{warehouse.label}</option>
                             ))}
                           </select>
+                        </label>
+
+                        <label className="field">
+                          <span>TRM USD@AWG</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={inventoryUsdToAwgRate}
+                            placeholder="1.79"
+                            onChange={(event) => setInventoryUsdToAwgRate(event.target.value)}
+                          />
                         </label>
 
                         <div className="inventory-entry-warehouse-add">
@@ -17688,6 +17983,18 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               value={inventoryEntryItemDraft.costUsd}
                               placeholder="0.00"
                               onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, costUsd: event.target.value }))}
+                            />
+                          </label>
+
+                          <label className="field">
+                            <span>Costo unitario (AWG)</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              value={getInventoryEntryCostAwg(inventoryEntryItemDraft.costUsd)}
+                              placeholder="0.00"
+                              readOnly
                             />
                           </label>
 
@@ -17742,6 +18049,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 <th>SKU</th>
                                 <th>Cant.</th>
                                 <th>Costo u. (USD)</th>
+                                <th>Costo u. (AWG)</th>
                                 <th>Venta (AWG)</th>
                                 <th>Lote</th>
                                 <th>Vence</th>
@@ -17759,6 +18067,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                       <td>{selectedProduct?.sku ?? "-"}</td>
                                       <td>{item.quantity}</td>
                                       <td>{item.costUsd || selectedProduct?.arubaPurchaseCostUsd || "0"}</td>
+                                      <td>{getInventoryEntryCostAwg(item.costUsd || String(selectedProduct?.arubaPurchaseCostUsd ?? 0)) || "0"}</td>
                                       <td>{item.salePriceAwg || selectedProduct?.salePrice || "0"}</td>
                                       <td>{item.lotName || buildDefaultInventoryLotName(item.expirationDate)}</td>
                                       <td>{item.expirationDate ? String(item.expirationDate).slice(0, 10) : "-"}</td>
@@ -17776,7 +18085,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 })
                               ) : (
                                 <tr>
-                                  <td colSpan={8} className="empty-table-cell">Agrega productos con cantidad, costo, venta y caducidad.</td>
+                                  <td colSpan={9} className="empty-table-cell">Agrega productos con cantidad, costo, venta y caducidad.</td>
                                 </tr>
                               )}
                             </tbody>
@@ -24424,7 +24733,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
                   <form className="inventory-adjustment-form inventory-entry-form--warehouse" onSubmit={handleInventoryEntrySubmit}>
                     <div className="inventory-entry-form-top">
-                      <label className="field field-full">
+                      <label className="field">
                         <span>Bodega</span>
                         <select
                           value={inventoryEntryWarehouseId}
@@ -24438,8 +24747,20 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         </select>
                       </label>
 
+                      <label className="field">
+                        <span>TRM USD@AWG</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={inventoryUsdToAwgRate}
+                          placeholder="1.79"
+                          onChange={(event) => setInventoryUsdToAwgRate(event.target.value)}
+                        />
+                      </label>
+
                       <div className="inventory-entry-warehouse-add">
-                      <label className="field field-full">
+                        <label className="field field-full">
                           <span>Producto</span>
                           <SearchableProductSelect
                             products={productOptions}
@@ -24454,32 +24775,44 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               }));
                             }}
                             disabled={productOptions.length === 0}
-                        />
-                      </label>
+                          />
+                        </label>
 
                         <label className="field">
-                            <span>Cantidad</span>
-                            <input
-                              type="number"
+                          <span>Cantidad</span>
+                          <input
+                            type="number"
                             min="1"
-                              step="1"
+                            step="1"
                             value={inventoryEntryItemDraft.quantity}
-                              placeholder="0"
+                            placeholder="0"
                             onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, quantity: event.target.value }))}
-                            />
-                          </label>
+                          />
+                        </label>
 
                         <label className="field">
                           <span>Costo unitario (USD)</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="any"
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
                             value={inventoryEntryItemDraft.costUsd}
-                              placeholder="0.00"
+                            placeholder="0.00"
                             onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, costUsd: event.target.value }))}
-                            />
-                          </label>
+                          />
+                        </label>
+
+                        <label className="field">
+                          <span>Costo unitario (AWG)</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={getInventoryEntryCostAwg(inventoryEntryItemDraft.costUsd)}
+                            placeholder="0.00"
+                            readOnly
+                          />
+                        </label>
 
                         <label className="field">
                           <span>Precio de venta (AWG)</span>
@@ -24491,7 +24824,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             placeholder="0.00"
                             onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, salePriceAwg: event.target.value }))}
                           />
-                          </label>
+                        </label>
 
                         <label className="field">
                           <span>Fecha de caducidad</span>
@@ -24532,6 +24865,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               <th>SKU</th>
                               <th>Cant.</th>
                               <th>Costo u. (USD)</th>
+                              <th>Costo u. (AWG)</th>
                               <th>Venta (AWG)</th>
                               <th>Lote</th>
                               <th>Vence</th>
@@ -24549,24 +24883,25 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                     <td>{selectedProduct?.sku ?? "-"}</td>
                                     <td>{item.quantity}</td>
                                     <td>{item.costUsd || selectedProduct?.arubaPurchaseCostUsd || "0"}</td>
+                                    <td>{getInventoryEntryCostAwg(item.costUsd || String(selectedProduct?.arubaPurchaseCostUsd ?? 0)) || "0"}</td>
                                     <td>{item.salePriceAwg || selectedProduct?.salePrice || "0"}</td>
                                     <td>{item.lotName || buildDefaultInventoryLotName(item.expirationDate)}</td>
                                     <td>{item.expirationDate ? String(item.expirationDate).slice(0, 10) : "-"}</td>
                                     <td>
-                          <button
-                            className="ghost-button inventory-entry-remove"
-                            type="button"
+                                      <button
+                                        className="ghost-button inventory-entry-remove"
+                                        type="button"
                                         onClick={() => removeInventoryEntryRow(item.id, true)}
-                          >
-                            Quitar
-                          </button>
+                                      >
+                                        Quitar
+                                      </button>
                                     </td>
                                   </tr>
                                 );
                               })
                             ) : (
                               <tr>
-                                <td colSpan={8} className="empty-table-cell">Agrega productos con cantidad, costo, venta y caducidad.</td>
+                                <td colSpan={9} className="empty-table-cell">Agrega productos con cantidad, costo, venta y caducidad.</td>
                               </tr>
                             )}
                           </tbody>
