@@ -98,12 +98,14 @@ input[type="number"]::-webkit-inner-spin-button {
 .portal-content {
   flex: 1;
   min-width: 0;
+  max-width: 100%;
   border-radius: 32px;
   border: 1px solid rgba(17, 17, 17, 0.1);
   background: rgba(255, 255, 255, 0.94);
   backdrop-filter: blur(12px);
   box-shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
   padding: 34px;
+  overflow-x: clip;
 }
 
 .sidebar-logo,
@@ -2200,6 +2202,8 @@ h1 {
 
 .database-card {
   padding: 24px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .route-builder-card {
@@ -3113,8 +3117,8 @@ h1 {
 }
 
 .warehouse-order-notes-cell {
-  max-width: 220px;
-  white-space: normal;
+  max-width: 160px;
+  white-space: normal !important;
   word-break: break-word;
 }
 
@@ -3224,6 +3228,8 @@ h1 {
 .table-wrap--warehouse-items {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+  min-width: 0;
   border: 1px solid rgba(17, 17, 17, 0.08);
   border-radius: 14px;
   background: #ffffff;
@@ -3400,7 +3406,9 @@ h1 {
 }
 
 .table-wrap--warehouse-items .data-table--warehouse-orders {
-  min-width: 620px;
+  min-width: 720px;
+  width: max-content;
+  max-width: none;
 }
 
 .table-wrap--warehouse-items .data-table--warehouse-orders td:nth-child(3) {
@@ -3409,6 +3417,34 @@ h1 {
   white-space: normal;
   font-weight: 600;
   line-height: 1.35;
+}
+
+.table-wrap--warehouse-items .data-table--warehouse-orders .table-actions-cell,
+.table-wrap--warehouse-items .data-table--warehouse-orders th.warehouse-order-col-actions {
+  position: sticky;
+  right: 0;
+  z-index: 3;
+  background: #ffffff;
+  box-shadow: -8px 0 12px -8px rgba(15, 23, 42, 0.18);
+  white-space: nowrap;
+  min-width: 118px;
+  padding-right: 14px;
+}
+
+.table-wrap--warehouse-items .data-table--warehouse-orders thead th.warehouse-order-col-actions {
+  background: #f8f8f7;
+  z-index: 4;
+}
+
+.table-wrap--warehouse-items .data-table--warehouse-orders tbody tr:nth-child(even) .table-actions-cell {
+  background: #f7f7f6;
+}
+
+.table-wrap--warehouse-items .data-table--warehouse-orders .table-actions-cell .table-action-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
 }
 
 .table-wrap--warehouse-items .data-table tbody tr:nth-child(even) td {
@@ -3504,9 +3540,78 @@ h1 {
   gap: 10px;
 }
 
+.order-edit-history {
+  margin-top: 20px;
+  display: grid;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid color-mix(in srgb, var(--border, #d7dde5) 80%, transparent);
+}
+
+.order-edit-history-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.order-edit-history-header p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+}
+
+.order-edit-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.order-edit-history-entry {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--surface, #fff) 92%, var(--border, #d7dde5));
+  border: 1px solid color-mix(in srgb, var(--border, #d7dde5) 70%, transparent);
+  border-radius: 10px;
+}
+
+.order-edit-history-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: baseline;
+  font-size: 0.9rem;
+}
+
+.order-edit-history-meta span {
+  color: var(--text-muted);
+}
+
+.order-edit-history-action {
+  font-weight: 600;
+  color: var(--text, #1f2937) !important;
+}
+
+.order-edit-history-changes {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  color: var(--text, #1f2937);
+  font-size: 0.9rem;
+}
+
 .warehouse-order-groups {
   display: grid;
   gap: 20px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.warehouse-order-date-group {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .warehouse-order-date-group-header {
@@ -5045,6 +5150,18 @@ h1 {
 
   .login-header h1 {
     font-size: 1.75rem;
+  }
+}
+
+@media (max-width: 1400px) {
+  .table-wrap--warehouse-items .warehouse-order-col-optional,
+  .table-wrap--warehouse-items .data-table td.warehouse-order-col-optional,
+  .table-wrap--warehouse-items .data-table th.warehouse-order-col-optional {
+    display: none;
+  }
+
+  .table-wrap--warehouse-items .data-table--warehouse-orders {
+    min-width: 560px;
   }
 }
 

@@ -32,6 +32,7 @@ import { ImportTemplate } from "../modules/imports/import-template.model.js";
 import { Order } from "../modules/orders/order.model.js";
 import { InvoiceChangeRequest } from "../modules/orders/invoice-change-request.model.js";
 import { OrderDeleteRequest } from "../modules/orders/order-delete-request.model.js";
+import { OrderEditLog } from "../modules/orders/order-edit-log.model.js";
 import { Product } from "../modules/catalog/product.model.js";
 import { SalesRoute } from "../modules/routes/route.model.js";
 import { OperationsClient } from "../modules/stores/operations-client.model.js";
@@ -2841,6 +2842,24 @@ apiRouter.put("/sales/orders/:id", async (request, response) => {
       throw new Error("Uno o varios productos del pedido ya no estan asignados a este cliente.");
     }
 
+    const previousItems = Array.isArray(order.items)
+      ? order.items.map((item) => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        stockRowId: item.stockRowId,
+      }))
+      : [];
+    const previousGiftItems = Array.isArray(order.giftItems)
+      ? order.giftItems.map((item) => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        stockRowId: item.stockRowId,
+      }))
+      : [];
+    const previousDeliveryDate = order.deliveryDate;
+    const previousOrderNotes = String(order.orderNotes ?? "");
+    const previousInternalNotes = String(order.internalOrderNotes ?? "");
+
     await Order.findByIdAndUpdate(order._id, {
       items: payload.items,
       giftItems: payload.giftItems,
@@ -2848,6 +2867,65 @@ apiRouter.put("/sales/orders/:id", async (request, response) => {
       orderNotes: payload.orderNotes,
       internalOrderNotes: payload.internalOrderNotes,
     }, { runValidators: true });
+
+    const actor = normalizeOrderEditActor(
+      typeof request.body === "object" && request.body !== null ? request.body as Record<string, unknown> : {},
+      {
+        userId: payload.salesRepId,
+        userName: order.salesRepName,
+        role: "sales-rep-aruba",
+      },
+    );
+
+    if (actor) {
+      const changes = [
+        ...(await buildOrderItemsEditChanges(previousItems, payload.items, "items")),
+        ...(await buildOrderItemsEditChanges(previousGiftItems, payload.giftItems, "giftItems")),
+      ];
+
+      const previousDeliveryKey = previousDeliveryDate instanceof Date
+        ? previousDeliveryDate.toISOString().slice(0, 10)
+        : String(previousDeliveryDate ?? "").slice(0, 10);
+      const nextDeliveryKey = payload.deliveryDate instanceof Date
+        ? payload.deliveryDate.toISOString().slice(0, 10)
+        : String(payload.deliveryDate ?? "").slice(0, 10);
+
+      if (previousDeliveryKey && nextDeliveryKey && previousDeliveryKey !== nextDeliveryKey) {
+        changes.push({
+          field: "deliveryDate",
+          summary: `Cambio fecha de entrega de ${previousDeliveryKey} a ${nextDeliveryKey}`,
+          before: previousDeliveryKey,
+          after: nextDeliveryKey,
+        });
+      }
+
+      if (previousOrderNotes !== String(payload.orderNotes ?? "")) {
+        changes.push({
+          field: "orderNotes",
+          summary: "Actualizo nota de factura",
+          before: previousOrderNotes,
+          after: String(payload.orderNotes ?? ""),
+        });
+      }
+
+      if (previousInternalNotes !== String(payload.internalOrderNotes ?? "")) {
+        changes.push({
+          field: "internalOrderNotes",
+          summary: "Actualizo nota interna",
+          before: previousInternalNotes,
+          after: String(payload.internalOrderNotes ?? ""),
+        });
+      }
+
+      await recordOrderEditLog({
+        orderId: String(order._id),
+        storeName: order.storeName,
+        invoiceNumber: Number(order.invoiceNumber ?? 0) || null,
+        actor,
+        action: "update_order",
+        changes,
+      });
+    }
 
     response.json({
       message: "Pedido actualizado correctamente.",
@@ -2892,6 +2970,31 @@ apiRouter.delete("/sales/orders/:id", async (request, response) => {
     await Order.findByIdAndDelete(order._id);
 
     response.json({ message: "Pedido borrado correctamente." });
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.get("/sales/orders/:id/edit-logs", async (request, response) => {
+  try {
+    const salesRepId = typeof request.query.salesRepId === "string" ? request.query.salesRepId.trim() : "";
+    const order = await Order.findById(request.params.id).select({ _id: 1, salesRepId: 1 }).lean();
+
+    if (!order) {
+      response.status(404).json({ message: "El pedido no existe." });
+      return;
+    }
+
+    if (!salesRepId || order.salesRepId !== salesRepId) {
+      response.status(400).json({ message: "El pedido no pertenece al vendedor seleccionado." });
+      return;
+    }
+
+    const logs = await OrderEditLog.find({ orderId: String(order._id) })
+      .sort({ editedAt: -1, createdAt: -1 })
+      .lean();
+
+    response.json(logs.map((entry) => mapOrderEditLogRecord(entry)));
   } catch (error) {
     sendCreationError(response, error);
   }
@@ -2973,16 +3076,20 @@ apiRouter.put("/warehouse/orders/:id/invoice-number", async (request, response) 
       return;
     }
 
-    const requestedByRole = typeof request.body?.requestedByRole === "string"
-      ? request.body.requestedByRole.trim()
+    const body = typeof request.body === "object" && request.body !== null
+      ? request.body as Record<string, unknown>
+      : {};
+    const requestedByRole = typeof body.requestedByRole === "string"
+      ? body.requestedByRole.trim()
       : "";
 
-    if (order.status === "delivered" && requestedByRole !== "management" && requestedByRole !== "contabilidad") {
-      response.status(400).json({ message: "Solo gerencia o contabilidad pueden cambiar el consecutivo de un pedido ya facturado." });
+    if (order.status === "delivered" && !canEditDeliveredWarehouseOrder(requestedByRole)) {
+      response.status(400).json({ message: "Solo gerencia, contabilidad o bodega pueden cambiar el consecutivo de un pedido ya facturado." });
       return;
     }
 
-    const invoiceNumber = await resolveRequestedInvoiceNumber(request.body?.invoiceNumber, order);
+    const previousInvoiceNumber = Number(order.invoiceNumber ?? 0) || null;
+    const invoiceNumber = await resolveRequestedInvoiceNumber(body.invoiceNumber, order);
     const updatedOrder = await Order.findByIdAndUpdate(
       order._id,
       { invoiceNumber },
@@ -3000,6 +3107,24 @@ apiRouter.put("/warehouse/orders/:id/invoice-number", async (request, response) 
         { invoiceNumber },
         { runValidators: true },
       );
+    }
+
+    const actor = normalizeOrderEditActor(body);
+
+    if (actor && previousInvoiceNumber !== invoiceNumber) {
+      await recordOrderEditLog({
+        orderId: String(updatedOrder._id),
+        storeName: String(updatedOrder.storeName ?? ""),
+        invoiceNumber,
+        actor,
+        action: "update_invoice_number",
+        changes: [{
+          field: "invoiceNumber",
+          summary: `Cambio consecutivo de ${previousInvoiceNumber ? `#${previousInvoiceNumber}` : "sin numero"} a #${invoiceNumber}`,
+          before: previousInvoiceNumber ? String(previousInvoiceNumber) : "",
+          after: String(invoiceNumber),
+        }],
+      });
     }
 
     response.json({
@@ -3021,21 +3146,35 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
       return;
     }
 
-    const requestedByRole = typeof request.body?.requestedByRole === "string"
-      ? request.body.requestedByRole.trim()
+    const body = typeof request.body === "object" && request.body !== null
+      ? request.body as Record<string, unknown>
+      : {};
+    const requestedByRole = typeof body.requestedByRole === "string"
+      ? body.requestedByRole.trim()
       : "";
-    const canEditDelivered = requestedByRole === "management" || requestedByRole === "contabilidad";
 
-    if (order.status === "delivered" && !canEditDelivered) {
-      response.status(400).json({ message: "Solo gerencia o contabilidad pueden modificar un pedido ya completado." });
+    if (order.status === "delivered" && !canEditDeliveredWarehouseOrder(requestedByRole)) {
+      response.status(400).json({ message: "Solo gerencia, contabilidad o bodega pueden modificar un pedido ya completado." });
       return;
     }
 
-    const payload = request.body as { items?: unknown; giftItems?: unknown };
-    const previousItems = Array.isArray(order.items) ? order.items.map((item) => ({ ...item })) : [];
-    const previousGiftItems = Array.isArray(order.giftItems) ? order.giftItems.map((item) => ({ ...item })) : [];
-    const items = normalizeWarehouseOrderItems(payload.items, order.items);
-    const giftItems = normalizeOrderGiftItems(payload.giftItems ?? order.giftItems ?? []);
+    const previousItems = Array.isArray(order.items)
+      ? order.items.map((item) => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        stockRowId: item.stockRowId,
+        salePriceAwg: item.salePriceAwg,
+      }))
+      : [];
+    const previousGiftItems = Array.isArray(order.giftItems)
+      ? order.giftItems.map((item) => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        stockRowId: item.stockRowId,
+      }))
+      : [];
+    const items = normalizeWarehouseOrderItems(body.items, order.items);
+    const giftItems = normalizeOrderGiftItems(body.giftItems ?? order.giftItems ?? []);
     const productIds = Array.from(new Set([
       ...items.map((item) => item.productId),
       ...giftItems.map((item) => item.productId),
@@ -3084,6 +3223,24 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
           invoiceNumber: Number(updatedOrder.invoiceNumber ?? 0) || undefined,
         });
       }
+    }
+
+    const actor = normalizeOrderEditActor(body);
+
+    if (actor) {
+      const changes = [
+        ...(await buildOrderItemsEditChanges(previousItems, items, "items")),
+        ...(await buildOrderItemsEditChanges(previousGiftItems, giftItems, "giftItems")),
+      ];
+
+      await recordOrderEditLog({
+        orderId: String(updatedOrder._id),
+        storeName: String(updatedOrder.storeName ?? ""),
+        invoiceNumber: Number(updatedOrder.invoiceNumber ?? 0) || null,
+        actor,
+        action: "update_order",
+        changes,
+      });
     }
 
     response.json({
@@ -3568,6 +3725,233 @@ async function getNextInvoiceNumber() {
   return maxUsed + 1;
 }
 
+type OrderEditActor = {
+  userId: string;
+  userName: string;
+  role: string;
+  source: "seller" | "warehouse" | "management" | "contabilidad" | "system";
+};
+
+type OrderEditChange = {
+  field: string;
+  summary: string;
+  before?: string;
+  after?: string;
+};
+
+function resolveOrderEditSource(role: string): OrderEditActor["source"] {
+  if (role === "sales-rep-aruba") {
+    return "seller";
+  }
+
+  if (role === "warehouse-aruba") {
+    return "warehouse";
+  }
+
+  if (role === "contabilidad") {
+    return "contabilidad";
+  }
+
+  if (role === "management") {
+    return "management";
+  }
+
+  return "system";
+}
+
+function canEditDeliveredWarehouseOrder(role: string) {
+  return role === "management" || role === "contabilidad" || role === "warehouse-aruba";
+}
+
+function normalizeOrderEditActor(body: Record<string, unknown> | undefined, fallback?: Partial<OrderEditActor>): OrderEditActor | null {
+  const userId = String(
+    (typeof body?.editedByUserId === "string" && body.editedByUserId.trim())
+    || (typeof body?.requestedByUserId === "string" && body.requestedByUserId.trim())
+    || fallback?.userId
+    || "",
+  ).trim();
+  const userName = String(
+    (typeof body?.editedByUserName === "string" && body.editedByUserName.trim())
+    || (typeof body?.requestedByUserName === "string" && body.requestedByUserName.trim())
+    || fallback?.userName
+    || "",
+  ).trim();
+  const role = String(
+    (typeof body?.editedByRole === "string" && body.editedByRole.trim())
+    || (typeof body?.requestedByRole === "string" && body.requestedByRole.trim())
+    || fallback?.role
+    || "",
+  ).trim();
+
+  if (!userId || !userName || !role) {
+    return null;
+  }
+
+  return {
+    userId,
+    userName,
+    role,
+    source: resolveOrderEditSource(role),
+  };
+}
+
+function formatOrderItemKey(item: { productId?: unknown; stockRowId?: unknown }) {
+  return `${String(item.productId ?? "").trim()}::${String(item.stockRowId ?? "").trim()}`;
+}
+
+function formatOrderItemLabel(
+  item: { productId?: unknown; quantity?: unknown; stockRowId?: unknown },
+  productNames: Map<string, string>,
+) {
+  const productId = String(item.productId ?? "").trim();
+  const name = productNames.get(productId) || productId || "Producto";
+  const quantity = Number(item.quantity ?? 0);
+  const lot = String(item.stockRowId ?? "").trim();
+  return lot ? `${name} x ${quantity} (lote ${lot.slice(-6)})` : `${name} x ${quantity}`;
+}
+
+async function buildProductNameMap(productIds: string[]) {
+  const uniqueIds = [...new Set(productIds.filter(Boolean))];
+
+  if (uniqueIds.length === 0) {
+    return new Map<string, string>();
+  }
+
+  const products = await Product.find({ _id: { $in: uniqueIds } }).select({ _id: 1, name: 1, sku: 1 }).lean();
+  return new Map(products.map((product) => [
+    String(product._id),
+    `${String(product.sku ?? "").trim() ? `${product.sku} · ` : ""}${String(product.name ?? "Producto")}`,
+  ]));
+}
+
+async function buildOrderItemsEditChanges(
+  previousItems: Array<{ productId?: unknown; quantity?: unknown; stockRowId?: unknown }>,
+  nextItems: Array<{ productId?: unknown; quantity?: unknown; stockRowId?: unknown }>,
+  fieldLabel: string,
+): Promise<OrderEditChange[]> {
+  const productIds = [
+    ...previousItems.map((item) => String(item.productId ?? "")),
+    ...nextItems.map((item) => String(item.productId ?? "")),
+  ];
+  const productNames = await buildProductNameMap(productIds);
+  const previousMap = new Map(previousItems.map((item) => [formatOrderItemKey(item), item]));
+  const nextMap = new Map(nextItems.map((item) => [formatOrderItemKey(item), item]));
+  const changes: OrderEditChange[] = [];
+
+  for (const [key, nextItem] of nextMap.entries()) {
+    const previousItem = previousMap.get(key);
+
+    if (!previousItem) {
+      changes.push({
+        field: fieldLabel,
+        summary: `Agrego ${formatOrderItemLabel(nextItem, productNames)}`,
+        before: "",
+        after: formatOrderItemLabel(nextItem, productNames),
+      });
+      continue;
+    }
+
+    const previousQty = Number(previousItem.quantity ?? 0);
+    const nextQty = Number(nextItem.quantity ?? 0);
+
+    if (previousQty !== nextQty) {
+      changes.push({
+        field: fieldLabel,
+        summary: `Cambio cantidad de ${formatOrderItemLabel(previousItem, productNames)} a ${formatOrderItemLabel(nextItem, productNames)}`,
+        before: formatOrderItemLabel(previousItem, productNames),
+        after: formatOrderItemLabel(nextItem, productNames),
+      });
+    }
+  }
+
+  for (const [key, previousItem] of previousMap.entries()) {
+    if (nextMap.has(key)) {
+      continue;
+    }
+
+    changes.push({
+      field: fieldLabel,
+      summary: `Quito ${formatOrderItemLabel(previousItem, productNames)}`,
+      before: formatOrderItemLabel(previousItem, productNames),
+      after: "",
+    });
+  }
+
+  return changes;
+}
+
+async function recordOrderEditLog(params: {
+  orderId: string;
+  storeName?: string;
+  invoiceNumber?: number | null;
+  actor: OrderEditActor;
+  action: "update_order" | "update_invoice_number" | "invoice_completed" | "reprint";
+  changes: OrderEditChange[];
+}) {
+  if (!params.changes.length && params.action === "update_order") {
+    return null;
+  }
+
+  return OrderEditLog.create({
+    orderId: params.orderId,
+    storeName: params.storeName ?? "",
+    invoiceNumber: Number(params.invoiceNumber ?? 0) || undefined,
+    editedByUserId: params.actor.userId,
+    editedByUserName: params.actor.userName,
+    editedByRole: params.actor.role,
+    source: params.actor.source,
+    action: params.action,
+    changes: params.changes.length > 0
+      ? params.changes
+      : [{
+        field: params.action,
+        summary: params.action === "invoice_completed"
+          ? "Pedido impreso y facturado"
+          : params.action === "reprint"
+            ? "Factura reimpresa"
+            : "Pedido actualizado",
+        before: "",
+        after: "",
+      }],
+    editedAt: new Date(),
+  });
+}
+
+function mapOrderEditLogRecord(entry: {
+  _id?: unknown;
+  orderId?: unknown;
+  storeName?: unknown;
+  invoiceNumber?: unknown;
+  editedByUserId?: unknown;
+  editedByUserName?: unknown;
+  editedByRole?: unknown;
+  source?: unknown;
+  action?: unknown;
+  changes?: Array<{ field?: unknown; summary?: unknown; before?: unknown; after?: unknown }>;
+  editedAt?: unknown;
+  createdAt?: unknown;
+}) {
+  return {
+    _id: String(entry._id ?? ""),
+    orderId: String(entry.orderId ?? ""),
+    storeName: String(entry.storeName ?? ""),
+    invoiceNumber: Number(entry.invoiceNumber ?? 0) || null,
+    editedByUserId: String(entry.editedByUserId ?? ""),
+    editedByUserName: String(entry.editedByUserName ?? ""),
+    editedByRole: String(entry.editedByRole ?? ""),
+    source: String(entry.source ?? ""),
+    action: String(entry.action ?? ""),
+    changes: (Array.isArray(entry.changes) ? entry.changes : []).map((change) => ({
+      field: String(change.field ?? ""),
+      summary: String(change.summary ?? ""),
+      before: String(change.before ?? ""),
+      after: String(change.after ?? ""),
+    })),
+    editedAt: entry.editedAt ? new Date(String(entry.editedAt)).toISOString() : "",
+    createdAt: entry.createdAt ? new Date(String(entry.createdAt)).toISOString() : "",
+  };
+}
+
 async function isInvoiceNumberAvailable(invoiceNumber: number, excludeOrderId = "") {
   if (!Number.isFinite(invoiceNumber) || invoiceNumber < MIN_INVOICE_NUMBER) {
     return false;
@@ -3725,6 +4109,69 @@ async function buildWarehouseInvoiceDocumentLines(order: {
 
   return [...regularLines, ...giftLines];
 }
+
+apiRouter.get("/warehouse/orders/:id/edit-logs", async (request, response) => {
+  try {
+    const order = await Order.findById(request.params.id).select({ _id: 1 }).lean();
+
+    if (!order) {
+      response.status(404).json({ message: "El pedido no existe." });
+      return;
+    }
+
+    const logs = await OrderEditLog.find({ orderId: String(order._id) })
+      .sort({ editedAt: -1, createdAt: -1 })
+      .lean();
+
+    response.json(logs.map((entry) => mapOrderEditLogRecord(entry)));
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.post("/warehouse/orders/:id/reprint-log", async (request, response) => {
+  try {
+    const order = await Order.findById(request.params.id).lean();
+
+    if (!order) {
+      response.status(404).json({ message: "El pedido no existe." });
+      return;
+    }
+
+    const body = typeof request.body === "object" && request.body !== null
+      ? request.body as Record<string, unknown>
+      : {};
+    const actor = normalizeOrderEditActor(body);
+
+    if (!actor) {
+      response.status(400).json({ message: "No fue posible identificar quien reimprimio la factura." });
+      return;
+    }
+
+    const log = await recordOrderEditLog({
+      orderId: String(order._id),
+      storeName: String(order.storeName ?? ""),
+      invoiceNumber: Number(order.invoiceNumber ?? 0) || null,
+      actor,
+      action: "reprint",
+      changes: [{
+        field: "reprint",
+        summary: order.status === "delivered"
+          ? "Reimpresion de factura completada (sin volver a facturar)"
+          : "Reimpresion de documento de pedido",
+        before: "",
+        after: "",
+      }],
+    });
+
+    response.json({
+      message: "Reimpresion registrada.",
+      log: log ? mapOrderEditLogRecord(log.toObject()) : null,
+    });
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
 
 apiRouter.get("/warehouse/orders/:id/invoice-document", async (request, response) => {
   try {
@@ -3999,9 +4446,27 @@ async function completeWarehouseOrderById(orderId: string, body: Record<string, 
   }
 
   if (order.status === "delivered") {
+    const actor = normalizeOrderEditActor(body);
+
+    if (actor) {
+      await recordOrderEditLog({
+        orderId: String(order._id),
+        storeName: String(order.storeName ?? ""),
+        invoiceNumber: Number(order.invoiceNumber ?? 0) || null,
+        actor,
+        action: "reprint",
+        changes: [{
+          field: "reprint",
+          summary: "Reimpresion de factura completada (sin volver a facturar)",
+          before: "",
+          after: "",
+        }],
+      });
+    }
+
     return {
       alreadyCompleted: true as const,
-      message: "El pedido ya estaba completado.",
+      message: "El pedido ya estaba facturado. Se reimprimio sin volver a facturar.",
       order: {
         _id: String(order._id),
         status: order.status,
@@ -4098,6 +4563,24 @@ async function completeWarehouseOrderById(orderId: string, body: Record<string, 
     salesRepName: String(updatedOrder.salesRepName ?? ""),
     collectedAt: invoicedAt,
   });
+
+  const actor = normalizeOrderEditActor(body);
+
+  if (actor) {
+    await recordOrderEditLog({
+      orderId: String(updatedOrder._id),
+      storeName: String(updatedOrder.storeName ?? ""),
+      invoiceNumber,
+      actor,
+      action: "invoice_completed",
+      changes: [{
+        field: "status",
+        summary: `Pedido facturado con consecutivo #${invoiceNumber}`,
+        before: String(order.status),
+        after: "delivered",
+      }],
+    });
+  }
 
   return {
     alreadyCompleted: false as const,

@@ -13,6 +13,7 @@ import { roleSummary } from "../modules/dashboard/dashboard.service.js";
 import { WarehouseLocation } from "../modules/inventory/warehouse-location.model.js";
 import { WarehouseStock } from "../modules/inventory/warehouse-stock.model.js";
 import { Order } from "../modules/orders/order.model.js";
+import { OrderEditLog } from "../modules/orders/order-edit-log.model.js";
 import { ExportRequest } from "../modules/procurement/export-request.model.js";
 import { SalesRoute } from "../modules/routes/route.model.js";
 import { Store } from "../modules/stores/store.model.js";
@@ -33,6 +34,7 @@ const mongoModels = [
   WarehouseLocation,
   WarehouseStock,
   Order,
+  OrderEditLog,
   ExportRequest,
   SalesRoute,
   Store,

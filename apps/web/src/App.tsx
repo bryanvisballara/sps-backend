@@ -838,6 +838,26 @@ type SellerOrderRecord = {
   giftItems: OrderGiftItemRecord[];
 };
 
+type OrderEditLogRecord = {
+  _id: string;
+  orderId: string;
+  storeName: string;
+  invoiceNumber: number | null;
+  editedByUserId: string;
+  editedByUserName: string;
+  editedByRole: string;
+  source: string;
+  action: string;
+  changes: Array<{
+    field: string;
+    summary: string;
+    before: string;
+    after: string;
+  }>;
+  editedAt: string;
+  createdAt: string;
+};
+
 type SellerOrderEditDraft = Record<string, string>;
 
 type WarehouseActiveSection = "inventory" | "orders" | "dispatch";
@@ -3262,10 +3282,10 @@ function WarehouseOrderList({
       <th className="warehouse-order-col-optional">Ruta</th>
       {showStatus ? <th>Estado</th> : null}
       {showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
-      {showInvoiceNotes ? <th>Observación factura</th> : null}
-      {showInternalNotes ? <th>Nota interna</th> : null}
+      {showInvoiceNotes ? <th className="warehouse-order-col-optional">Observación factura</th> : null}
+      {showInternalNotes ? <th className="warehouse-order-col-optional">Nota interna</th> : null}
       <th>Und.</th>
-      <th>{actionsColumnLabel}</th>
+      <th className="warehouse-order-col-actions">{actionsColumnLabel}</th>
     </tr>
   );
 
@@ -3365,19 +3385,19 @@ function WarehouseOrderList({
                       {showStatus ? <td>{formatSellerOrderStatus(order.status)}</td> : null}
                       {showSalesRep && showInvoiceNumber ? <td>{order.invoiceNumber ? `#${order.invoiceNumber}` : "-"}</td> : null}
                       {showInvoiceNotes ? (
-                        <td className="warehouse-order-notes-cell">
+                        <td className="warehouse-order-notes-cell warehouse-order-col-optional">
                           {order.orderNotes?.trim() || "-"}
                         </td>
                       ) : null}
                       {showInternalNotes ? (
-                        <td className="warehouse-order-notes-cell">
+                        <td className="warehouse-order-notes-cell warehouse-order-col-optional">
                           {order.internalOrderNotes?.trim() || "-"}
                         </td>
                       ) : null}
                       <td>{`${order.items.length} prod. / ${totalUnits} und`}</td>
-                      <td className={renderActions || hideDefaultViewButton ? "table-actions-cell" : undefined}>
+                      <td className="table-actions-cell">
                         {order.items.length > 0 ? (
-                          <>
+                          <div className="table-action-group">
                             {!hideDefaultViewButton ? (
                               <button
                                 className="seller-order-detail-trigger"
@@ -3388,7 +3408,7 @@ function WarehouseOrderList({
                               </button>
                             ) : null}
                             {renderActions?.(order)}
-                          </>
+                          </div>
                         ) : "-"}
                       </td>
                     </tr>
@@ -3537,6 +3557,36 @@ function formatSellerOrderDate(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function formatOrderEditActionLabel(action: string) {
+  switch (action) {
+    case "update_order":
+      return "Edicion de pedido";
+    case "update_invoice_number":
+      return "Cambio de consecutivo";
+    case "invoice_completed":
+      return "Impresion y facturacion";
+    case "reprint":
+      return "Reimpresion";
+    default:
+      return action || "Cambio";
+  }
+}
+
+function formatOrderEditRoleLabel(role: string) {
+  switch (role) {
+    case "sales-rep-aruba":
+      return "Vendedor";
+    case "warehouse-aruba":
+      return "Bodega";
+    case "contabilidad":
+      return "Contabilidad";
+    case "management":
+      return "Gerencia";
+    default:
+      return role || "Sistema";
+  }
 }
 
 function formatSellerOrderTime(value: string) {
@@ -4767,6 +4817,7 @@ export default function App() {
   const [completedOrdersEndDate, setCompletedOrdersEndDate] = useState(() => getBusinessDateKey());
   const [isDownloadingQuickBooksExport, setIsDownloadingQuickBooksExport] = useState(false);
   const [warehouseIncomingClientFilter, setWarehouseIncomingClientFilter] = useState("");
+  const [warehouseCompletedClientFilter, setWarehouseCompletedClientFilter] = useState("");
   const [dispatchStartDateFilter, setDispatchStartDateFilter] = useState("");
   const [dispatchEndDateFilter, setDispatchEndDateFilter] = useState("");
   const [selectedDispatchOrderIds, setSelectedDispatchOrderIds] = useState<Set<string>>(() => new Set());
@@ -4775,6 +4826,10 @@ export default function App() {
   const [isPrintingSelectedIncomingOrders, setIsPrintingSelectedIncomingOrders] = useState(false);
   const [printingIncomingOrderId, setPrintingIncomingOrderId] = useState("");
   const [selectedWarehouseOrderDetail, setSelectedWarehouseOrderDetail] = useState<SellerOrderRecord | null>(null);
+  const [warehouseOrderEditLogs, setWarehouseOrderEditLogs] = useState<OrderEditLogRecord[]>([]);
+  const [isLoadingWarehouseOrderEditLogs, setIsLoadingWarehouseOrderEditLogs] = useState(false);
+  const [sellerOrderEditLogs, setSellerOrderEditLogs] = useState<OrderEditLogRecord[]>([]);
+  const [isLoadingSellerOrderEditLogs, setIsLoadingSellerOrderEditLogs] = useState(false);
   const [deletingWarehouseOrderId, setDeletingWarehouseOrderId] = useState("");
   const [cancellingWarehouseDispatchOrderId, setCancellingWarehouseDispatchOrderId] = useState("");
   const [warehouseOrderChecklist, setWarehouseOrderChecklist] = useState<Record<string, boolean>>({});
@@ -5562,7 +5617,10 @@ export default function App() {
   const warehouseOrderSubtotal = warehousePricedItems.reduce((sum, item) => sum + item.lineTotal, 0);
   const isWarehouseUser = sessionUser?.role === "warehouse-aruba";
   const canWarehouseInvoiceOrder = hasAccountingDispatchAccess(sessionUser?.role);
-  const canEditCompletedWarehouseOrders = hasAccountingDispatchAccess(sessionUser?.role);
+  const canEditCompletedWarehouseOrders = Boolean(
+    sessionUser?.role === "warehouse-aruba"
+    || hasAccountingDispatchAccess(sessionUser?.role)
+  );
   const canMutateSelectedWarehouseOrder = Boolean(
     selectedWarehouseOrderDetail
     && (selectedWarehouseOrderDetail.status !== "delivered" || canEditCompletedWarehouseOrders)
@@ -5655,11 +5713,26 @@ export default function App() {
     selectedIncomingOrderIds.has(String(order._id))
   )).length;
   const warehouseCompletedOrders = warehouseOrders.filter((order) => order.status === "delivered");
+  const normalizedWarehouseCompletedClientFilter = warehouseCompletedClientFilter
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
   const filteredWarehouseCompletedOrders = warehouseCompletedOrders.filter((order) => {
     const dateKey = getOrderDeliveryDateKey(order);
     const startDate = completedOrdersStartDate || "0000-01-01";
     const endDate = completedOrdersEndDate || "9999-12-31";
-    return dateKey >= startDate && dateKey <= endDate;
+    const matchesDate = dateKey >= startDate && dateKey <= endDate;
+    const invoiceLabel = order.invoiceNumber ? String(order.invoiceNumber) : "";
+    const storeName = String(order.storeName ?? "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+    const matchesSearch = !normalizedWarehouseCompletedClientFilter
+      || storeName.includes(normalizedWarehouseCompletedClientFilter)
+      || invoiceLabel.includes(normalizedWarehouseCompletedClientFilter.replace(/^#/, ""));
+
+    return matchesDate && matchesSearch;
   });
   const warehouseAllItemsChecked = warehousePricedItems.length > 0
     && warehousePricedItems.every((item) => Boolean(warehouseOrderChecklist[item.productId]));
@@ -7021,7 +7094,7 @@ export default function App() {
       return;
     }
 
-    const catalog = catalogs.find((entry) => entry._id === selectedCatalogId);
+    const catalog = catalogs.find((entry) => String(entry._id) === String(selectedCatalogId));
 
     if (catalog) {
       setCatalogForm({
@@ -7034,7 +7107,9 @@ export default function App() {
     }
 
     void refreshCatalogPreview(selectedCatalogId);
-  }, [activeSection, catalogs, selectedCatalogId, sessionUser]);
+    // Do not depend on `catalogs`: refreshCatalogPreview patches assignedClients into
+    // the catalogs list and would retrigger this effect in a reload loop.
+  }, [activeSection, selectedCatalogId, sessionUser]);
 
   useEffect(() => {
     setIsCatalogWhatsappComposerOpen(false);
@@ -7052,18 +7127,8 @@ export default function App() {
       return;
     }
 
-    const assignedFromCatalog = catalogs.find((catalog) => String(catalog._id) === String(selectedCatalogId));
-    const assignedIds = (assignedFromCatalog?.assignedClients ?? assignedFromCatalog?.assignedClientIds ?? [])
-      .map((entry) => (typeof entry === "string" ? entry : String(entry.clientId ?? "")))
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-
-    if (assignedIds.length > 0) {
-      setSelectedCatalogClientIds(assignedIds);
-    }
-
     void refreshCatalogAssignedClients(selectedCatalogId);
-  }, [activeSection, catalogs, selectedCatalogId, sessionUser]);
+  }, [activeSection, selectedCatalogId, sessionUser]);
 
   useEffect(() => {
     setRouteForm((current) => {
@@ -7247,9 +7312,28 @@ export default function App() {
       setWarehouseOrderDiscountDraft("");
       setWarehouseOrderEditStatus(null);
       setWarehouseOrderCompletionStatus(null);
+      setWarehouseOrderEditLogs([]);
       return;
     }
 
+    void refreshWarehouseOrderEditLogs(String(selectedWarehouseOrderDetail._id));
+  }, [sessionUser, selectedWarehouseOrderDetail?._id]);
+
+  useEffect(() => {
+    if (sessionUser?.role !== "sales-rep-aruba" || !selectedSellerOrderDetail) {
+      setSellerOrderEditLogs([]);
+      return;
+    }
+
+    void refreshSellerOrderEditLogs(String(selectedSellerOrderDetail._id), sessionUser.id);
+  }, [sessionUser, selectedSellerOrderDetail?._id]);
+
+  useEffect(() => {
+    if (!canUseWarehousePortalFeatures(sessionUser?.role) || !selectedWarehouseOrderDetail) {
+      return;
+    }
+
+    // Keep existing draft hydration effect below.
     setWarehouseOrderItemDraft(
       Object.fromEntries(
         selectedWarehouseOrderDetail.items.map((item) => [item.productId, String(item.quantity)]),
@@ -7587,6 +7671,87 @@ export default function App() {
       setWarehouseOrdersError("No fue posible conectar con el backend.");
     } finally {
       setIsLoadingWarehouseOrders(false);
+    }
+  }
+
+  function buildOrderEditorIdentity() {
+    if (!sessionUser) {
+      return null;
+    }
+
+    return {
+      editedByUserId: sessionUser.id,
+      editedByUserName: sessionUser.name,
+      editedByRole: sessionUser.role,
+      requestedByUserId: sessionUser.id,
+      requestedByUserName: sessionUser.name,
+      requestedByRole: sessionUser.role,
+    };
+  }
+
+  async function refreshWarehouseOrderEditLogs(orderId: string) {
+    if (!orderId) {
+      setWarehouseOrderEditLogs([]);
+      return;
+    }
+
+    try {
+      setIsLoadingWarehouseOrderEditLogs(true);
+      const response = await fetch(`${apiBaseUrl}/warehouse/orders/${orderId}/edit-logs`);
+      const data = (await response.json()) as OrderEditLogRecord[] | { message?: string };
+
+      if (!response.ok || !Array.isArray(data)) {
+        setWarehouseOrderEditLogs([]);
+        return;
+      }
+
+      setWarehouseOrderEditLogs(data);
+    } catch {
+      setWarehouseOrderEditLogs([]);
+    } finally {
+      setIsLoadingWarehouseOrderEditLogs(false);
+    }
+  }
+
+  async function refreshSellerOrderEditLogs(orderId: string, salesRepId: string) {
+    if (!orderId || !salesRepId) {
+      setSellerOrderEditLogs([]);
+      return;
+    }
+
+    try {
+      setIsLoadingSellerOrderEditLogs(true);
+      const response = await fetch(`${apiBaseUrl}/sales/orders/${orderId}/edit-logs?salesRepId=${encodeURIComponent(salesRepId)}`);
+      const data = (await response.json()) as OrderEditLogRecord[] | { message?: string };
+
+      if (!response.ok || !Array.isArray(data)) {
+        setSellerOrderEditLogs([]);
+        return;
+      }
+
+      setSellerOrderEditLogs(data);
+    } catch {
+      setSellerOrderEditLogs([]);
+    } finally {
+      setIsLoadingSellerOrderEditLogs(false);
+    }
+  }
+
+  async function logWarehouseOrderReprint(orderId: string) {
+    const identity = buildOrderEditorIdentity();
+
+    if (!identity) {
+      return;
+    }
+
+    try {
+      await fetch(`${apiBaseUrl}/warehouse/orders/${orderId}/reprint-log`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(identity),
+      });
+    } catch {
+      // Reprint logging should not block the PDF.
     }
   }
 
@@ -10980,6 +11145,11 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           requestedByRole: sessionUser?.role,
+          editedByUserId: sessionUser?.id,
+          editedByUserName: sessionUser?.name,
+          editedByRole: sessionUser?.role,
+          requestedByUserId: sessionUser?.id,
+          requestedByUserName: sessionUser?.name,
           items: nextItems,
           giftItems: (selectedWarehouseOrderDetail.giftItems ?? []).map((item) => ({
             productId: item.productId,
@@ -11027,6 +11197,7 @@ export default function App() {
         );
       }
       setWarehouseOrderEditStatus({ tone: "success", message: data.message ?? "Pedido actualizado correctamente." });
+      await refreshWarehouseOrderEditLogs(String(updatedOrder._id));
     } catch (error) {
       setWarehouseOrderEditStatus({
         tone: "error",
@@ -11038,7 +11209,43 @@ export default function App() {
   }
 
   function canAccountingEditOrderDetail(order: SellerOrderRecord) {
-    return order.status === "submitted" || order.status === "dispatched";
+    return order.status === "submitted" || order.status === "dispatched" || order.status === "delivered";
+  }
+
+  function renderOrderEditHistory(logs: OrderEditLogRecord[], isLoading: boolean) {
+    return (
+      <div className="order-edit-history">
+        <div className="order-edit-history-header">
+          <h3>Historial de cambios</h3>
+          <p>Quien edito, fecha/hora y que cambio (vendedores y bodega).</p>
+        </div>
+        {isLoading ? (
+          <p className="route-helper-text">Cargando historial...</p>
+        ) : logs.length === 0 ? (
+          <p className="route-helper-text">Aun no hay ediciones registradas en este pedido.</p>
+        ) : (
+          <ul className="order-edit-history-list">
+            {logs.map((entry) => (
+              <li key={entry._id} className="order-edit-history-entry">
+                <div className="order-edit-history-meta">
+                  <strong>{entry.editedByUserName || "Sin nombre"}</strong>
+                  <span>{formatOrderEditRoleLabel(entry.editedByRole)}</span>
+                  <span>{formatSellerOrderDate(entry.editedAt || entry.createdAt)}</span>
+                  <span className="order-edit-history-action">{formatOrderEditActionLabel(entry.action)}</span>
+                </div>
+                <ul className="order-edit-history-changes">
+                  {(entry.changes.length > 0 ? entry.changes : [{ field: entry.action, summary: formatOrderEditActionLabel(entry.action), before: "", after: "" }]).map((change, index) => (
+                    <li key={`${entry._id}-${change.field}-${index}`}>
+                      {change.summary || `${change.field}: ${change.before || "-"} → ${change.after || "-"}`}
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    );
   }
 
   async function handleSaveAccountingOrderInvoiceNumber() {
@@ -11047,7 +11254,7 @@ export default function App() {
     }
 
     if (!canAccountingEditOrderDetail(selectedWarehouseOrderDetail)) {
-      setAccountingOrderInvoiceStatus({ tone: "error", message: "Solo puedes ajustar el consecutivo en pedidos recibidos o en despacho." });
+      setAccountingOrderInvoiceStatus({ tone: "error", message: "Solo puedes ajustar el consecutivo en pedidos de bodega o ya facturados." });
       return;
     }
 
@@ -11068,6 +11275,11 @@ export default function App() {
         body: JSON.stringify({
           invoiceNumber,
           requestedByRole: sessionUser?.role,
+          editedByUserId: sessionUser?.id,
+          editedByUserName: sessionUser?.name,
+          editedByRole: sessionUser?.role,
+          requestedByUserId: sessionUser?.id,
+          requestedByUserName: sessionUser?.name,
         }),
       });
       const data = (await response.json()) as { message?: string; order?: SellerOrderRecord; invoiceNumber?: number };
@@ -11091,6 +11303,7 @@ export default function App() {
       );
       setIsEditingAccountingOrderInvoice(false);
       setAccountingOrderInvoiceStatus({ tone: "success", message: data.message ?? "Consecutivo actualizado correctamente." });
+      await refreshWarehouseOrderEditLogs(String(updatedOrder._id));
     } catch (error) {
       setAccountingOrderInvoiceStatus({
         tone: "error",
@@ -11142,7 +11355,7 @@ export default function App() {
     }
 
     if (!canAccountingEditOrderDetail(selectedWarehouseOrderDetail)) {
-      setAccountingOrderPriceStatus({ tone: "error", message: "Solo puedes ajustar pedidos recibidos o en despacho." });
+      setAccountingOrderPriceStatus({ tone: "error", message: "Solo puedes ajustar pedidos de bodega o ya facturados." });
       return;
     }
 
@@ -11193,6 +11406,12 @@ export default function App() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          requestedByRole: sessionUser?.role,
+          editedByUserId: sessionUser?.id,
+          editedByUserName: sessionUser?.name,
+          editedByRole: sessionUser?.role,
+          requestedByUserId: sessionUser?.id,
+          requestedByUserName: sessionUser?.name,
           items: nextItems,
           giftItems: (selectedWarehouseOrderDetail.giftItems ?? []).map((item) => ({
             productId: item.productId,
@@ -11232,6 +11451,7 @@ export default function App() {
         ),
       );
       setAccountingOrderPriceStatus({ tone: "success", message: data.message ?? "Cambios del pedido guardados correctamente." });
+      await refreshWarehouseOrderEditLogs(String(updatedOrder._id));
     } catch (error) {
       setAccountingOrderPriceStatus({
         tone: "error",
@@ -11300,6 +11520,12 @@ export default function App() {
           paymentMethod: defaultPaymentMethod,
           invoiceAmountAwg: warehouseInvoiceTotal,
           invoiceNumber: selectedWarehouseOrderDetail.invoiceNumber ?? undefined,
+          editedByUserId: sessionUser?.id,
+          editedByUserName: sessionUser?.name,
+          editedByRole: sessionUser?.role,
+          requestedByUserId: sessionUser?.id,
+          requestedByUserName: sessionUser?.name,
+          requestedByRole: sessionUser?.role,
           items: warehousePricedItems.map((item) => ({
             productId: item.productId,
             stockRowId: warehouseOrderLotDraft[item.productId]
@@ -11616,6 +11842,11 @@ export default function App() {
       });
 
       openPdfInNewTab(pdf, fileName);
+      await logWarehouseOrderReprint(String(order._id));
+
+      if (selectedWarehouseOrderDetail && String(selectedWarehouseOrderDetail._id) === String(order._id)) {
+        await refreshWarehouseOrderEditLogs(String(order._id));
+      }
     } catch (error) {
       setWarehouseOrderCompletionStatus({
         tone: "error",
@@ -11819,6 +12050,12 @@ export default function App() {
       body: JSON.stringify({
         paymentMethod: defaultPaymentMethod,
         invoiceNumber: order.invoiceNumber ?? undefined,
+        editedByUserId: sessionUser?.id,
+        editedByUserName: sessionUser?.name,
+        editedByRole: sessionUser?.role,
+        requestedByUserId: sessionUser?.id,
+        requestedByUserName: sessionUser?.name,
+        requestedByRole: sessionUser?.role,
       }),
     });
     const responseText = await response.text();
@@ -14382,6 +14619,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           storeId: selectedSellerOrderEdit.storeId,
           salesRepId: sessionUser.id,
           deliveryDate: sellerOrderEditDeliveryDate,
+          editedByUserId: sessionUser.id,
+          editedByUserName: sessionUser.name,
+          editedByRole: sessionUser.role,
           items: nextItems.map((item) => ({
             productId: item.productId,
             stockCurrent: item.stockCurrent,
@@ -14406,6 +14646,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       }
 
       await refreshSellerOrders(sessionUser.id);
+      if (selectedSellerOrderDetail && String(selectedSellerOrderDetail._id) === String(selectedSellerOrderEdit._id)) {
+        await refreshSellerOrderEditLogs(String(selectedSellerOrderEdit._id), sessionUser.id);
+      }
       setSelectedSellerOrderEdit(null);
       setSellerOrderEditDraft({});
     } catch {
@@ -16483,11 +16726,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           productIds: [...(savedCatalog.productIds ?? catalogForm.productIds)],
           excludedProductIds: [...(savedCatalog.excludedProductIds ?? catalogForm.excludedProductIds)],
         });
+        await refreshCatalogs();
+        await refreshCatalogPreview(savedCatalogId);
       } else {
         resetCatalogForm({ preserveStatus: true });
+        await refreshCatalogs();
       }
-
-      await refreshCatalogs();
     } catch {
       setCatalogStatus({ tone: "error", message: "No fue posible conectar con el backend." });
     } finally {
@@ -16964,6 +17208,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   </div>
                 </div>
                     ) : null}
+
+                    {renderOrderEditHistory(sellerOrderEditLogs, isLoadingSellerOrderEditLogs)}
                   </div>
                 </AppModalOverlay>
               ) : null}
@@ -17852,7 +18098,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </p>
                       {canMutateSelectedWarehouseOrder ? (
                         <p className="route-helper-text">
-                          {selectedWarehouseOrderDetail.status === "dispatched"
+                          {selectedWarehouseOrderDetail.status === "delivered"
+                            ? "Puedes editar productos de un pedido ya facturado. Guarda los cambios y luego reimprime: no se vuelve a facturar, pero el PDF y el pedido completado quedan actualizados."
+                            : selectedWarehouseOrderDetail.status === "dispatched"
                             ? (canWarehouseInvoiceOrder
                               ? "Ajusta cantidad y total por producto si hace falta. El precio unitario se calcula automaticamente antes de facturar."
                               : "Ajusta cantidades o quita productos si el cliente cambio de opinion antes de la entrega.")
@@ -17877,7 +18125,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           {isSavingWarehouseOrderEdit ? "Guardando cambios..." : "Guardar cambios al pedido"}
                         </button>
                       ) : null}
-                      {selectedWarehouseOrderDetail.status === "dispatched" || selectedWarehouseOrderDetail.status === "delivered" ? (
+                      {selectedWarehouseOrderDetail.status === "delivered" ? (
                         <button
                           className="warehouse-action-button warehouse-action-button--print"
                           type="button"
@@ -17907,6 +18155,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       ) : null}
                       </div>
                     </div>
+
+                    {renderOrderEditHistory(warehouseOrderEditLogs, isLoadingWarehouseOrderEditLogs)}
                   </article>
                 </>
               ) : (
@@ -18020,15 +18270,79 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <div className="management-table-header">
                       <div>
                         <h2>Pedidos completados</h2>
-                        <p>Aquí se muestran los pedidos ya entregados y cerrados en bodega.</p>
+                        <p>Pedidos ya facturados. Filtra por fecha de entrega para encontrar y editar uno.</p>
                       </div>
-                      <p className="management-table-meta">{warehouseCompletedOrders.length} pedidos</p>
+                      <p className="management-table-meta">{filteredWarehouseCompletedOrders.length} pedidos</p>
                     </div>
 
+                    <div className="filter-grid cartera-date-filter-grid">
+                      <label className="field">
+                        <span>Desde</span>
+                        <input
+                          type="date"
+                          value={completedOrdersStartDate}
+                          onChange={(event) => {
+                            const nextRange = normalizeCarteraDateRange(event.target.value, completedOrdersEndDate);
+                            setCompletedOrdersStartDate(nextRange.startDate);
+                            setCompletedOrdersEndDate(nextRange.endDate);
+                          }}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Hasta</span>
+                        <input
+                          type="date"
+                          value={completedOrdersEndDate}
+                          onChange={(event) => {
+                            const nextRange = normalizeCarteraDateRange(completedOrdersStartDate, event.target.value);
+                            setCompletedOrdersStartDate(nextRange.startDate);
+                            setCompletedOrdersEndDate(nextRange.endDate);
+                          }}
+                        />
+                      </label>
+                      <div className="cartera-date-presets">
+                        <button
+                          type="button"
+                          className="secondary-action-button"
+                          onClick={() => {
+                            const today = getBusinessDateKey();
+                            setCompletedOrdersStartDate(today);
+                            setCompletedOrdersEndDate(today);
+                          }}
+                        >
+                          Hoy
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-action-button"
+                          onClick={() => {
+                            setCompletedOrdersStartDate(getBusinessMonthStartDateKey());
+                            setCompletedOrdersEndDate(getBusinessDateKey());
+                          }}
+                        >
+                          Este mes
+                        </button>
+                      </div>
+                    </div>
+
+                    <label className="field warehouse-incoming-client-filter">
+                      <span>Buscar cliente o consecutivo</span>
+                      <input
+                        type="search"
+                        value={warehouseCompletedClientFilter}
+                        placeholder="Ej. CHENGS o 12356"
+                        onChange={(event) => setWarehouseCompletedClientFilter(event.target.value)}
+                      />
+                    </label>
+
                     <WarehouseOrderList
-                      orders={warehouseCompletedOrders}
+                      orders={filteredWarehouseCompletedOrders}
                       isLoading={isLoadingWarehouseOrders}
-                      emptyMessage="Todavia no hay pedidos completados."
+                      emptyMessage={
+                        warehouseCompletedOrders.length === 0
+                          ? "Todavia no hay pedidos completados."
+                          : "No hay pedidos completados en ese periodo o con ese cliente."
+                      }
                       loadingMessage="Cargando pedidos completados..."
                       groupByDeliveryDate={false}
                       showConsecutivo
@@ -18041,7 +18355,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             type="button"
                             onClick={() => setSelectedWarehouseOrderDetail(order)}
                           >
-                            Ver
+                            {canEditCompletedWarehouseOrders ? "Editar" : "Ver"}
                           </button>
                           <button
                             className="table-action-icon"
@@ -26833,7 +27147,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           >
                             {isSavingAccountingOrderPrices ? "Guardando cambios..." : "Guardar cambios del pedido"}
                           </button>
-                          {selectedWarehouseOrderDetail.status === "dispatched" || selectedWarehouseOrderDetail.status === "delivered" ? (
+                          {selectedWarehouseOrderDetail.status === "delivered" ? (
                             <button
                               className="warehouse-action-button warehouse-action-button--print"
                               type="button"
@@ -26843,7 +27157,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               Reimprimir factura
                             </button>
                           ) : null}
-                          {selectedWarehouseOrderDetail.status === "submitted" ? (
+                          {(selectedWarehouseOrderDetail.status === "submitted" || selectedWarehouseOrderDetail.status === "dispatched") ? (
                             <button
                               className="submit-button seller-order-submit"
                               type="button"
@@ -26861,8 +27175,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           ) : null}
                         </div>
                       </div>
+                      {renderOrderEditHistory(warehouseOrderEditLogs, isLoadingWarehouseOrderEditLogs)}
                     </>
-                  ) : null}
+                  ) : (
+                    renderOrderEditHistory(warehouseOrderEditLogs, isLoadingWarehouseOrderEditLogs)
+                  )}
                 </div>
               </AppModalOverlay>
             ) : null}
