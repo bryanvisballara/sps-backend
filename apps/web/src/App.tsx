@@ -1386,7 +1386,7 @@ const managementSidebarSections = [
       { key: "sales-rep-performance", label: "Desempeño de vendedores" },
       { key: "product-performance", label: "Desempeño de productos" },
       { key: "order-planner", label: "Planificador de pedidos" },
-      { key: "warehouse-dispatch", label: "Despacho" },
+      { key: "warehouse-dispatch", label: "Pedidos" },
       { key: "logistics-accounting", label: "Contabilidad" },
     ],
   },
@@ -1465,7 +1465,7 @@ const contabilidadSidebarSections = [
     key: "bodega",
     label: "Bodega",
     items: [
-      { key: "warehouse-dispatch", label: "Despacho" },
+      { key: "warehouse-dispatch", label: "Pedidos" },
       { key: "warehouse-inventory", label: "Inventario" },
     ],
   },
@@ -3200,9 +3200,11 @@ type WarehouseOrderListProps = {
   groupByDeliveryDate?: boolean;
   onSelectOrder: (order: SellerOrderRecord) => void;
   renderActions?: (order: SellerOrderRecord) => ReactNode;
+  hideDefaultViewButton?: boolean;
   showStatus?: boolean;
   showSalesRep?: boolean;
   showInvoiceNumber?: boolean;
+  showConsecutivo?: boolean;
   showInvoiceNotes?: boolean;
   showInternalNotes?: boolean;
   selectable?: boolean;
@@ -3218,9 +3220,11 @@ function WarehouseOrderList({
   groupByDeliveryDate = true,
   onSelectOrder,
   renderActions,
+  hideDefaultViewButton = false,
   showStatus = true,
   showSalesRep = true,
   showInvoiceNumber = false,
+  showConsecutivo = false,
   showInvoiceNotes = false,
   showInternalNotes = false,
   selectable = false,
@@ -3230,30 +3234,38 @@ function WarehouseOrderList({
   const columnCount = 6
     + Number(showStatus)
     + Number(showInvoiceNumber)
+    + Number(showConsecutivo)
     + Number(showInvoiceNotes)
     + Number(showInternalNotes)
     + Number(selectable)
     - Number(!showSalesRep);
+
+  const actionsColumnLabel = hideDefaultViewButton || renderActions ? "Acción" : "Ver";
+
+  const renderTableHead = () => (
+    <tr>
+      {selectable ? <th aria-label="Seleccionar" /> : null}
+      <th>Entrega</th>
+      {showConsecutivo ? <th>Consecutivo</th> : null}
+      {showSalesRep ? <th className="warehouse-order-col-optional">Vendedor</th> : null}
+      {!showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
+      <th>Cliente</th>
+      <th className="warehouse-order-col-optional">Ruta</th>
+      {showStatus ? <th>Estado</th> : null}
+      {showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
+      {showInvoiceNotes ? <th>Observación factura</th> : null}
+      {showInternalNotes ? <th>Nota interna</th> : null}
+      <th>Und.</th>
+      <th>{actionsColumnLabel}</th>
+    </tr>
+  );
 
   if (isLoading) {
     return (
       <div className="table-wrap table-wrap--warehouse-items">
         <table className="data-table data-table--warehouse-orders">
           <thead>
-            <tr>
-              {selectable ? <th aria-label="Seleccionar" /> : null}
-              <th>Entrega</th>
-              {showSalesRep ? <th className="warehouse-order-col-optional">Vendedor</th> : null}
-              {!showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
-              <th>Cliente</th>
-              <th className="warehouse-order-col-optional">Ruta</th>
-              {showStatus ? <th>Estado</th> : null}
-              {showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
-              {showInvoiceNotes ? <th>Observación factura</th> : null}
-              {showInternalNotes ? <th>Nota interna</th> : null}
-              <th>Und.</th>
-              <th>Ver</th>
-            </tr>
+            {renderTableHead()}
           </thead>
           <tbody>
             <tr>
@@ -3270,20 +3282,7 @@ function WarehouseOrderList({
       <div className="table-wrap table-wrap--warehouse-items">
         <table className="data-table data-table--warehouse-orders">
           <thead>
-            <tr>
-              {selectable ? <th aria-label="Seleccionar" /> : null}
-              <th>Entrega</th>
-              {showSalesRep ? <th className="warehouse-order-col-optional">Vendedor</th> : null}
-              {!showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
-              <th>Cliente</th>
-              <th className="warehouse-order-col-optional">Ruta</th>
-              {showStatus ? <th>Estado</th> : null}
-              {showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
-              {showInvoiceNotes ? <th>Observación factura</th> : null}
-              {showInternalNotes ? <th>Nota interna</th> : null}
-              <th>Und.</th>
-              <th>Ver</th>
-            </tr>
+            {renderTableHead()}
           </thead>
           <tbody>
             <tr>
@@ -3321,20 +3320,7 @@ function WarehouseOrderList({
           <div className="table-wrap table-wrap--warehouse-items">
             <table className="data-table data-table--warehouse-orders">
               <thead>
-                <tr>
-                  {selectable ? <th aria-label="Seleccionar" /> : null}
-                  <th>Entrega</th>
-                  {showSalesRep ? <th className="warehouse-order-col-optional">Vendedor</th> : null}
-                  {!showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
-                  <th>Cliente</th>
-                  <th className="warehouse-order-col-optional">Ruta</th>
-                  {showStatus ? <th>Estado</th> : null}
-                  {showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
-                  {showInvoiceNotes ? <th>Observación factura</th> : null}
-                  {showInternalNotes ? <th>Nota interna</th> : null}
-                  <th>Und.</th>
-                  <th>{renderActions ? "Acciones" : "Ver"}</th>
-                </tr>
+                {renderTableHead()}
               </thead>
               <tbody>
                 {group.orders.map((order) => {
@@ -3360,6 +3346,9 @@ function WarehouseOrderList({
                           ) : null}
                         </div>
                       </td>
+                      {showConsecutivo ? (
+                        <td>{order.invoiceNumber ? `#${order.invoiceNumber}` : "-"}</td>
+                      ) : null}
                       {showSalesRep ? <td className="warehouse-order-col-optional">{order.salesRepName}</td> : null}
                       {!showSalesRep && showInvoiceNumber ? <td>{order.invoiceNumber ? `#${order.invoiceNumber}` : "-"}</td> : null}
                       <td>{order.storeName}</td>
@@ -3377,10 +3366,10 @@ function WarehouseOrderList({
                         </td>
                       ) : null}
                       <td>{`${order.items.length} prod. / ${totalUnits} und`}</td>
-                      <td className={renderActions ? "table-actions-cell" : undefined}>
+                      <td className={renderActions || hideDefaultViewButton ? "table-actions-cell" : undefined}>
                         {order.items.length > 0 ? (
-                          renderActions ? (
-                            <>
+                          <>
+                            {!hideDefaultViewButton ? (
                               <button
                                 className="seller-order-detail-trigger"
                                 type="button"
@@ -3388,17 +3377,9 @@ function WarehouseOrderList({
                               >
                                 Ver
                               </button>
-                              {renderActions(order)}
-                            </>
-                          ) : (
-                            <button
-                              className="seller-order-detail-trigger"
-                              type="button"
-                              onClick={() => onSelectOrder(order)}
-                            >
-                              Ver
-                            </button>
-                          )
+                            ) : null}
+                            {renderActions?.(order)}
+                          </>
                         ) : "-"}
                       </td>
                     </tr>
@@ -4781,6 +4762,9 @@ export default function App() {
   const [dispatchEndDateFilter, setDispatchEndDateFilter] = useState("");
   const [selectedDispatchOrderIds, setSelectedDispatchOrderIds] = useState<Set<string>>(() => new Set());
   const [isPrintingSelectedDispatchOrders, setIsPrintingSelectedDispatchOrders] = useState(false);
+  const [selectedIncomingOrderIds, setSelectedIncomingOrderIds] = useState<Set<string>>(() => new Set());
+  const [isPrintingSelectedIncomingOrders, setIsPrintingSelectedIncomingOrders] = useState(false);
+  const [printingIncomingOrderId, setPrintingIncomingOrderId] = useState("");
   const [selectedWarehouseOrderDetail, setSelectedWarehouseOrderDetail] = useState<SellerOrderRecord | null>(null);
   const [deletingWarehouseOrderId, setDeletingWarehouseOrderId] = useState("");
   const [cancellingWarehouseDispatchOrderId, setCancellingWarehouseDispatchOrderId] = useState("");
@@ -5615,6 +5599,11 @@ export default function App() {
     && filteredWarehouseDispatchOrders.every((order) => selectedDispatchOrderIds.has(String(order._id)));
   const selectedDispatchOrdersCount = warehouseDispatchOrders.filter((order) => (
     selectedDispatchOrderIds.has(String(order._id))
+  )).length;
+  const areAllFilteredIncomingOrdersSelected = filteredWarehouseIncomingOrders.length > 0
+    && filteredWarehouseIncomingOrders.every((order) => selectedIncomingOrderIds.has(String(order._id)));
+  const selectedIncomingOrdersCount = filteredWarehouseIncomingOrders.filter((order) => (
+    selectedIncomingOrderIds.has(String(order._id))
   )).length;
   const warehouseCompletedOrders = warehouseOrders.filter((order) => order.status === "delivered");
   const filteredWarehouseCompletedOrders = warehouseCompletedOrders.filter((order) => {
@@ -6514,7 +6503,7 @@ export default function App() {
     }
 
     if (activeSection === "warehouse-dispatch") {
-      setWarehouseActiveSection("dispatch");
+      setWarehouseActiveSection("orders");
       return;
     }
 
@@ -7005,6 +6994,24 @@ export default function App() {
   }, [selectedCatalogId]);
 
   useEffect(() => {
+    if (activeSection !== "catalog") {
+      return;
+    }
+
+    if (!selectedCatalogId) {
+      setSelectedCatalogClientIds([]);
+      return;
+    }
+
+    void refreshCatalogAssignedClients(selectedCatalogId);
+  }, [activeSection, selectedCatalogId, sessionUser]);
+
+  useEffect(() => {
+    // Avoid wiping saved recipients while store options are still loading.
+    if (storeOptions.length === 0) {
+      return;
+    }
+
     setSelectedCatalogClientIds((current) => current.filter((clientId) => storeOptions.some((store) => store.value === clientId)));
   }, [storeOptions]);
 
@@ -10511,6 +10518,33 @@ export default function App() {
     }
   }
 
+  async function refreshCatalogAssignedClients(catalogId: string) {
+    if (!catalogId) {
+      setSelectedCatalogClientIds([]);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/management/catalogs/${catalogId}/client-pricing`);
+      const data = (await response.json()) as {
+        clients?: Array<{ clientId?: string }>;
+        message?: string;
+      };
+
+      if (!response.ok || !Array.isArray(data.clients)) {
+        return;
+      }
+
+      setSelectedCatalogClientIds(
+        data.clients
+          .map((entry) => String(entry.clientId ?? "").trim())
+          .filter(Boolean),
+      );
+    } catch {
+      // Keep current selection if the assigned-clients lookup fails.
+    }
+  }
+
   async function buildWarehouseInvoicePdfDocument(
     order: SellerOrderRecord,
     documentKind: "dispatch" | "invoice" = "invoice",
@@ -11194,7 +11228,7 @@ export default function App() {
       setSelectedWarehouseOrderDetail(null);
       setWarehouseOrderChecklist({});
       if (isWarehouseUser) {
-        setWarehouseActiveSection("dispatch");
+        setWarehouseActiveSection("orders");
       }
       setWarehouseOrderCompletionStatus({
         tone: "success",
@@ -11570,6 +11604,176 @@ export default function App() {
       });
     } finally {
       setIsPrintingSelectedDispatchOrders(false);
+    }
+  }
+
+  function toggleIncomingOrderSelection(orderId: string, selected: boolean) {
+    setSelectedIncomingOrderIds((current) => {
+      const next = new Set(current);
+
+      if (selected) {
+        next.add(orderId);
+      } else {
+        next.delete(orderId);
+      }
+
+      return next;
+    });
+  }
+
+  function toggleAllFilteredIncomingOrders(selected: boolean) {
+    setSelectedIncomingOrderIds((current) => {
+      const next = new Set(current);
+
+      filteredWarehouseIncomingOrders.forEach((order) => {
+        const orderId = String(order._id);
+
+        if (selected) {
+          next.add(orderId);
+        } else {
+          next.delete(orderId);
+        }
+      });
+
+      return next;
+    });
+  }
+
+  async function fetchWarehouseDispatchDocument(order: SellerOrderRecord): Promise<CommercialInvoiceDocumentInput> {
+    const response = await fetch(`${apiBaseUrl}/warehouse/orders/${order._id}/invoice-document`);
+    const data = (await response.json()) as {
+      message?: string;
+      carteraEntry?: { invoiceNumber?: number | null; invoicedAt?: string } | null;
+      invoiceNumber?: number | null;
+      invoicedAt?: string;
+      items?: Array<{
+        productName: string;
+        productDescription?: string;
+        quantity: number;
+        rate: number;
+        amount: number;
+      }>;
+      totalAmount?: number;
+    };
+
+    if (!response.ok || !Array.isArray(data.items) || data.items.length === 0) {
+      throw new Error(data.message ?? `No fue posible cargar el documento de ${order.storeName}.`);
+    }
+
+    return {
+      documentKind: "dispatch",
+      invoiceNumber: data.invoiceNumber ?? data.carteraEntry?.invoiceNumber ?? order.invoiceNumber ?? null,
+      invoiceDate: data.invoicedAt
+        ? new Date(data.invoicedAt)
+        : data.carteraEntry?.invoicedAt
+          ? new Date(data.carteraEntry.invoicedAt)
+          : getOrderInvoiceDate(order),
+      billToName: order.storeName,
+      billToLocation: order.deliveryZone || order.routeName,
+      notes: order.orderNotes ?? "",
+      lineItems: data.items.map((item) => ({
+        productLabel: item.productName,
+        description: item.productDescription || "-",
+        quantity: item.quantity,
+        rate: item.rate,
+        amount: item.amount,
+      })),
+      totalAmount: Number(data.totalAmount ?? 0),
+    };
+  }
+
+  async function dispatchIncomingWarehouseOrder(order: SellerOrderRecord) {
+    if (order.status !== "submitted") {
+      throw new Error(`El pedido de ${order.storeName} ya no esta pendiente de despacho.`);
+    }
+
+    if (!Array.isArray(order.items) || order.items.length === 0) {
+      throw new Error(`El pedido de ${order.storeName} no tiene productos para despachar.`);
+    }
+
+    const response = await fetch(`${apiBaseUrl}/warehouse/orders/${order._id}/dispatch`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const responseText = await response.text();
+    const data = readApiResponse<{
+      message?: string;
+      order?: { _id: string; status: SellerOrderRecord["status"]; updatedAt: string };
+      invoiceNumber?: number | null;
+    }>(response, responseText);
+
+    if (!response.ok || !data.order) {
+      throw new Error(data.message ?? `No fue posible enviar a despacho el pedido de ${order.storeName}.`);
+    }
+
+    return {
+      ...order,
+      status: data.order.status,
+      invoiceNumber: data.invoiceNumber ?? order.invoiceNumber ?? null,
+      updatedAt: data.order.updatedAt,
+    };
+  }
+
+  async function handlePrintAndDispatchIncomingOrders(orders: SellerOrderRecord[]) {
+    if (orders.length === 0) {
+      setWarehouseOrderCompletionStatus({ tone: "error", message: "Selecciona al menos un pedido para imprimir y enviar a despacho." });
+      return;
+    }
+
+    const documents: CommercialInvoiceDocumentInput[] = [];
+
+    for (const order of orders) {
+      const dispatchedOrder = await dispatchIncomingWarehouseOrder(order);
+      documents.push(await fetchWarehouseDispatchDocument(dispatchedOrder));
+    }
+
+    const { pdf, fileName } = await buildCommercialInvoiceBatchPdf(documents);
+    openPdfInNewTab(pdf, fileName);
+    await refreshWarehouseOrders();
+    setSelectedIncomingOrderIds(new Set());
+    setSelectedWarehouseOrderDetail(null);
+    setWarehouseOrderCompletionStatus({
+      tone: "success",
+      message: orders.length === 1
+        ? "Pedido impreso y enviado a despacho."
+        : `${orders.length} pedidos impresos y enviados a despacho en un solo PDF.`,
+    });
+  }
+
+  async function handlePrintSelectedIncomingOrders() {
+    const selectedOrders = filteredWarehouseIncomingOrders.filter((order) => (
+      selectedIncomingOrderIds.has(String(order._id))
+    ));
+
+    try {
+      setIsPrintingSelectedIncomingOrders(true);
+      setWarehouseOrderCompletionStatus(null);
+      await handlePrintAndDispatchIncomingOrders(selectedOrders);
+    } catch (error) {
+      setWarehouseOrderCompletionStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible imprimir y enviar a despacho los pedidos seleccionados.",
+      });
+      await refreshWarehouseOrders();
+    } finally {
+      setIsPrintingSelectedIncomingOrders(false);
+    }
+  }
+
+  async function handlePrintIncomingOrder(order: SellerOrderRecord) {
+    try {
+      setPrintingIncomingOrderId(String(order._id));
+      setWarehouseOrderCompletionStatus(null);
+      await handlePrintAndDispatchIncomingOrders([order]);
+    } catch (error) {
+      setWarehouseOrderCompletionStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible imprimir el pedido.",
+      });
+      await refreshWarehouseOrders();
+    } finally {
+      setPrintingIncomingOrderId("");
     }
   }
 
@@ -13128,7 +13332,10 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       await saveCatalogPricingForSelectedClients(catalogId);
       await refreshCatalogs();
       setSelectedCatalogId(catalogId);
-      await refreshCatalogPreview(catalogId);
+      await Promise.all([
+        refreshCatalogPreview(catalogId),
+        refreshCatalogAssignedClients(catalogId),
+      ]);
       setCatalogPricingStatus({
         tone: "success",
         message: `Catalogo guardado para ${selectedCatalogClientIds.length} cliente${selectedCatalogClientIds.length === 1 ? "" : "s"}. Este guardado alimenta los pedidos del portal de bodega.`,
@@ -16998,7 +17205,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   Inventario
                 </button>
                 <button
-                  className={`sidebar-link ${warehouseActiveSection === "orders" ? "active" : ""}`}
+                  className={`sidebar-link ${warehouseActiveSection === "orders" || warehouseActiveSection === "dispatch" ? "active" : ""}`}
                   type="button"
                   onClick={() => {
                     setWarehouseActiveSection("orders");
@@ -17007,17 +17214,6 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   }}
                 >
                   Pedidos
-                </button>
-                <button
-                  className={`sidebar-link ${warehouseActiveSection === "dispatch" ? "active" : ""}`}
-                  type="button"
-                  onClick={() => {
-                    setWarehouseActiveSection("dispatch");
-                    setSelectedWarehouseOrderDetail(null);
-                    setWarehouseOrderCompletionStatus(null);
-                  }}
-                >
-                  Despacho
                 </button>
               </>
             )}
@@ -17034,11 +17230,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               <div>
                 <p className="section-label">{`${isContabilidadUser ? "Portal Contabilidad" : isManagementUser ? "Portal Gerencia" : "Portal Bodega"} · ${sessionUser.name}`}</p>
                 <h1>{
-                  warehouseActiveSection === "orders"
-                    ? "Pedidos recibidos"
-                    : warehouseActiveSection === "dispatch"
-                      ? "Despacho"
-                      : "Inventario"
+                  warehouseActiveSection === "orders" || warehouseActiveSection === "dispatch"
+                    ? "Pedidos"
+                    : "Inventario"
                 }</h1>
               </div>
               <button className="portal-mobile-logout" type="button" onClick={handleLogout}>
@@ -17046,10 +17240,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               </button>
             </div>
             <p className="portal-header-desc">
-              {warehouseActiveSection === "orders"
-                ? "Recibe los pedidos enviados por los vendedores, imprime la guia de despacho y envialos al transportador."
-                : warehouseActiveSection === "dispatch"
-                  ? "Revisa pedidos en ruta, ajusta productos si el cliente cambia de opinion y factura al confirmar la entrega."
+              {warehouseActiveSection === "orders" || warehouseActiveSection === "dispatch"
+                ? "Recibe pedidos, imprime guias de despacho y factura al confirmar la entrega."
                 : "Consulta el inventario actual y registra salidas cuando sea necesario desde bodega."}
             </p>
           </header>
@@ -17076,7 +17268,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       setSelectedWarehouseOrderDetail(null);
                       setWarehouseOrderCompletionStatus(null);
                     }}>
-                      {warehouseActiveSection === "dispatch" ? "Volver a despacho" : "Volver a pedidos"}
+                      Volver a pedidos
                     </button>
                   </article>
 
@@ -17597,12 +17789,14 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </div>
                   </article>
                 </>
-              ) : warehouseActiveSection === "dispatch" ? (
+              ) : (
                 <>
                   <article className="creation-selector-block">
-                    <p className="section-label">Despacho</p>
-                    <h2>Pedidos en ruta</h2>
-                    <p className="route-helper-text">Pedidos ya impresos y enviados al transportador.{canWarehouseInvoiceOrder ? " Ajusta productos si el cliente cambia de opinion antes de facturar." : " Contabilidad facturara el pedido al confirmar la entrega."}</p>
+                    <p className="section-label">Pedidos</p>
+                    <h2>Pedidos del equipo comercial</h2>
+                    <p className="route-helper-text">
+                      Recibe pedidos, imprime guias de despacho en lote o de forma individual, y factura al confirmar la entrega.
+                    </p>
                   </article>
 
                   {warehouseOrderCompletionStatus ? (
@@ -17614,13 +17808,102 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <article className="database-card">
                     <div className="management-table-header">
                       <div>
-                        <h2>Pedidos en despacho</h2>
-                        <p>Pedidos agrupados por fecha de entrega programada.</p>
+                        <h2>Pedidos recibidos</h2>
+                        <p>Pedidos agrupados por fecha de entrega programada por el vendedor.</p>
                       </div>
-                      <p className="management-table-meta">{filteredWarehouseDispatchOrders.length} pedidos</p>
+                      <p className="management-table-meta">{filteredWarehouseIncomingOrders.length} pedidos</p>
                     </div>
 
                     {warehouseOrdersError ? <p className="form-feedback error">{warehouseOrdersError}</p> : null}
+
+                    <label className="field warehouse-incoming-client-filter">
+                      <span>Filtrar por cliente</span>
+                      <input
+                        type="search"
+                        value={warehouseIncomingClientFilter}
+                        placeholder="Escribe el nombre del cliente"
+                        onChange={(event) => setWarehouseIncomingClientFilter(event.target.value)}
+                      />
+                    </label>
+
+                    <div className="dispatch-bulk-toolbar">
+                      <label className="dispatch-select-all">
+                        <input
+                          type="checkbox"
+                          checked={areAllFilteredIncomingOrdersSelected}
+                          disabled={filteredWarehouseIncomingOrders.length === 0 || isPrintingSelectedIncomingOrders}
+                          onChange={(event) => toggleAllFilteredIncomingOrders(event.target.checked)}
+                        />
+                        <span>Seleccionar todos los visibles</span>
+                      </label>
+                      <button
+                        className="primary-action-button"
+                        type="button"
+                        disabled={selectedIncomingOrdersCount === 0 || isPrintingSelectedIncomingOrders || Boolean(printingIncomingOrderId)}
+                        onClick={() => void handlePrintSelectedIncomingOrders()}
+                      >
+                        {isPrintingSelectedIncomingOrders
+                          ? "Imprimiendo y enviando a despacho..."
+                          : `Imprimir y enviar a despacho (${selectedIncomingOrdersCount})`}
+                      </button>
+                    </div>
+
+                    <WarehouseOrderList
+                      orders={filteredWarehouseIncomingOrders}
+                      isLoading={isLoadingWarehouseOrders}
+                      emptyMessage={normalizedWarehouseIncomingClientFilter
+                        ? "No hay pedidos recibidos para ese cliente."
+                        : "No hay pedidos pendientes por procesar."}
+                      loadingMessage="Cargando pedidos recibidos..."
+                      showInvoiceNotes
+                      showConsecutivo
+                      selectable
+                      selectedOrderIds={selectedIncomingOrderIds}
+                      onToggleOrderSelection={toggleIncomingOrderSelection}
+                      onSelectOrder={setSelectedWarehouseOrderDetail}
+                      hideDefaultViewButton
+                      renderActions={(order) => {
+                        const isPrintingOrder = printingIncomingOrderId === String(order._id);
+
+                        return (
+                          <>
+                            <button
+                              className="seller-order-detail-trigger"
+                              type="button"
+                              onClick={() => setSelectedWarehouseOrderDetail(order)}
+                            >
+                              Editar
+                            </button>
+                            <button
+                              className="table-action-icon"
+                              type="button"
+                              aria-label="Imprimir y enviar a despacho"
+                              title="Imprimir y enviar a despacho"
+                              disabled={isPrintingSelectedIncomingOrders || Boolean(printingIncomingOrderId)}
+                              onClick={() => void handlePrintIncomingOrder(order)}
+                            >
+                              {isPrintingOrder ? (
+                                "..."
+                              ) : (
+                                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                  <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
+                                </svg>
+                              )}
+                            </button>
+                          </>
+                        );
+                      }}
+                    />
+                  </article>
+
+                  <article className="database-card">
+                    <div className="management-table-header">
+                      <div>
+                        <h2>Pedidos en despacho</h2>
+                        <p>Pedidos ya impresos y enviados al transportador.{canWarehouseInvoiceOrder ? " Ajusta productos si el cliente cambia de opinion antes de facturar." : " Contabilidad facturara el pedido al confirmar la entrega."}</p>
+                      </div>
+                      <p className="management-table-meta">{filteredWarehouseDispatchOrders.length} pedidos</p>
+                    </div>
 
                     <div className="dispatch-bulk-toolbar">
                       <label className="field">
@@ -17668,17 +17951,25 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         : "No hay pedidos en despacho."}
                       loadingMessage="Cargando pedidos en despacho..."
                       showSalesRep={false}
-                      showInvoiceNumber
+                      showConsecutivo
                       showInternalNotes
                       selectable
                       selectedOrderIds={selectedDispatchOrderIds}
                       onToggleOrderSelection={toggleDispatchOrderSelection}
                       onSelectOrder={setSelectedWarehouseOrderDetail}
+                      hideDefaultViewButton
                       renderActions={(order) => {
                         const isCancellingDispatch = cancellingWarehouseDispatchOrderId === order._id;
 
                         return (
                           <>
+                            <button
+                              className="seller-order-detail-trigger"
+                              type="button"
+                              onClick={() => setSelectedWarehouseOrderDetail(order)}
+                            >
+                              Editar
+                            </button>
                             <button
                               className="table-action-icon"
                               type="button"
@@ -17705,53 +17996,6 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       }}
                     />
                   </article>
-                </>
-              ) : (
-                <>
-                  <article className="creation-selector-block">
-                    <p className="section-label">Recepcion</p>
-                    <h2>Pedidos del equipo comercial</h2>
-                    <p className="route-helper-text">Aqui llegan los pedidos creados por los vendedores para preparacion y despacho al transportador.</p>
-                  </article>
-
-                  {warehouseOrderCompletionStatus ? (
-                    <p className={`form-feedback ${warehouseOrderCompletionStatus.tone === "error" ? "error" : "success"}`}>
-                      {warehouseOrderCompletionStatus.message}
-                    </p>
-                  ) : null}
-
-                  <article className="database-card">
-                    <div className="management-table-header">
-                      <div>
-                        <h2>Pedidos recibidos</h2>
-                        <p>Pedidos agrupados por fecha de entrega programada por el vendedor.</p>
-                      </div>
-                      <p className="management-table-meta">{filteredWarehouseIncomingOrders.length} pedidos</p>
-                    </div>
-
-                    {warehouseOrdersError ? <p className="form-feedback error">{warehouseOrdersError}</p> : null}
-
-                    <label className="field warehouse-incoming-client-filter">
-                      <span>Filtrar por cliente</span>
-                      <input
-                        type="search"
-                        value={warehouseIncomingClientFilter}
-                        placeholder="Escribe el nombre del cliente"
-                        onChange={(event) => setWarehouseIncomingClientFilter(event.target.value)}
-                      />
-                    </label>
-
-                    <WarehouseOrderList
-                      orders={filteredWarehouseIncomingOrders}
-                      isLoading={isLoadingWarehouseOrders}
-                      emptyMessage={normalizedWarehouseIncomingClientFilter
-                        ? "No hay pedidos recibidos para ese cliente."
-                        : "No hay pedidos pendientes por procesar."}
-                      loadingMessage="Cargando pedidos recibidos..."
-                      showInvoiceNotes
-                      onSelectOrder={setSelectedWarehouseOrderDetail}
-                    />
-                  </article>
 
                   <article className="database-card">
                     <div className="management-table-header">
@@ -17768,19 +18012,30 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       emptyMessage="Todavia no hay pedidos completados."
                       loadingMessage="Cargando pedidos completados..."
                       groupByDeliveryDate={false}
+                      showConsecutivo
                       onSelectOrder={setSelectedWarehouseOrderDetail}
+                      hideDefaultViewButton
                       renderActions={(order) => (
-                        <button
-                          className="table-action-icon"
-                          type="button"
-                          aria-label="Reimprimir factura"
-                          title="Reimprimir factura"
-                          onClick={() => void handlePrintCompletedOrderSummary(order)}
-                        >
-                          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                            <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
-                          </svg>
-                        </button>
+                        <>
+                          <button
+                            className="seller-order-detail-trigger"
+                            type="button"
+                            onClick={() => setSelectedWarehouseOrderDetail(order)}
+                          >
+                            Ver
+                          </button>
+                          <button
+                            className="table-action-icon"
+                            type="button"
+                            aria-label="Reimprimir factura"
+                            title="Reimprimir factura"
+                            onClick={() => void handlePrintCompletedOrderSummary(order)}
+                          >
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                              <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
+                            </svg>
+                          </button>
+                        </>
                       )}
                     />
                   </article>
@@ -18630,7 +18885,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               : activeSection === "order-planner"
                 ? "Planificador de pedidos"
               : activeSection === "warehouse-dispatch"
-                ? "Despacho"
+                ? "Pedidos"
               : activeSection === "catalog"
                 ? "Catálogo"
               : activeSection === "cartera"

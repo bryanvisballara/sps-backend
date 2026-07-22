@@ -7636,6 +7636,32 @@ apiRouter.delete("/management/catalogs/:id", async (request, response) => {
   }
 });
 
+apiRouter.get("/management/catalogs/:id/client-pricing", async (request, response) => {
+  try {
+    const catalog = await CatalogRecord.findById(request.params.id).lean();
+
+    if (!catalog) {
+      response.status(404).json({ message: "El catalogo no existe." });
+      return;
+    }
+
+    const pricingRows = await CatalogClientPricing.find({
+      catalogId: catalog._id,
+      active: { $ne: false },
+    }).select({ clientId: 1, clientName: 1, markupPercent: 1 }).sort({ clientName: 1 }).lean();
+
+    response.json({
+      clients: pricingRows.map((row) => ({
+        clientId: String(row.clientId ?? ""),
+        clientName: String(row.clientName ?? ""),
+        markupPercent: Number(row.markupPercent ?? 0),
+      })).filter((row) => row.clientId),
+    });
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
 apiRouter.put("/management/catalogs/:id/client-pricing", async (request, response) => {
   try {
     const catalog = await CatalogRecord.findById(request.params.id).lean();
