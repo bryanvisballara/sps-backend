@@ -5481,13 +5481,18 @@ export default function App() {
     ? Object.keys(warehouseOrderItemDraft)
     : [];
   const warehouseOrderEffectiveItems = selectedWarehouseOrderDetail
-    ? (selectedWarehouseOrderDetail.status === "delivered"
-      ? selectedWarehouseOrderDetail.items
-      : selectedWarehouseOrderDetail.items.filter((item) => warehouseOrderDraftProductIds.includes(item.productId)))
+    ? (
+      selectedWarehouseOrderDetail.status === "delivered" && !hasAccountingDispatchAccess(sessionUser?.role)
+        ? selectedWarehouseOrderDetail.items
+        : selectedWarehouseOrderDetail.items.filter((item) => warehouseOrderDraftProductIds.includes(item.productId))
+    )
     : [];
   const canAccountingAdjustDispatchPricing = hasAccountingDispatchAccess(sessionUser?.role)
     && selectedWarehouseOrderDetail !== null
-    && selectedWarehouseOrderDetail.status !== "delivered";
+    && (
+      selectedWarehouseOrderDetail.status !== "delivered"
+      || hasAccountingDispatchAccess(sessionUser?.role)
+    );
   const warehousePricedItems = selectedWarehouseOrderDetail
     ? warehouseOrderEffectiveItems.map((item) => {
       const productOption = productOptionsById.get(item.productId);
@@ -5557,6 +5562,11 @@ export default function App() {
   const warehouseOrderSubtotal = warehousePricedItems.reduce((sum, item) => sum + item.lineTotal, 0);
   const isWarehouseUser = sessionUser?.role === "warehouse-aruba";
   const canWarehouseInvoiceOrder = hasAccountingDispatchAccess(sessionUser?.role);
+  const canEditCompletedWarehouseOrders = hasAccountingDispatchAccess(sessionUser?.role);
+  const canMutateSelectedWarehouseOrder = Boolean(
+    selectedWarehouseOrderDetail
+    && (selectedWarehouseOrderDetail.status !== "delivered" || canEditCompletedWarehouseOrders)
+  );
   const warehouseOrderDiscountAmount = selectedWarehouseOrderDetail?.status === "dispatched"
     ? roundCurrencyValue(Math.max(0, Number(warehouseOrderDiscountDraft || 0)))
     : 0;
@@ -5611,7 +5621,9 @@ export default function App() {
   const pendingOrderDeleteOrderIds = new Set(
     orderDeleteRequests.filter((request) => request.status === "pending").map((request) => request.orderId),
   );
-  const warehouseIncomingOrders = warehouseOrders.filter((order) => order.status === "submitted");
+  const warehouseIncomingOrders = warehouseOrders.filter((order) => (
+    order.status === "submitted" || order.status === "dispatched"
+  ));
   const normalizedWarehouseIncomingClientFilter = warehouseIncomingClientFilter
     .trim()
     .normalize("NFD")
@@ -5654,7 +5666,7 @@ export default function App() {
   const warehouseSomeItemsChecked = warehousePricedItems.some((item) => Boolean(warehouseOrderChecklist[item.productId]));
   const warehouseOrderItemsDirty = Boolean(
     selectedWarehouseOrderDetail
-    && selectedWarehouseOrderDetail.status !== "delivered"
+    && (selectedWarehouseOrderDetail.status !== "delivered" || canEditCompletedWarehouseOrders)
     && (() => {
       const savedOrder = warehouseOrders.find((order) => String(order._id) === String(selectedWarehouseOrderDetail._id));
       const draftProductIds = Object.keys(warehouseOrderItemDraft);
@@ -10721,7 +10733,7 @@ export default function App() {
   }
 
   function addProductToWarehouseOrder() {
-    if (!selectedWarehouseOrderDetail || selectedWarehouseOrderDetail.status === "delivered") {
+    if (!selectedWarehouseOrderDetail || (selectedWarehouseOrderDetail.status === "delivered" && !canEditCompletedWarehouseOrders)) {
       return;
     }
 
@@ -10793,7 +10805,7 @@ export default function App() {
   }
 
   function addGiftToWarehouseOrder() {
-    if (!selectedWarehouseOrderDetail || selectedWarehouseOrderDetail.status === "delivered") {
+    if (!selectedWarehouseOrderDetail || (selectedWarehouseOrderDetail.status === "delivered" && !canEditCompletedWarehouseOrders)) {
       return;
     }
 
@@ -10850,7 +10862,7 @@ export default function App() {
   }
 
   function removeWarehouseGiftItem(giftKey: string) {
-    if (!selectedWarehouseOrderDetail || selectedWarehouseOrderDetail.status === "delivered") {
+    if (!selectedWarehouseOrderDetail || (selectedWarehouseOrderDetail.status === "delivered" && !canEditCompletedWarehouseOrders)) {
       return;
     }
 
@@ -10864,7 +10876,7 @@ export default function App() {
   }
 
   function removeWarehouseOrderItem(productId: string) {
-    if (!selectedWarehouseOrderDetail || selectedWarehouseOrderDetail.status === "delivered") {
+    if (!selectedWarehouseOrderDetail || (selectedWarehouseOrderDetail.status === "delivered" && !canEditCompletedWarehouseOrders)) {
       return;
     }
 
@@ -10902,7 +10914,11 @@ export default function App() {
   }
 
   async function handleWarehouseOrderEditSubmit() {
-    if (!selectedWarehouseOrderDetail || selectedWarehouseOrderDetail.status === "delivered") {
+    if (!selectedWarehouseOrderDetail) {
+      return;
+    }
+
+    if (selectedWarehouseOrderDetail.status === "delivered" && !canEditCompletedWarehouseOrders) {
       return;
     }
 
@@ -10963,6 +10979,7 @@ export default function App() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          requestedByRole: sessionUser?.role,
           items: nextItems,
           giftItems: (selectedWarehouseOrderDetail.giftItems ?? []).map((item) => ({
             productId: item.productId,
@@ -11048,7 +11065,10 @@ export default function App() {
       const response = await fetch(`${apiBaseUrl}/warehouse/orders/${selectedWarehouseOrderDetail._id}/invoice-number`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ invoiceNumber }),
+        body: JSON.stringify({
+          invoiceNumber,
+          requestedByRole: sessionUser?.role,
+        }),
       });
       const data = (await response.json()) as { message?: string; order?: SellerOrderRecord; invoiceNumber?: number };
 
@@ -11260,8 +11280,8 @@ export default function App() {
       return;
     }
 
-    if (selectedWarehouseOrderDetail.status !== "submitted") {
-      setWarehouseOrderCompletionStatus({ tone: "error", message: "Solo puedes enviar a despacho pedidos recibidos en bodega." });
+    if (selectedWarehouseOrderDetail.status !== "submitted" && selectedWarehouseOrderDetail.status !== "dispatched") {
+      setWarehouseOrderCompletionStatus({ tone: "error", message: "Solo puedes imprimir y facturar pedidos pendientes en bodega." });
       return;
     }
 
@@ -11269,11 +11289,17 @@ export default function App() {
       setIsDispatchingWarehouseOrder(true);
       setWarehouseOrderCompletionStatus(null);
 
+      const defaultPaymentMethod = resolveStoreDefaultPaymentMethod(
+        storeOptionsById.get(selectedWarehouseOrderDetail.storeId)?.defaultPaymentMethod,
+      ) || "credito";
+
       const response = await fetch(`${apiBaseUrl}/warehouse/orders/${selectedWarehouseOrderDetail._id}/dispatch`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          paymentMethod: defaultPaymentMethod,
           invoiceAmountAwg: warehouseInvoiceTotal,
+          invoiceNumber: selectedWarehouseOrderDetail.invoiceNumber ?? undefined,
           items: warehousePricedItems.map((item) => ({
             productId: item.productId,
             stockRowId: warehouseOrderLotDraft[item.productId]
@@ -11291,10 +11317,10 @@ export default function App() {
       }>(response, responseText);
 
       if (!response.ok || !data.order) {
-        throw new Error(data.message ?? "No fue posible enviar el pedido a despacho.");
+        throw new Error(data.message ?? "No fue posible imprimir y facturar el pedido.");
       }
 
-      const dispatchedOrder = {
+      const completedOrder = {
         ...selectedWarehouseOrderDetail,
         status: data.order.status,
         invoiceNumber: data.invoiceNumber ?? selectedWarehouseOrderDetail.invoiceNumber ?? null,
@@ -11315,27 +11341,23 @@ export default function App() {
       await refreshWarehouseOrders();
 
       const { pdf, fileName } = await buildWarehouseInvoicePdfDocument(
-        dispatchedOrder,
-        "dispatch",
+        completedOrder,
+        "invoice",
         data.invoiceNumber ?? null,
       );
       openPdfInNewTab(pdf, fileName);
 
       setSelectedWarehouseOrderDetail(null);
       setWarehouseOrderChecklist({});
-      if (isWarehouseUser) {
-        setWarehouseActiveSection("orders");
-      }
+      setWarehouseActiveSection("orders");
       setWarehouseOrderCompletionStatus({
         tone: "success",
-        message: isWarehouseUser
-          ? "Pedido impreso y enviado a despacho. Contabilidad lo facturara al confirmar la entrega."
-          : "Pedido impreso y enviado a despacho. Podras facturarlo cuando el transportador confirme la entrega.",
+        message: "Pedido impreso, facturado y marcado como completado.",
       });
     } catch (error) {
       setWarehouseOrderCompletionStatus({
         tone: "error",
-        message: error instanceof Error ? error.message : "No fue posible enviar el pedido a despacho.",
+        message: error instanceof Error ? error.message : "No fue posible imprimir y facturar el pedido.",
       });
     } finally {
       setIsDispatchingWarehouseOrder(false);
@@ -11779,18 +11801,25 @@ export default function App() {
   }
 
   async function dispatchIncomingWarehouseOrder(order: SellerOrderRecord) {
-    if (order.status !== "submitted") {
-      throw new Error(`El pedido de ${order.storeName} ya no esta pendiente de despacho.`);
+    if (order.status !== "submitted" && order.status !== "dispatched") {
+      throw new Error(`El pedido de ${order.storeName} ya no esta pendiente de facturacion.`);
     }
 
     if (!Array.isArray(order.items) || order.items.length === 0) {
-      throw new Error(`El pedido de ${order.storeName} no tiene productos para despachar.`);
+      throw new Error(`El pedido de ${order.storeName} no tiene productos para facturar.`);
     }
+
+    const defaultPaymentMethod = resolveStoreDefaultPaymentMethod(
+      storeOptionsById.get(order.storeId)?.defaultPaymentMethod,
+    ) || "credito";
 
     const response = await fetch(`${apiBaseUrl}/warehouse/orders/${order._id}/dispatch`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({
+        paymentMethod: defaultPaymentMethod,
+        invoiceNumber: order.invoiceNumber ?? undefined,
+      }),
     });
     const responseText = await response.text();
     const data = readApiResponse<{
@@ -11800,7 +11829,7 @@ export default function App() {
     }>(response, responseText);
 
     if (!response.ok || !data.order) {
-      throw new Error(data.message ?? `No fue posible enviar a despacho el pedido de ${order.storeName}.`);
+      throw new Error(data.message ?? `No fue posible imprimir y facturar el pedido de ${order.storeName}.`);
     }
 
     return {
@@ -11813,15 +11842,19 @@ export default function App() {
 
   async function handlePrintAndDispatchIncomingOrders(orders: SellerOrderRecord[]) {
     if (orders.length === 0) {
-      setWarehouseOrderCompletionStatus({ tone: "error", message: "Selecciona al menos un pedido para imprimir y enviar a despacho." });
+      setWarehouseOrderCompletionStatus({ tone: "error", message: "Selecciona al menos un pedido para imprimir y facturar." });
       return;
     }
 
     const documents: CommercialInvoiceDocumentInput[] = [];
 
     for (const order of orders) {
-      const dispatchedOrder = await dispatchIncomingWarehouseOrder(order);
-      documents.push(await fetchWarehouseDispatchDocument(dispatchedOrder));
+      const completedOrder = await dispatchIncomingWarehouseOrder(order);
+      const document = await fetchWarehouseDispatchDocument(completedOrder);
+      documents.push({
+        ...document,
+        documentKind: "invoice",
+      });
     }
 
     const { pdf, fileName } = await buildCommercialInvoiceBatchPdf(documents);
@@ -11832,8 +11865,8 @@ export default function App() {
     setWarehouseOrderCompletionStatus({
       tone: "success",
       message: orders.length === 1
-        ? "Pedido impreso y enviado a despacho."
-        : `${orders.length} pedidos impresos y enviados a despacho en un solo PDF.`,
+        ? "Pedido impreso, facturado y completado."
+        : `${orders.length} pedidos impresos, facturados y completados en un solo PDF.`,
     });
   }
 
@@ -17346,7 +17379,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             </div>
             <p className="portal-header-desc">
               {warehouseActiveSection === "orders" || warehouseActiveSection === "dispatch"
-                ? "Recibe pedidos, imprime guias de despacho y factura al confirmar la entrega."
+                ? "Recibe pedidos, imprime la factura y el pedido queda completado enseguida."
                 : "Consulta el inventario actual y registra salidas cuando sea necesario desde bodega."}
             </p>
           </header>
@@ -17408,7 +17441,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
                       <div className="warehouse-order-summary-card">
                         <p className="section-label">Checklist</p>
-                        <strong>{warehouseAllItemsChecked ? (canWarehouseInvoiceOrder ? "Listo para facturar" : "Listo para despacho") : "Pendiente de revisión"}</strong>
+                        <strong>{warehouseAllItemsChecked ? "Listo para imprimir y facturar" : "Pendiente de revisión"}</strong>
                         <p>
                           Marca cada producto preparado antes de completar el pedido.
                         </p>
@@ -17445,7 +17478,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           </>
                         ) : null}
                         <strong>{formatAwgCurrency(warehouseInvoiceTotal)} AWG</strong>
-                        {canWarehouseInvoiceOrder && selectedWarehouseOrderDetail.status === "dispatched" ? (
+                        {canEditCompletedWarehouseOrders && (selectedWarehouseOrderDetail.status === "dispatched" || selectedWarehouseOrderDetail.status === "delivered") ? (
                           <div className="warehouse-order-invoice-number-panel warehouse-order-invoice-number-panel--card">
                             {isEditingAccountingOrderInvoice ? (
                               <div className="warehouse-order-invoice-number-editor">
@@ -17563,7 +17596,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             <p className="route-helper-text">Si el transportista solicito un producto adicional, anadelo aqui y guarda los cambios antes de facturar.</p>
                           ) : null}
                         </div>
-                        {selectedWarehouseOrderDetail.status !== "delivered" ? (
+                        {canMutateSelectedWarehouseOrder ? (
                           <button
                             className="warehouse-action-button warehouse-action-button--add"
                             type="button"
@@ -17585,7 +17618,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 type="checkbox"
                                 aria-label="Marcar todos los productos"
                                 checked={warehouseAllItemsChecked}
-                                disabled={selectedWarehouseOrderDetail.status === "delivered"}
+                                disabled={!canMutateSelectedWarehouseOrder}
                                 onChange={(event) => toggleAllWarehouseOrderChecks(event.target.checked)}
                               />
                             </th>
@@ -17597,7 +17630,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             <th>Precio</th>
                             <th>Total</th>
                             <th className="warehouse-order-col-optional">Notas</th>
-                            {selectedWarehouseOrderDetail.status !== "delivered" ? <th>Quitar</th> : null}
+                            {canMutateSelectedWarehouseOrder ? <th>Quitar</th> : null}
                           </tr>
                         </thead>
                         <tbody>
@@ -17608,7 +17641,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                   className="warehouse-order-check"
                                   type="checkbox"
                                   checked={Boolean(warehouseOrderChecklist[item.productId])}
-                                  disabled={selectedWarehouseOrderDetail.status === "delivered"}
+                                  disabled={!canMutateSelectedWarehouseOrder}
                                   onChange={(event) =>
                                     setWarehouseOrderChecklist((current) => ({
                                       ...current,
@@ -17729,7 +17762,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 )}
                               </td>
                               <td className="warehouse-order-col-optional">{item.notes || "-"}</td>
-                              {selectedWarehouseOrderDetail.status !== "delivered" ? (
+                              {canMutateSelectedWarehouseOrder ? (
                                 <td>
                                   <button
                                     className="ghost-button warehouse-order-remove-item"
@@ -17754,7 +17787,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           <h3>Productos de regalo</h3>
                           <p>Se muestran en la factura a precio 0 y se descuentan del inventario al facturar.</p>
                         </div>
-                        {selectedWarehouseOrderDetail.status !== "delivered" ? (
+                        {canMutateSelectedWarehouseOrder ? (
                           <button
                             className="warehouse-action-button warehouse-action-button--add"
                             type="button"
@@ -17776,7 +17809,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 <th>Lote</th>
                                 <th>Cant.</th>
                                 <th>Precio</th>
-                                {selectedWarehouseOrderDetail.status !== "delivered" ? <th>Quitar</th> : null}
+                                {canMutateSelectedWarehouseOrder ? <th>Quitar</th> : null}
                               </tr>
                             </thead>
                             <tbody>
@@ -17791,7 +17824,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                     <td>{lot ? formatWarehouseLotOptionLabel(lot, 0) : (gift.stockRowId ? "Lote seleccionado" : "-")}</td>
                                     <td>{gift.quantity}</td>
                                     <td>0 AWG</td>
-                                    {selectedWarehouseOrderDetail.status !== "delivered" ? (
+                                    {canMutateSelectedWarehouseOrder ? (
                                       <td>
                                         <button
                                           className="ghost-button warehouse-order-remove-item"
@@ -17817,13 +17850,13 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <p>
                         Estado actual: <strong>{formatSellerOrderStatus(selectedWarehouseOrderDetail.status)}</strong>
                       </p>
-                      {selectedWarehouseOrderDetail.status !== "delivered" ? (
+                      {canMutateSelectedWarehouseOrder ? (
                         <p className="route-helper-text">
                           {selectedWarehouseOrderDetail.status === "dispatched"
                             ? (canWarehouseInvoiceOrder
                               ? "Ajusta cantidad y total por producto si hace falta. El precio unitario se calcula automaticamente antes de facturar."
                               : "Ajusta cantidades o quita productos si el cliente cambio de opinion antes de la entrega.")
-                            : "Ajusta cantidades si hubo dano en bodega o quita productos que no se puedan despachar."}
+                            : "Ajusta cantidades, lotes u obsequios antes de imprimir y facturar."}
                         </p>
                       ) : null}
                       {warehouseOrderCompletionHints.length > 0 ? (
@@ -17834,7 +17867,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         </ul>
                       ) : null}
                       <div className="warehouse-order-toolbar-actions">
-                      {selectedWarehouseOrderDetail.status !== "delivered" ? (
+                      {canMutateSelectedWarehouseOrder ? (
                         <button
                           className="warehouse-action-button warehouse-action-button--save"
                           type="button"
@@ -17854,7 +17887,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           Reimprimir factura
                         </button>
                       ) : null}
-                      {selectedWarehouseOrderDetail.status === "submitted" ? (
+                      {(selectedWarehouseOrderDetail.status === "submitted" || selectedWarehouseOrderDetail.status === "dispatched") ? (
                         <button
                           className="submit-button seller-order-submit"
                           type="button"
@@ -17869,25 +17902,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           }
                           onClick={() => void handleWarehouseOrderDispatch()}
                         >
-                          {isDispatchingWarehouseOrder ? "Imprimiendo guia..." : "Imprimir y enviar a despacho"}
-                        </button>
-                      ) : null}
-                      {selectedWarehouseOrderDetail.status === "dispatched" && canWarehouseInvoiceOrder ? (
-                        <button
-                          className="submit-button seller-order-submit"
-                          type="button"
-                          disabled={
-                            isCompletingWarehouseOrder
-                            || isDispatchingWarehouseOrder
-                            || isSavingWarehouseOrderEdit
-                            || warehouseOrderItemsDirty
-                            || (Boolean(selectedCatalogId) && isLoadingCatalogPreview)
-                            || warehousePricedItems.length === 0
-                            || !warehouseAllItemsChecked
-                          }
-                          onClick={openWarehousePaymentModal}
-                        >
-                          Facturar y terminar pedido
+                          {isDispatchingWarehouseOrder ? "Imprimiendo y facturando..." : "Imprimir y facturar"}
                         </button>
                       ) : null}
                       </div>
@@ -17900,7 +17915,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <p className="section-label">Pedidos</p>
                     <h2>Pedidos del equipo comercial</h2>
                     <p className="route-helper-text">
-                      Recibe pedidos, imprime guias de despacho en lote o de forma individual, y factura al confirmar la entrega.
+                      Recibe pedidos, imprime y factura en lote o de forma individual. Al imprimir, el pedido pasa a completados.
                     </p>
                   </article>
 
@@ -17948,8 +17963,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         onClick={() => void handlePrintSelectedIncomingOrders()}
                       >
                         {isPrintingSelectedIncomingOrders
-                          ? "Imprimiendo y enviando a despacho..."
-                          : `Imprimir y enviar a despacho (${selectedIncomingOrdersCount})`}
+                          ? "Imprimiendo y facturando..."
+                          : `Imprimir y facturar (${selectedIncomingOrdersCount})`}
                       </button>
                     </div>
 
@@ -17982,8 +17997,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             <button
                               className="table-action-icon"
                               type="button"
-                              aria-label="Imprimir y enviar a despacho"
-                              title="Imprimir y enviar a despacho"
+                              aria-label="Imprimir y facturar"
+                              title="Imprimir y facturar"
                               disabled={isPrintingSelectedIncomingOrders || Boolean(printingIncomingOrderId)}
                               onClick={() => void handlePrintIncomingOrder(order)}
                             >
@@ -17994,107 +18009,6 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                   <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
                                 </svg>
                               )}
-                            </button>
-                          </>
-                        );
-                      }}
-                    />
-                  </article>
-
-                  <article className="database-card">
-                    <div className="management-table-header">
-                      <div>
-                        <h2>Pedidos en despacho</h2>
-                        <p>Pedidos ya impresos y enviados al transportador.{canWarehouseInvoiceOrder ? " Ajusta productos si el cliente cambia de opinion antes de facturar." : " Contabilidad facturara el pedido al confirmar la entrega."}</p>
-                      </div>
-                      <p className="management-table-meta">{filteredWarehouseDispatchOrders.length} pedidos</p>
-                    </div>
-
-                    <div className="dispatch-bulk-toolbar">
-                      <label className="field">
-                        <span>Desde</span>
-                        <input
-                          type="date"
-                          value={dispatchStartDateFilter}
-                          onChange={(event) => setDispatchStartDateFilter(event.target.value)}
-                        />
-                      </label>
-                      <label className="field">
-                        <span>Hasta</span>
-                        <input
-                          type="date"
-                          value={dispatchEndDateFilter}
-                          onChange={(event) => setDispatchEndDateFilter(event.target.value)}
-                        />
-                      </label>
-                      <label className="dispatch-select-all">
-                        <input
-                          type="checkbox"
-                          checked={areAllFilteredDispatchOrdersSelected}
-                          disabled={filteredWarehouseDispatchOrders.length === 0}
-                          onChange={(event) => toggleAllFilteredDispatchOrders(event.target.checked)}
-                        />
-                        <span>Seleccionar todos los visibles</span>
-                      </label>
-                      <button
-                        className="primary-action-button"
-                        type="button"
-                        disabled={selectedDispatchOrdersCount === 0 || isPrintingSelectedDispatchOrders}
-                        onClick={() => void handlePrintSelectedDispatchOrders()}
-                      >
-                        {isPrintingSelectedDispatchOrders
-                          ? "Generando documento..."
-                          : `Imprimir seleccionados (${selectedDispatchOrdersCount})`}
-                      </button>
-                    </div>
-
-                    <WarehouseOrderList
-                      orders={filteredWarehouseDispatchOrders}
-                      isLoading={isLoadingWarehouseOrders}
-                      emptyMessage={dispatchStartDateFilter || dispatchEndDateFilter
-                        ? "No hay pedidos en despacho dentro de las fechas seleccionadas."
-                        : "No hay pedidos en despacho."}
-                      loadingMessage="Cargando pedidos en despacho..."
-                      showSalesRep={false}
-                      showConsecutivo
-                      showInternalNotes
-                      selectable
-                      selectedOrderIds={selectedDispatchOrderIds}
-                      onToggleOrderSelection={toggleDispatchOrderSelection}
-                      onSelectOrder={setSelectedWarehouseOrderDetail}
-                      hideDefaultViewButton
-                      renderActions={(order) => {
-                        const isCancellingDispatch = cancellingWarehouseDispatchOrderId === order._id;
-
-                        return (
-                          <>
-                            <button
-                              className="seller-order-detail-trigger"
-                              type="button"
-                              onClick={() => setSelectedWarehouseOrderDetail(order)}
-                            >
-                              Editar
-                            </button>
-                            <button
-                              className="table-action-icon"
-                              type="button"
-                              aria-label="Reimprimir factura"
-                              title="Reimprimir factura"
-                              onClick={() => void handlePrintCompletedOrderSummary(order)}
-                            >
-                              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
-                              </svg>
-                            </button>
-                            <button
-                              className="table-action-icon is-danger"
-                              type="button"
-                              aria-label="Cancelar despacho"
-                              title="Cancelar despacho"
-                              disabled={isCancellingDispatch}
-                              onClick={() => void handleCancelWarehouseDispatch(order)}
-                            >
-                              x
                             </button>
                           </>
                         );
@@ -26942,7 +26856,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               }
                               onClick={() => void handleWarehouseOrderDispatch()}
                             >
-                              {isDispatchingWarehouseOrder ? "Imprimiendo guia..." : "Imprimir y enviar a despacho"}
+                              {isDispatchingWarehouseOrder ? "Imprimiendo y facturando..." : "Imprimir y facturar"}
                             </button>
                           ) : null}
                         </div>

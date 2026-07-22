@@ -32,7 +32,7 @@ import { User } from "../modules/users/user.model.js";
 import { SalesRepGoal } from "../modules/users/sales-rep-goal.model.js";
 import { Warehouse } from "../modules/warehouses/warehouse.model.js";
 import { isFirebasePushConfigured } from "../services/firebase-admin.service.js";
-import { notifyNewSalesOrder, notifyContabilidadOrderDispatched, notifyRouteAssigned, registerPushToken, unregisterPushToken, } from "../services/push-notification.service.js";
+import { notifyNewSalesOrder, notifyRouteAssigned, registerPushToken, unregisterPushToken, } from "../services/push-notification.service.js";
 import { buildFinancialReports } from "../services/financial-reports.service.js";
 import { buildOrderPlannerReport } from "../services/order-planner.service.js";
 import { buildQuickBooksBillExportCsv } from "../services/quickbooks-bill-export.service.js";
@@ -2063,6 +2063,7 @@ apiRouter.post("/sales/orders", async (request, response) => {
                 throw new Error("Uno o varios productos del obsequio ya no estan disponibles.");
             }
         }
+        const invoiceNumber = await getNextInvoiceNumber();
         const order = await Order.create({
             routeId: payload.routeId,
             routeName: payload.routeName,
@@ -2074,6 +2075,7 @@ apiRouter.post("/sales/orders", async (request, response) => {
             deliveryZone: store.address?.trim() || store.name,
             deliveryDate: payload.deliveryDate,
             status: "submitted",
+            invoiceNumber,
             orderNotes: payload.orderNotes,
             internalOrderNotes: payload.internalOrderNotes,
             items: payload.items,
@@ -2082,6 +2084,7 @@ apiRouter.post("/sales/orders", async (request, response) => {
         response.status(201).json({
             message: `Pedido enviado a bodega para ${store.name}.`,
             order,
+            invoiceNumber,
         });
         void notifyNewSalesOrder(order);
     }
@@ -2239,8 +2242,11 @@ apiRouter.put("/warehouse/orders/:id/invoice-number", async (request, response) 
             response.status(404).json({ message: "El pedido no existe." });
             return;
         }
-        if (order.status === "delivered") {
-            response.status(400).json({ message: "No puedes cambiar el consecutivo de un pedido ya facturado." });
+        const requestedByRole = typeof request.body?.requestedByRole === "string"
+            ? request.body.requestedByRole.trim()
+            : "";
+        if (order.status === "delivered" && requestedByRole !== "management" && requestedByRole !== "contabilidad") {
+            response.status(400).json({ message: "Solo gerencia o contabilidad pueden cambiar el consecutivo de un pedido ya facturado." });
             return;
         }
         const invoiceNumber = await resolveRequestedInvoiceNumber(request.body?.invoiceNumber, order);
@@ -2248,6 +2254,9 @@ apiRouter.put("/warehouse/orders/:id/invoice-number", async (request, response) 
         if (!updatedOrder) {
             response.status(404).json({ message: "El pedido no existe." });
             return;
+        }
+        if (updatedOrder.status === "delivered") {
+            await CarteraEntry.findOneAndUpdate({ orderId: String(updatedOrder._id), active: { $ne: false } }, { invoiceNumber }, { runValidators: true });
         }
         response.json({
             message: `Consecutivo de factura actualizado a #${invoiceNumber}.`,
@@ -2266,11 +2275,17 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
             response.status(404).json({ message: "El pedido no existe." });
             return;
         }
-        if (order.status === "delivered") {
-            response.status(400).json({ message: "No puedes modificar un pedido ya completado." });
+        const requestedByRole = typeof request.body?.requestedByRole === "string"
+            ? request.body.requestedByRole.trim()
+            : "";
+        const canEditDelivered = requestedByRole === "management" || requestedByRole === "contabilidad";
+        if (order.status === "delivered" && !canEditDelivered) {
+            response.status(400).json({ message: "Solo gerencia o contabilidad pueden modificar un pedido ya completado." });
             return;
         }
         const payload = request.body;
+        const previousItems = Array.isArray(order.items) ? order.items.map((item) => ({ ...item })) : [];
+        const previousGiftItems = Array.isArray(order.giftItems) ? order.giftItems.map((item) => ({ ...item })) : [];
         const items = normalizeWarehouseOrderItems(payload.items, order.items);
         const giftItems = normalizeOrderGiftItems(payload.giftItems ?? order.giftItems ?? []);
         const productIds = Array.from(new Set([
@@ -2283,13 +2298,32 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
             response.status(400).json({ message: "Uno o varios productos del pedido ya no estan disponibles." });
             return;
         }
+        if (order.status === "delivered") {
+            await applyOrderInventoryDelta(String(order._id), [...previousItems, ...previousGiftItems], [...items, ...giftItems]);
+        }
         const updatedOrder = await Order.findByIdAndUpdate(order._id, { items, giftItems }, { new: true, runValidators: true }).lean();
         if (!updatedOrder) {
             response.status(404).json({ message: "El pedido no existe." });
             return;
         }
+        if (updatedOrder.status === "delivered") {
+            const carteraEntry = await CarteraEntry.findOne({ orderId: String(updatedOrder._id), active: { $ne: false } }).lean();
+            if (carteraEntry) {
+                const invoiceLines = await buildWarehouseInvoiceDocumentLines(updatedOrder);
+                const newInvoiceAmountAwg = Math.round(invoiceLines.reduce((sum, line) => sum + Number(line.amount ?? 0), 0) * 100) / 100;
+                await updateCarteraAfterInvoiceChange({
+                    carteraEntryId: String(carteraEntry._id),
+                    orderId: String(updatedOrder._id),
+                    newInvoiceAmountAwg,
+                    paymentMethod: String(carteraEntry.paymentMethod ?? "credito"),
+                    invoiceNumber: Number(updatedOrder.invoiceNumber ?? 0) || undefined,
+                });
+            }
+        }
         response.json({
-            message: "Pedido actualizado correctamente desde bodega.",
+            message: updatedOrder.status === "delivered"
+                ? "Pedido completado actualizado. Inventario y cartera fueron ajustados."
+                : "Pedido actualizado correctamente desde bodega.",
             order: await mapWarehouseOrderRecord(updatedOrder),
         });
     }
@@ -2915,63 +2949,166 @@ function mapOrderDeleteRequestRecord(entry) {
         updatedAt: entry.updatedAt ? String(entry.updatedAt) : "",
     };
 }
+function resolveCarteraPaymentMethodFromStoreDefault(value) {
+    const normalized = typeof value === "string" ? value.trim() : "";
+    if (normalized === "credito" || normalized === "transferencia" || normalized === "efectivo") {
+        return normalized;
+    }
+    if (normalized === "Pago a la recepción del servicio") {
+        return "efectivo";
+    }
+    if (normalized === "Pago arriendo"
+        || normalized === "Pago en 15 días"
+        || normalized === "Pago en 30 días"
+        || normalized === "Pago en 60 días") {
+        return "credito";
+    }
+    return "credito";
+}
+async function resolveCompletePaymentMethod(rawPaymentMethod, storeId) {
+    if (typeof rawPaymentMethod === "string" && rawPaymentMethod.trim()) {
+        return normalizeCarteraPaymentMethod(rawPaymentMethod);
+    }
+    const store = storeId ? await Store.findById(String(storeId)).select({ defaultPaymentMethod: 1 }).lean() : null;
+    return resolveCarteraPaymentMethodFromStoreDefault(store?.defaultPaymentMethod);
+}
+async function resolveCompleteInvoiceAmountAwg(order, rawInvoiceAmount, rawItems) {
+    if (rawInvoiceAmount !== undefined && rawInvoiceAmount !== null && String(rawInvoiceAmount).trim() !== "") {
+        return normalizeCarteraInvoiceAmount(rawInvoiceAmount);
+    }
+    const orderItems = (Array.isArray(order.items) ? order.items : [])
+        .map((item) => ({
+        productId: String(item.productId ?? ""),
+        quantity: Number(item.quantity ?? 0),
+        salePriceAwg: item.salePriceAwg,
+    }))
+        .filter((item) => item.productId);
+    const itemsWithPrices = mergeOrderItemPrices(orderItems, rawItems);
+    const lines = await buildWarehouseInvoiceDocumentLines({
+        items: itemsWithPrices,
+        giftItems: Array.isArray(order.giftItems) ? order.giftItems : [],
+    });
+    return Math.round(lines.reduce((sum, line) => sum + Number(line.amount ?? 0), 0) * 100) / 100;
+}
+async function completeWarehouseOrderById(orderId, body = {}) {
+    const order = await Order.findById(orderId).lean();
+    if (!order) {
+        throw Object.assign(new Error("El pedido no existe."), { statusCode: 404 });
+    }
+    if (order.status === "delivered") {
+        return {
+            alreadyCompleted: true,
+            message: "El pedido ya estaba completado.",
+            order: {
+                _id: String(order._id),
+                status: order.status,
+                updatedAt: order.updatedAt,
+            },
+            carteraEntryId: null,
+            invoiceNumber: Number(order.invoiceNumber ?? 0) || null,
+            creditCollectionsApplied: 0,
+        };
+    }
+    if (order.status !== "submitted" && order.status !== "dispatched") {
+        throw Object.assign(new Error("Solo puedes imprimir y facturar pedidos recibidos en bodega."), { statusCode: 400 });
+    }
+    const paymentMethod = await resolveCompletePaymentMethod(body.paymentMethod, order.storeId);
+    const invoiceAmountAwg = await resolveCompleteInvoiceAmountAwg(order, body.invoiceAmountAwg, body.items);
+    const creditCollections = normalizeCreditCollectionsPayload(body.creditCollections);
+    const invoicedAt = resolveOrderInvoiceDate(order);
+    const isCreditInvoice = paymentMethod === "credito";
+    const initialCollectedAmountAwg = isCreditInvoice ? 0 : invoiceAmountAwg;
+    const initialOutstandingAmountAwg = isCreditInvoice ? invoiceAmountAwg : 0;
+    const invoiceNumber = await resolveRequestedInvoiceNumber(body.invoiceNumber, order);
+    const orderItems = Array.isArray(order.items) ? order.items : [];
+    const itemsWithPrices = mergeOrderItemPrices(orderItems, body.items);
+    await applyOrderInventoryDeduction({
+        _id: order._id,
+        items: itemsWithPrices,
+        giftItems: Array.isArray(order.giftItems) ? order.giftItems : [],
+    });
+    const updatedOrder = await Order.findByIdAndUpdate(orderId, { status: "delivered", items: itemsWithPrices, invoiceNumber }, { new: true, runValidators: true }).lean();
+    if (!updatedOrder) {
+        throw Object.assign(new Error("El pedido no existe."), { statusCode: 404 });
+    }
+    const carteraEntry = await CarteraEntry.findOneAndUpdate({ orderId: String(updatedOrder._id) }, {
+        orderId: String(updatedOrder._id),
+        storeId: String(updatedOrder.storeId ?? ""),
+        storeName: String(updatedOrder.storeName ?? ""),
+        salesRepId: String(updatedOrder.salesRepId ?? ""),
+        salesRepName: String(updatedOrder.salesRepName ?? ""),
+        routeId: String(updatedOrder.routeId ?? ""),
+        routeName: String(updatedOrder.routeName ?? ""),
+        routeDay: String(updatedOrder.routeDay ?? ""),
+        deliveryZone: String(updatedOrder.deliveryZone ?? ""),
+        paymentMethod,
+        invoiceAmountAwg,
+        invoiceNumber,
+        collectedAmountAwg: initialCollectedAmountAwg,
+        outstandingAmountAwg: initialOutstandingAmountAwg,
+        invoicedAt,
+        active: true,
+    }, { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true }).lean();
+    if (!carteraEntry) {
+        throw new Error("No fue posible registrar la factura en cartera.");
+    }
+    if (!isCreditInvoice) {
+        await CarteraCollection.create({
+            carteraEntryId: String(carteraEntry._id),
+            storeId: String(updatedOrder.storeId ?? ""),
+            storeName: String(updatedOrder.storeName ?? ""),
+            relatedOrderId: String(updatedOrder._id),
+            amountAwg: invoiceAmountAwg,
+            paymentMethod,
+            collectedAt: invoicedAt,
+            salesRepId: String(updatedOrder.salesRepId ?? ""),
+            salesRepName: String(updatedOrder.salesRepName ?? ""),
+            notes: "Recaudo al facturar pedido.",
+            active: true,
+        });
+    }
+    const appliedCreditCollections = await applyCreditCollections(creditCollections, {
+        storeId: String(updatedOrder.storeId ?? ""),
+        storeName: String(updatedOrder.storeName ?? ""),
+        relatedOrderId: String(updatedOrder._id),
+        salesRepId: String(updatedOrder.salesRepId ?? ""),
+        salesRepName: String(updatedOrder.salesRepName ?? ""),
+        collectedAt: invoicedAt,
+    });
+    return {
+        alreadyCompleted: false,
+        message: appliedCreditCollections.length > 0
+            ? "Pedido impreso, facturado y recaudos de credito registrados correctamente."
+            : "Pedido impreso, facturado y completado correctamente.",
+        order: {
+            _id: String(updatedOrder._id),
+            status: updatedOrder.status,
+            updatedAt: updatedOrder.updatedAt,
+        },
+        carteraEntryId: String(carteraEntry._id),
+        invoiceNumber,
+        creditCollectionsApplied: appliedCreditCollections.length,
+    };
+}
 apiRouter.put("/warehouse/orders/:id/dispatch", async (request, response) => {
     try {
-        const order = await Order.findById(request.params.id).lean();
-        if (!order) {
-            response.status(404).json({ message: "El pedido no existe." });
-            return;
-        }
-        if (order.status === "delivered") {
-            response.status(400).json({ message: "No puedes enviar a despacho un pedido ya facturado." });
-            return;
-        }
-        if (order.status === "dispatched") {
-            const existingInvoiceNumber = Number(order.invoiceNumber ?? 0) || await getNextInvoiceNumber();
-            const currentOrder = Number(order.invoiceNumber ?? 0) > 0
-                ? order
-                : await Order.findByIdAndUpdate(request.params.id, { invoiceNumber: existingInvoiceNumber }, { new: true, runValidators: true }).lean();
-            response.json({
-                message: "El pedido ya estaba en despacho.",
-                order: {
-                    _id: String(currentOrder?._id ?? order._id),
-                    status: currentOrder?.status ?? order.status,
-                    updatedAt: currentOrder?.updatedAt ?? order.updatedAt,
-                },
-                invoiceNumber: existingInvoiceNumber,
-            });
-            return;
-        }
-        if (order.status !== "submitted") {
-            response.status(400).json({ message: "Solo puedes enviar a despacho pedidos recibidos en bodega." });
-            return;
-        }
-        const orderItems = Array.isArray(order.items) ? order.items : [];
-        const itemsWithPrices = mergeOrderItemPrices(orderItems, request.body?.items);
-        const invoiceNumber = Number(order.invoiceNumber ?? 0) || await getNextInvoiceNumber();
-        const updatedOrder = await Order.findByIdAndUpdate(request.params.id, { status: "dispatched", items: itemsWithPrices, invoiceNumber }, { new: true, runValidators: true }).lean();
-        if (!updatedOrder) {
-            response.status(404).json({ message: "El pedido no existe." });
-            return;
-        }
-        await deactivateCarteraForOrder(String(updatedOrder._id));
+        // Print now invoices and completes the order (dispatch step removed).
+        const body = typeof request.body === "object" && request.body !== null
+            ? request.body
+            : {};
+        const result = await completeWarehouseOrderById(String(request.params.id), body);
         response.json({
-            message: "Pedido enviado a despacho correctamente.",
-            order: {
-                _id: String(updatedOrder._id),
-                status: updatedOrder.status,
-                updatedAt: updatedOrder.updatedAt,
-            },
-            invoiceNumber,
-        });
-        void notifyContabilidadOrderDispatched({
-            _id: updatedOrder._id,
-            storeName: updatedOrder.storeName,
-            salesRepName: updatedOrder.salesRepName,
-            routeName: updatedOrder.routeName,
+            message: result.message,
+            order: result.order,
+            invoiceNumber: result.invoiceNumber,
+            carteraEntryId: result.carteraEntryId,
         });
     }
     catch (error) {
+        if (error instanceof Error && "statusCode" in error && typeof error.statusCode === "number") {
+            response.status(error.statusCode).json({ message: error.message });
+            return;
+        }
         sendCreationError(response, error);
     }
 });
@@ -3030,106 +3167,23 @@ apiRouter.put("/warehouse/orders/:id/cancel-dispatch", async (request, response)
 });
 apiRouter.put("/warehouse/orders/:id/complete", async (request, response) => {
     try {
-        const order = await Order.findById(request.params.id).lean();
-        if (!order) {
-            response.status(404).json({ message: "El pedido no existe." });
-            return;
-        }
-        if (order.status === "delivered") {
-            response.json({
-                message: "El pedido ya estaba completado.",
-                order: {
-                    _id: String(order._id),
-                    status: order.status,
-                    updatedAt: order.updatedAt,
-                },
-                carteraEntryId: null,
-            });
-            return;
-        }
-        if (order.status !== "dispatched") {
-            response.status(400).json({ message: "Primero imprime y envia el pedido a despacho antes de facturarlo." });
-            return;
-        }
-        const paymentMethod = normalizeCarteraPaymentMethod(request.body?.paymentMethod);
-        const invoiceAmountAwg = normalizeCarteraInvoiceAmount(request.body?.invoiceAmountAwg);
-        const creditCollections = normalizeCreditCollectionsPayload(request.body?.creditCollections);
-        const invoicedAt = resolveOrderInvoiceDate(order);
-        const isCreditInvoice = paymentMethod === "credito";
-        const initialCollectedAmountAwg = isCreditInvoice ? 0 : invoiceAmountAwg;
-        const initialOutstandingAmountAwg = isCreditInvoice ? invoiceAmountAwg : 0;
-        const invoiceNumber = await resolveRequestedInvoiceNumber(request.body?.invoiceNumber, order);
-        const orderItems = Array.isArray(order.items) ? order.items : [];
-        const itemsWithPrices = mergeOrderItemPrices(orderItems, request.body?.items);
-        await applyOrderInventoryDeduction({
-            _id: order._id,
-            items: orderItems,
-            giftItems: Array.isArray(order.giftItems) ? order.giftItems : [],
-        });
-        const updatedOrder = await Order.findByIdAndUpdate(request.params.id, { status: "delivered", items: itemsWithPrices, invoiceNumber }, { new: true, runValidators: true }).lean();
-        if (!updatedOrder) {
-            response.status(404).json({ message: "El pedido no existe." });
-            return;
-        }
-        const carteraEntry = await CarteraEntry.findOneAndUpdate({ orderId: String(updatedOrder._id) }, {
-            orderId: String(updatedOrder._id),
-            storeId: String(updatedOrder.storeId ?? ""),
-            storeName: String(updatedOrder.storeName ?? ""),
-            salesRepId: String(updatedOrder.salesRepId ?? ""),
-            salesRepName: String(updatedOrder.salesRepName ?? ""),
-            routeId: String(updatedOrder.routeId ?? ""),
-            routeName: String(updatedOrder.routeName ?? ""),
-            routeDay: String(updatedOrder.routeDay ?? ""),
-            deliveryZone: String(updatedOrder.deliveryZone ?? ""),
-            paymentMethod,
-            invoiceAmountAwg,
-            invoiceNumber,
-            collectedAmountAwg: initialCollectedAmountAwg,
-            outstandingAmountAwg: initialOutstandingAmountAwg,
-            invoicedAt,
-            active: true,
-        }, { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true }).lean();
-        if (!carteraEntry) {
-            throw new Error("No fue posible registrar la factura en cartera.");
-        }
-        if (!isCreditInvoice) {
-            await CarteraCollection.create({
-                carteraEntryId: String(carteraEntry._id),
-                storeId: String(updatedOrder.storeId ?? ""),
-                storeName: String(updatedOrder.storeName ?? ""),
-                relatedOrderId: String(updatedOrder._id),
-                amountAwg: invoiceAmountAwg,
-                paymentMethod,
-                collectedAt: invoicedAt,
-                salesRepId: String(updatedOrder.salesRepId ?? ""),
-                salesRepName: String(updatedOrder.salesRepName ?? ""),
-                notes: "Recaudo al facturar pedido.",
-                active: true,
-            });
-        }
-        const appliedCreditCollections = await applyCreditCollections(creditCollections, {
-            storeId: String(updatedOrder.storeId ?? ""),
-            storeName: String(updatedOrder.storeName ?? ""),
-            relatedOrderId: String(updatedOrder._id),
-            salesRepId: String(updatedOrder.salesRepId ?? ""),
-            salesRepName: String(updatedOrder.salesRepName ?? ""),
-            collectedAt: invoicedAt,
-        });
+        const body = typeof request.body === "object" && request.body !== null
+            ? request.body
+            : {};
+        const result = await completeWarehouseOrderById(String(request.params.id), body);
         response.json({
-            message: appliedCreditCollections.length > 0
-                ? "Pedido facturado y recaudos de credito registrados correctamente."
-                : "Pedido facturado y completado correctamente.",
-            order: {
-                _id: String(updatedOrder._id),
-                status: updatedOrder.status,
-                updatedAt: updatedOrder.updatedAt,
-            },
-            carteraEntryId: String(carteraEntry._id),
-            invoiceNumber,
-            creditCollectionsApplied: appliedCreditCollections.length,
+            message: result.message,
+            order: result.order,
+            carteraEntryId: result.carteraEntryId,
+            invoiceNumber: result.invoiceNumber,
+            creditCollectionsApplied: result.creditCollectionsApplied,
         });
     }
     catch (error) {
+        if (error instanceof Error && "statusCode" in error && typeof error.statusCode === "number") {
+            response.status(error.statusCode).json({ message: error.message });
+            return;
+        }
         sendCreationError(response, error);
     }
 });
