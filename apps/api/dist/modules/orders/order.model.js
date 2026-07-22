@@ -32,6 +32,12 @@ const orderSchema = new Schema({
     items: { type: [orderItemSchema], default: [] },
     giftItems: { type: [orderGiftItemSchema], default: [] },
     invoiceNumber: { type: Number, min: 1 },
+    invoiceVoided: { type: Boolean, default: false, index: true },
+    invoiceVoidedAt: { type: Date },
+    invoiceVoidedByUserId: { type: String, trim: true, default: "" },
+    invoiceVoidedByUserName: { type: String, trim: true, default: "" },
+    invoiceVoidedByRole: { type: String, trim: true, default: "" },
+    invoiceVoidReason: { type: String, trim: true, default: "" },
     orderNotes: { type: String, trim: true, default: "" },
     internalOrderNotes: { type: String, trim: true, default: "" },
 }, { timestamps: true });

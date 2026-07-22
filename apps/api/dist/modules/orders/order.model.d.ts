@@ -145,9 +145,15 @@ export declare const Order: import("mongoose").Model<{
             isValid?: {} | null | undefined;
         } | null | undefined;
     }>;
+    invoiceVoided: boolean;
+    invoiceVoidedByUserId: string;
+    invoiceVoidedByUserName: string;
+    invoiceVoidedByRole: string;
+    invoiceVoidReason: string;
     orderNotes: string;
     internalOrderNotes: string;
     invoiceNumber?: number | null | undefined;
+    invoiceVoidedAt?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps, {}, {}, {}, import("mongoose").Document<unknown, {}, {
     status: "draft" | "submitted" | "picking" | "dispatched" | "delivered";
     storeId: string;
@@ -294,9 +300,15 @@ export declare const Order: import("mongoose").Model<{
             isValid?: {} | null | undefined;
         } | null | undefined;
     }>;
+    invoiceVoided: boolean;
+    invoiceVoidedByUserId: string;
+    invoiceVoidedByUserName: string;
+    invoiceVoidedByRole: string;
+    invoiceVoidReason: string;
     orderNotes: string;
     internalOrderNotes: string;
     invoiceNumber?: number | null | undefined;
+    invoiceVoidedAt?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps, {}, {
     timestamps: true;
 }> & {
@@ -445,9 +457,15 @@ export declare const Order: import("mongoose").Model<{
             isValid?: {} | null | undefined;
         } | null | undefined;
     }>;
+    invoiceVoided: boolean;
+    invoiceVoidedByUserId: string;
+    invoiceVoidedByUserName: string;
+    invoiceVoidedByRole: string;
+    invoiceVoidReason: string;
     orderNotes: string;
     internalOrderNotes: string;
     invoiceNumber?: number | null | undefined;
+    invoiceVoidedAt?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps & {
     _id: Types.ObjectId;
 } & {
@@ -600,9 +618,15 @@ export declare const Order: import("mongoose").Model<{
             isValid?: {} | null | undefined;
         } | null | undefined;
     }>;
+    invoiceVoided: boolean;
+    invoiceVoidedByUserId: string;
+    invoiceVoidedByUserName: string;
+    invoiceVoidedByRole: string;
+    invoiceVoidReason: string;
     orderNotes: string;
     internalOrderNotes: string;
     invoiceNumber?: number | null | undefined;
+    invoiceVoidedAt?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps, import("mongoose").Document<unknown, {}, import("mongoose").FlatRecord<{
     status: "draft" | "submitted" | "picking" | "dispatched" | "delivered";
     storeId: string;
@@ -749,9 +773,15 @@ export declare const Order: import("mongoose").Model<{
             isValid?: {} | null | undefined;
         } | null | undefined;
     }>;
+    invoiceVoided: boolean;
+    invoiceVoidedByUserId: string;
+    invoiceVoidedByUserName: string;
+    invoiceVoidedByRole: string;
+    invoiceVoidReason: string;
     orderNotes: string;
     internalOrderNotes: string;
     invoiceNumber?: number | null | undefined;
+    invoiceVoidedAt?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps>, {}, import("mongoose").MergeType<import("mongoose").DefaultSchemaOptions, {
     timestamps: true;
 }>> & import("mongoose").FlatRecord<{
@@ -900,9 +930,15 @@ export declare const Order: import("mongoose").Model<{
             isValid?: {} | null | undefined;
         } | null | undefined;
     }>;
+    invoiceVoided: boolean;
+    invoiceVoidedByUserId: string;
+    invoiceVoidedByUserName: string;
+    invoiceVoidedByRole: string;
+    invoiceVoidReason: string;
     orderNotes: string;
     internalOrderNotes: string;
     invoiceNumber?: number | null | undefined;
+    invoiceVoidedAt?: NativeDate | null | undefined;
 } & import("mongoose").DefaultTimestampProps> & {
     _id: Types.ObjectId;
 } & {

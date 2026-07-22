@@ -6,7 +6,7 @@ export declare const OrderEditLog: import("mongoose").Model<{
     editedByUserId: string;
     editedByUserName: string;
     editedByRole: string;
-    action: "update_order" | "update_invoice_number" | "invoice_completed" | "reprint";
+    action: "update_order" | "update_invoice_number" | "invoice_completed" | "reprint" | "invoice_voided";
     changes: import("mongoose").Types.DocumentArray<{
         before: string;
         after: string;
@@ -32,7 +32,7 @@ export declare const OrderEditLog: import("mongoose").Model<{
     editedByUserId: string;
     editedByUserName: string;
     editedByRole: string;
-    action: "update_order" | "update_invoice_number" | "invoice_completed" | "reprint";
+    action: "update_order" | "update_invoice_number" | "invoice_completed" | "reprint" | "invoice_voided";
     changes: import("mongoose").Types.DocumentArray<{
         before: string;
         after: string;
@@ -60,7 +60,7 @@ export declare const OrderEditLog: import("mongoose").Model<{
     editedByUserId: string;
     editedByUserName: string;
     editedByRole: string;
-    action: "update_order" | "update_invoice_number" | "invoice_completed" | "reprint";
+    action: "update_order" | "update_invoice_number" | "invoice_completed" | "reprint" | "invoice_voided";
     changes: import("mongoose").Types.DocumentArray<{
         before: string;
         after: string;
@@ -92,7 +92,7 @@ export declare const OrderEditLog: import("mongoose").Model<{
     editedByUserId: string;
     editedByUserName: string;
     editedByRole: string;
-    action: "update_order" | "update_invoice_number" | "invoice_completed" | "reprint";
+    action: "update_order" | "update_invoice_number" | "invoice_completed" | "reprint" | "invoice_voided";
     changes: import("mongoose").Types.DocumentArray<{
         before: string;
         after: string;
@@ -118,7 +118,7 @@ export declare const OrderEditLog: import("mongoose").Model<{
     editedByUserId: string;
     editedByUserName: string;
     editedByRole: string;
-    action: "update_order" | "update_invoice_number" | "invoice_completed" | "reprint";
+    action: "update_order" | "update_invoice_number" | "invoice_completed" | "reprint" | "invoice_voided";
     changes: import("mongoose").Types.DocumentArray<{
         before: string;
         after: string;
@@ -146,7 +146,7 @@ export declare const OrderEditLog: import("mongoose").Model<{
     editedByUserId: string;
     editedByUserName: string;
     editedByRole: string;
-    action: "update_order" | "update_invoice_number" | "invoice_completed" | "reprint";
+    action: "update_order" | "update_invoice_number" | "invoice_completed" | "reprint" | "invoice_voided";
     changes: import("mongoose").Types.DocumentArray<{
         before: string;
         after: string;

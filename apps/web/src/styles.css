@@ -2971,6 +2971,16 @@ h1 {
   font: inherit;
 }
 
+.seller-order-detail-trigger--danger {
+  color: #b42318;
+  font-weight: 600;
+}
+
+.seller-order-detail-trigger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .seller-order-detail-modal {
   width: min(960px, calc(100vw - 32px));
 }
@@ -3086,6 +3096,18 @@ h1 {
 .warehouse-action-button--print:hover:not(:disabled) {
   background: linear-gradient(135deg, #c7d2fe 0%, #a5b4fc 100%);
   box-shadow: 0 6px 16px rgba(99, 102, 241, 0.24);
+}
+
+.warehouse-action-button--danger {
+  color: #991b1b;
+  background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+  border: 1px solid rgba(185, 28, 28, 0.28);
+  box-shadow: 0 4px 12px rgba(185, 28, 28, 0.12);
+}
+
+.warehouse-action-button--danger:hover:not(:disabled) {
+  background: linear-gradient(135deg, #fecaca 0%, #fca5a5 100%);
+  box-shadow: 0 6px 16px rgba(185, 28, 28, 0.18);
 }
 
 .warehouse-action-button--muted {
@@ -3678,6 +3700,14 @@ h1 {
 
 .data-table tr.is-overdue td:first-child {
   border-left: 3px solid #ef4444;
+}
+
+.data-table tr.is-voided-invoice td {
+  opacity: 0.72;
+}
+
+.data-table tr.is-voided-invoice td:first-child {
+  border-left: 3px solid #6b7280;
 }
 
 .seller-order-delivery-date {
@@ -4488,6 +4518,22 @@ h1 {
 
 .modal-card--wide {
   width: min(100%, 980px);
+}
+
+.direct-invoice-order-modal {
+  width: min(100%, 1100px);
+  max-height: min(92dvh, 980px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.direct-invoice-order-modal .staff-order-composer-body {
+  margin-top: 0.5rem;
+}
+
+.direct-invoice-order-modal .seller-route-list {
+  max-height: 220px;
+  overflow: auto;
 }
 
 .staff-order-composer-page {

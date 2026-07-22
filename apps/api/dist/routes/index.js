@@ -968,6 +968,84 @@ function normalizeSalesOrderPayload(body) {
         giftItems,
     };
 }
+async function createSubmittedSalesOrder(payload) {
+    const [store, salesRep, products, catalogSalePriceByProductId] = await Promise.all([
+        Store.findById(payload.storeId).lean(),
+        User.findById(payload.salesRepId).lean(),
+        Product.find({ _id: { $in: payload.items.map((item) => item.productId) }, active: { $ne: false } }).select({ _id: 1, salePrice: 1 }).lean(),
+        getClientCatalogProductSalePrices(payload.storeId),
+    ]);
+    if (!store) {
+        throw Object.assign(new Error("El cliente no existe."), { statusCode: 404 });
+    }
+    if (!salesRep || salesRep.role !== "sales-rep-aruba") {
+        throw Object.assign(new Error("El vendedor no existe o no esta habilitado."), { statusCode: 404 });
+    }
+    const validAssignedProductIds = new Set(Array.isArray(store.assignedProductIds)
+        ? store.assignedProductIds.map((entry) => String(entry)).filter(Boolean)
+        : []);
+    const productsById = new Map(products.map((product) => [String(product._id), product]));
+    const availableProductIds = new Set(productsById.keys());
+    const invalidItem = payload.items.find((item) => !validAssignedProductIds.has(item.productId) || !availableProductIds.has(item.productId));
+    if (invalidItem) {
+        throw new Error("Uno o varios productos del pedido ya no estan asignados a este cliente.");
+    }
+    if (payload.giftItems.length > 0) {
+        const giftProductIds = Array.from(new Set(payload.giftItems.map((item) => item.productId)));
+        const giftProducts = await Product.find({ _id: { $in: giftProductIds }, active: { $ne: false } }).select({ _id: 1 }).lean();
+        const availableGiftProductIds = new Set(giftProducts.map((product) => String(product._id)));
+        const invalidGiftItem = payload.giftItems.find((item) => !availableGiftProductIds.has(item.productId));
+        if (invalidGiftItem) {
+            throw new Error("Uno o varios productos del obsequio ya no estan disponibles.");
+        }
+    }
+    const items = payload.items.map((item) => {
+        const payloadSalePrice = Number(item.salePriceAwg ?? NaN);
+        const catalogSalePrice = catalogSalePriceByProductId.get(item.productId);
+        if (catalogSalePrice !== undefined) {
+            // Keep a lower payload price (e.g. lot promotion on top of catalog).
+            // Replace a higher/generic product price with the negotiated catalog rate.
+            if (Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0 && payloadSalePrice <= catalogSalePrice + 0.009) {
+                return {
+                    ...item,
+                    salePriceAwg: Math.round(payloadSalePrice * 100) / 100,
+                };
+            }
+            return {
+                ...item,
+                salePriceAwg: catalogSalePrice,
+            };
+        }
+        if (Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0) {
+            return item;
+        }
+        const productSalePrice = Number(productsById.get(item.productId)?.salePrice ?? 0);
+        return {
+            ...item,
+            ...(Number.isFinite(productSalePrice) && productSalePrice >= 0
+                ? { salePriceAwg: Math.round(productSalePrice * 100) / 100 }
+                : {}),
+        };
+    });
+    const invoiceNumber = await getNextInvoiceNumber();
+    return Order.create({
+        routeId: payload.routeId,
+        routeName: payload.routeName,
+        routeDay: payload.routeDay,
+        storeId: String(store._id),
+        storeName: store.name,
+        salesRepId: String(salesRep._id),
+        salesRepName: salesRep.name,
+        deliveryZone: store.address?.trim() || store.name,
+        deliveryDate: payload.deliveryDate,
+        status: "submitted",
+        invoiceNumber,
+        orderNotes: payload.orderNotes,
+        internalOrderNotes: payload.internalOrderNotes,
+        items,
+        giftItems: payload.giftItems,
+    });
+}
 function normalizeWarehouseOrderItems(rawItems, existingItems) {
     if (!Array.isArray(rawItems) || rawItems.length === 0) {
         throw new Error("Agrega al menos un producto al pedido.");
@@ -1040,9 +1118,12 @@ async function mapWarehouseOrderRecord(order) {
         ...order.items.map((item) => String(item.productId)).filter(Boolean),
         ...(Array.isArray(order.giftItems) ? order.giftItems.map((item) => String(item.productId)).filter(Boolean) : []),
     ]));
-    const products = productIds.length > 0
-        ? await Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1 }).lean()
-        : [];
+    const [products, catalogSalePriceByProductId] = await Promise.all([
+        productIds.length > 0
+            ? Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1 }).lean()
+            : Promise.resolve([]),
+        getClientCatalogProductSalePrices(String(order.storeId ?? "")),
+    ]);
     const productsById = new Map(products.map((product) => [String(product._id), product]));
     return {
         _id: String(order._id),
@@ -1058,21 +1139,38 @@ async function mapWarehouseOrderRecord(order) {
         deliveryOverdue: order.deliveryOverdue === true,
         status: order.status,
         invoiceNumber: Number(order.invoiceNumber ?? 0) || null,
+        invoiceVoided: order.invoiceVoided === true,
+        invoiceVoidedAt: order.invoiceVoidedAt ? String(order.invoiceVoidedAt) : null,
+        invoiceVoidedByUserId: String(order.invoiceVoidedByUserId ?? ""),
+        invoiceVoidedByUserName: String(order.invoiceVoidedByUserName ?? ""),
+        invoiceVoidedByRole: String(order.invoiceVoidedByRole ?? ""),
+        invoiceVoidReason: String(order.invoiceVoidReason ?? ""),
         orderNotes: typeof order.orderNotes === "string" ? order.orderNotes : "",
         internalOrderNotes: typeof order.internalOrderNotes === "string" ? order.internalOrderNotes : "",
         createdAt: order.createdAt,
         updatedAt: order.updatedAt,
         items: order.items.map((item) => {
-            const relatedProduct = productsById.get(String(item.productId));
+            const productId = String(item.productId);
+            const relatedProduct = productsById.get(productId);
+            const frozenSalePrice = Number(item.salePriceAwg ?? NaN);
+            const catalogSalePrice = catalogSalePriceByProductId.get(productId);
+            const hasFrozenSalePrice = Number.isFinite(frozenSalePrice) && frozenSalePrice >= 0;
+            const preferCatalogForOpenOrder = catalogSalePrice !== undefined && order.status !== "delivered";
+            const resolvedSalePrice = preferCatalogForOpenOrder
+                ? (hasFrozenSalePrice && frozenSalePrice <= catalogSalePrice + 0.009
+                    ? Math.round(frozenSalePrice * 100) / 100
+                    : catalogSalePrice)
+                : hasFrozenSalePrice
+                    ? Math.round(frozenSalePrice * 100) / 100
+                    : catalogSalePrice;
             return {
-                productId: String(item.productId),
+                productId,
                 stockCurrent: item.stockCurrent === undefined || item.stockCurrent === null ? null : Number(item.stockCurrent),
                 quantity: Number(item.quantity ?? 0),
                 stockRowId: item.stockRowId ? String(item.stockRowId) : "",
                 notes: item.notes ?? "",
-                ...(Number.isFinite(Number(item.salePriceAwg)) && Number(item.salePriceAwg) >= 0
-                    ? { salePriceAwg: Math.round(Number(item.salePriceAwg) * 100) / 100 }
-                    : {}),
+                ...(resolvedSalePrice !== undefined ? { salePriceAwg: resolvedSalePrice } : {}),
+                ...(catalogSalePrice !== undefined ? { catalogSalePriceAwg: catalogSalePrice } : {}),
                 productName: relatedProduct?.name ?? "Producto eliminado",
                 productSku: relatedProduct?.sku ?? "-",
             };
@@ -1140,6 +1238,52 @@ function resolveLotSalePriceAwg(stockRow, product) {
 function applyPromotionDiscount(salePrice, discountPercent) {
     const boundedDiscount = Math.min(Math.max(Number(discountPercent || 0), 0), 100);
     return Math.round((salePrice * (1 - boundedDiscount / 100)) * 100) / 100;
+}
+/**
+ * Returns productId -> salePrice for a client from CatalogClientPricing.
+ * If the client is in several catalogs, the most recently updated pricing wins per product.
+ */
+async function getClientCatalogProductSalePrices(clientId) {
+    const normalizedClientId = String(clientId ?? "").trim();
+    const priceByProductId = new Map();
+    if (!normalizedClientId) {
+        return priceByProductId;
+    }
+    const pricingRows = await CatalogClientPricing.find({
+        clientId: normalizedClientId,
+        active: { $ne: false },
+    })
+        .sort({ updatedAt: -1, createdAt: -1 })
+        .select({ items: 1 })
+        .lean();
+    pricingRows.forEach((pricingRow) => {
+        if (!Array.isArray(pricingRow.items)) {
+            return;
+        }
+        pricingRow.items.forEach((item) => {
+            const productId = String(item.productId ?? "").trim();
+            if (!productId || priceByProductId.has(productId)) {
+                return;
+            }
+            const salePrice = Number(item.salePrice ?? NaN);
+            if (!Number.isFinite(salePrice) || salePrice < 0) {
+                return;
+            }
+            priceByProductId.set(productId, Math.round(salePrice * 100) / 100);
+        });
+    });
+    return priceByProductId;
+}
+function resolveClientAwareSalePrice(params) {
+    const catalogSalePrice = params.catalogSalePriceByProductId?.get(params.productId);
+    if (catalogSalePrice !== undefined) {
+        return catalogSalePrice;
+    }
+    const lotSalePrice = Number(params.lotSalePriceAwg ?? 0);
+    if (lotSalePrice > 0) {
+        return Math.round(lotSalePrice * 100) / 100;
+    }
+    return Math.round(Math.max(0, Number(params.productSalePrice ?? 0)) * 100) / 100;
 }
 async function getActiveLotPromotionMap(stockRowIds) {
     const query = { active: { $ne: false } };
@@ -1218,10 +1362,11 @@ async function aggregateWarehouseStockByProduct() {
     return stockByProduct;
 }
 async function buildSalesProductCatalog(storeId) {
-    const [products, stockByProduct, store] = await Promise.all([
+    const [products, stockByProduct, store, catalogSalePriceByProductId] = await Promise.all([
         Product.find({ active: { $ne: false }, shareWithAruba: { $ne: false } }).sort({ name: 1 }).lean(),
         aggregateWarehouseStockByProduct(),
         storeId ? Store.findById(storeId).select({ assignedProductIds: 1 }).lean() : Promise.resolve(null),
+        storeId ? getClientCatalogProductSalePrices(storeId) : Promise.resolve(new Map()),
     ]);
     const assignedProductIds = new Set(Array.isArray(store?.assignedProductIds)
         ? store.assignedProductIds.map((entry) => String(entry)).filter(Boolean)
@@ -1233,9 +1378,13 @@ async function buildSalesProductCatalog(storeId) {
         const productId = String(product._id);
         const stockInfo = stockByProduct.get(productId) ?? { total: 0, nearestExpiration: null, preferredLot: null };
         let nearestExpiration = stockInfo.nearestExpiration;
-        const baseSalePrice = stockInfo.preferredLot && Number(stockInfo.preferredLot.salePriceAwg ?? 0) > 0
-            ? Number(stockInfo.preferredLot.salePriceAwg)
-            : Number(product.salePrice ?? 0);
+        const baseSalePrice = resolveClientAwareSalePrice({
+            productId,
+            productSalePrice: product.salePrice,
+            lotSalePriceAwg: stockInfo.preferredLot?.salePriceAwg,
+            catalogSalePriceByProductId,
+        });
+        const hasCatalogPrice = catalogSalePriceByProductId.has(productId);
         const promotion = stockInfo.preferredLot
             ? {
                 stockRowId: stockInfo.preferredLot.stockRowId,
@@ -1264,6 +1413,7 @@ async function buildSalesProductCatalog(storeId) {
             imageUrl: product.imageUrl ?? "",
             salePrice: promotion ? promotion.promotionSalePrice : baseSalePrice,
             originalSalePrice: promotion ? baseSalePrice : null,
+            priceSource: hasCatalogPrice ? "catalog" : promotion ? "promotion" : "product",
             promotion,
             warehouseStock: stockInfo.total,
             isExpiringSoon,
@@ -1873,7 +2023,10 @@ apiRouter.get("/sales/stores/:id/products", async (request, response) => {
         const products = await Product.find({ _id: { $in: assignedProductIds }, active: { $ne: false }, shareWithAruba: { $ne: false } })
             .sort({ name: 1 })
             .lean();
-        const stockByProduct = await aggregateWarehouseStockByProduct();
+        const [stockByProduct, catalogSalePriceByProductId] = await Promise.all([
+            aggregateWarehouseStockByProduct(),
+            getClientCatalogProductSalePrices(String(store._id)),
+        ]);
         response.json({
             store: {
                 id: String(store._id),
@@ -1884,7 +2037,13 @@ apiRouter.get("/sales/stores/:id/products", async (request, response) => {
             products: products.map((product) => {
                 const productId = String(product._id);
                 const stockInfo = stockByProduct.get(productId);
-                const baseSalePrice = Number(product.salePrice ?? 0);
+                const baseSalePrice = resolveClientAwareSalePrice({
+                    productId,
+                    productSalePrice: product.salePrice,
+                    lotSalePriceAwg: stockInfo?.preferredLot?.salePriceAwg,
+                    catalogSalePriceByProductId,
+                });
+                const hasCatalogPrice = catalogSalePriceByProductId.has(productId);
                 const promotion = stockInfo?.preferredLot
                     ? {
                         stockRowId: stockInfo.preferredLot.stockRowId,
@@ -1904,6 +2063,7 @@ apiRouter.get("/sales/stores/:id/products", async (request, response) => {
                     imageUrl: product.imageUrl ?? "",
                     salePrice: promotion ? promotion.promotionSalePrice : baseSalePrice,
                     originalSalePrice: promotion ? baseSalePrice : null,
+                    priceSource: hasCatalogPrice ? "catalog" : promotion ? "promotion" : "product",
                     promotion,
                     warehouseStock: Number(stockInfo?.total ?? 0),
                     displaysPerBox: Number(product.displaysPerBox ?? 1) || 1,
@@ -2034,62 +2194,68 @@ apiRouter.get("/sales/orders", async (request, response) => {
 apiRouter.post("/sales/orders", async (request, response) => {
     try {
         const payload = normalizeSalesOrderPayload(request.body);
-        const [store, salesRep, products] = await Promise.all([
-            Store.findById(payload.storeId).lean(),
-            User.findById(payload.salesRepId).lean(),
-            Product.find({ _id: { $in: payload.items.map((item) => item.productId) }, active: { $ne: false } }).select({ _id: 1 }).lean(),
-        ]);
-        if (!store) {
-            response.status(404).json({ message: "El cliente no existe." });
-            return;
-        }
-        if (!salesRep || salesRep.role !== "sales-rep-aruba") {
-            response.status(404).json({ message: "El vendedor no existe o no esta habilitado." });
-            return;
-        }
-        const validAssignedProductIds = new Set(Array.isArray(store.assignedProductIds)
-            ? store.assignedProductIds.map((entry) => String(entry)).filter(Boolean)
-            : []);
-        const availableProductIds = new Set(products.map((product) => String(product._id)));
-        const invalidItem = payload.items.find((item) => !validAssignedProductIds.has(item.productId) || !availableProductIds.has(item.productId));
-        if (invalidItem) {
-            throw new Error("Uno o varios productos del pedido ya no estan asignados a este cliente.");
-        }
-        if (payload.giftItems.length > 0) {
-            const giftProductIds = Array.from(new Set(payload.giftItems.map((item) => item.productId)));
-            const giftProducts = await Product.find({ _id: { $in: giftProductIds }, active: { $ne: false } }).select({ _id: 1 }).lean();
-            const availableGiftProductIds = new Set(giftProducts.map((product) => String(product._id)));
-            const invalidGiftItem = payload.giftItems.find((item) => !availableGiftProductIds.has(item.productId));
-            if (invalidGiftItem) {
-                throw new Error("Uno o varios productos del obsequio ya no estan disponibles.");
-            }
-        }
-        const invoiceNumber = await getNextInvoiceNumber();
-        const order = await Order.create({
-            routeId: payload.routeId,
-            routeName: payload.routeName,
-            routeDay: payload.routeDay,
-            storeId: String(store._id),
-            storeName: store.name,
-            salesRepId: String(salesRep._id),
-            salesRepName: salesRep.name,
-            deliveryZone: store.address?.trim() || store.name,
-            deliveryDate: payload.deliveryDate,
-            status: "submitted",
-            invoiceNumber,
-            orderNotes: payload.orderNotes,
-            internalOrderNotes: payload.internalOrderNotes,
-            items: payload.items,
-            giftItems: payload.giftItems,
-        });
+        const order = await createSubmittedSalesOrder(payload);
         response.status(201).json({
-            message: `Pedido enviado a bodega para ${store.name}.`,
+            message: `Pedido enviado a bodega para ${order.storeName}.`,
             order,
-            invoiceNumber,
+            invoiceNumber: Number(order.invoiceNumber ?? 0) || null,
         });
         void notifyNewSalesOrder(order);
     }
     catch (error) {
+        if (error instanceof Error && "statusCode" in error && typeof error.statusCode === "number") {
+            response.status(error.statusCode).json({ message: error.message });
+            return;
+        }
+        sendCreationError(response, error);
+    }
+});
+apiRouter.post("/management/orders/direct-invoice", async (request, response) => {
+    try {
+        const body = typeof request.body === "object" && request.body !== null
+            ? request.body
+            : {};
+        const payload = normalizeSalesOrderPayload(body);
+        const directNote = "Facturacion directa (venta en camion / sin pasar por bodega).";
+        const internalOrderNotes = payload.internalOrderNotes
+            ? `${payload.internalOrderNotes}\n${directNote}`
+            : directNote;
+        const order = await createSubmittedSalesOrder({
+            ...payload,
+            internalOrderNotes,
+        });
+        const completeResult = await completeWarehouseOrderById(String(order._id), {
+            paymentMethod: body.paymentMethod,
+            invoiceAmountAwg: body.invoiceAmountAwg,
+            invoiceNumber: body.invoiceNumber,
+            items: body.items,
+            creditCollections: body.creditCollections,
+            requestedByUserId: body.requestedByUserId,
+            requestedByUserName: body.requestedByUserName,
+            requestedByRole: body.requestedByRole,
+            editedByUserId: body.editedByUserId,
+            editedByUserName: body.editedByUserName,
+            editedByRole: body.editedByRole,
+        });
+        response.status(201).json({
+            message: completeResult.message.includes("facturado")
+                ? `Pedido facturado de inmediato para ${order.storeName} con consecutivo #${completeResult.invoiceNumber}.`
+                : completeResult.message,
+            order: {
+                _id: String(order._id),
+                status: completeResult.order.status,
+                storeName: order.storeName,
+                updatedAt: completeResult.order.updatedAt,
+            },
+            invoiceNumber: completeResult.invoiceNumber,
+            carteraEntryId: completeResult.carteraEntryId,
+        });
+    }
+    catch (error) {
+        if (error instanceof Error && "statusCode" in error && typeof error.statusCode === "number") {
+            response.status(error.statusCode).json({ message: error.message });
+            return;
+        }
         sendCreationError(response, error);
     }
 });
@@ -2145,8 +2311,20 @@ apiRouter.put("/sales/orders/:id", async (request, response) => {
         const previousDeliveryDate = order.deliveryDate;
         const previousOrderNotes = String(order.orderNotes ?? "");
         const previousInternalNotes = String(order.internalOrderNotes ?? "");
+        const catalogSalePriceByProductId = await getClientCatalogProductSalePrices(payload.storeId);
+        const pricedItems = payload.items.map((item) => {
+            const payloadSalePrice = Number(item.salePriceAwg ?? NaN);
+            const catalogSalePrice = catalogSalePriceByProductId.get(item.productId);
+            if (catalogSalePrice !== undefined) {
+                if (Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0 && payloadSalePrice <= catalogSalePrice + 0.009) {
+                    return { ...item, salePriceAwg: Math.round(payloadSalePrice * 100) / 100 };
+                }
+                return { ...item, salePriceAwg: catalogSalePrice };
+            }
+            return item;
+        });
         await Order.findByIdAndUpdate(order._id, {
-            items: payload.items,
+            items: pricedItems,
             giftItems: payload.giftItems,
             deliveryDate: payload.deliveryDate,
             orderNotes: payload.orderNotes,
@@ -2159,7 +2337,7 @@ apiRouter.put("/sales/orders/:id", async (request, response) => {
         });
         if (actor) {
             const changes = [
-                ...(await buildOrderItemsEditChanges(previousItems, payload.items, "items")),
+                ...(await buildOrderItemsEditChanges(previousItems, pricedItems, "items")),
                 ...(await buildOrderItemsEditChanges(previousGiftItems, payload.giftItems, "giftItems")),
             ];
             const previousDeliveryKey = previousDeliveryDate instanceof Date
@@ -2340,6 +2518,10 @@ apiRouter.put("/warehouse/orders/:id/invoice-number", async (request, response) 
             response.status(400).json({ message: "Solo gerencia o contabilidad pueden cambiar el consecutivo de factura." });
             return;
         }
+        if (order.invoiceVoided === true) {
+            response.status(400).json({ message: "No puedes cambiar el consecutivo de una factura anulada." });
+            return;
+        }
         const previousInvoiceNumber = Number(order.invoiceNumber ?? 0) || null;
         const invoiceNumber = await resolveRequestedInvoiceNumber(body.invoiceNumber, order);
         const updatedOrder = await Order.findByIdAndUpdate(order._id, { invoiceNumber }, { new: true, runValidators: true }).lean();
@@ -2389,6 +2571,10 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
         const requestedByRole = typeof body.requestedByRole === "string"
             ? body.requestedByRole.trim()
             : "";
+        if (order.status === "delivered" && order.invoiceVoided === true) {
+            response.status(400).json({ message: "No puedes editar un pedido con factura anulada." });
+            return;
+        }
         if (order.status === "delivered" && !canEditDeliveredWarehouseOrder(requestedByRole)) {
             response.status(400).json({ message: "Solo gerencia, contabilidad o bodega pueden modificar un pedido ya completado." });
             return;
@@ -2957,7 +3143,9 @@ async function recordOrderEditLog(params) {
                         ? "Pedido impreso y facturado"
                         : params.action === "reprint"
                             ? "Factura reimpresa"
-                            : "Pedido actualizado",
+                            : params.action === "invoice_voided"
+                                ? "Factura anulada"
+                                : "Pedido actualizado",
                     before: "",
                     after: "",
                 }],
@@ -3050,10 +3238,13 @@ function mergeOrderItemPrices(orderItems, rawItems) {
         return nextItem;
     });
 }
-function resolveFrozenOrderItemSalePrice(item, productSalePrice = 0) {
+function resolveFrozenOrderItemSalePrice(item, productSalePrice = 0, catalogSalePrice) {
     const frozenPrice = Number(item.salePriceAwg ?? NaN);
     if (Number.isFinite(frozenPrice) && frozenPrice >= 0) {
         return Math.round(frozenPrice * 100) / 100;
+    }
+    if (catalogSalePrice !== undefined && Number.isFinite(catalogSalePrice) && catalogSalePrice >= 0) {
+        return Math.round(catalogSalePrice * 100) / 100;
     }
     return Math.round(Math.max(0, Number(productSalePrice ?? 0)) * 100) / 100;
 }
@@ -3064,20 +3255,25 @@ async function buildWarehouseInvoiceDocumentLines(order) {
         ...orderItems.map((item) => String(item.productId ?? "")).filter(Boolean),
         ...giftItems.map((item) => String(item.productId ?? "")).filter(Boolean),
     ]));
-    const products = productIds.length > 0
-        ? await Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1, description: 1, salePrice: 1 }).lean()
-        : [];
+    const storeId = String(order.storeId ?? "").trim();
+    const [products, catalogSalePriceByProductId] = await Promise.all([
+        productIds.length > 0
+            ? Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1, description: 1, salePrice: 1 }).lean()
+            : Promise.resolve([]),
+        storeId ? getClientCatalogProductSalePrices(storeId) : Promise.resolve(new Map()),
+    ]);
     const productsById = new Map(products.map((product) => [String(product._id), product]));
     const regularLines = orderItems.flatMap((item) => {
-        const product = productsById.get(String(item.productId ?? ""));
+        const productId = String(item.productId ?? "");
+        const product = productsById.get(productId);
         const quantity = Number(item.quantity ?? 0);
         if (!Number.isFinite(quantity) || quantity <= 0) {
             return [];
         }
-        const rate = resolveFrozenOrderItemSalePrice(item, Number(product?.salePrice ?? 0));
+        const rate = resolveFrozenOrderItemSalePrice(item, Number(product?.salePrice ?? 0), catalogSalePriceByProductId.get(productId));
         const amount = Math.round(quantity * rate * 100) / 100;
         return [{
-                productId: String(item.productId ?? ""),
+                productId,
                 productName: String(product?.name ?? "Producto"),
                 productSku: String(product?.sku ?? "-"),
                 productDescription: String(product?.description ?? "").trim() || String(product?.name ?? "Producto"),
@@ -3338,10 +3534,79 @@ async function cleanupOrphanCarteraEntries() {
 }
 async function restoreOrderInventoryOnDelete(order) {
     const orderId = String(order._id);
-    const quantitiesByProductId = buildOrderQuantitiesMap(Array.isArray(order.items) ? order.items : []);
+    const quantitiesByProductId = buildOrderQuantitiesMap([
+        ...(Array.isArray(order.items) ? order.items : []),
+        ...(Array.isArray(order.giftItems) ? order.giftItems : []),
+    ]);
     for (const [productId, quantity] of quantitiesByProductId.entries()) {
         await restoreInventoryForProduct(productId, quantity, orderId);
     }
+}
+function canVoidDeliveredInvoice(role) {
+    return role === "management" || role === "contabilidad" || role === "warehouse-aruba";
+}
+async function voidDeliveredInvoiceById(orderId, body = {}) {
+    const order = await Order.findById(orderId).lean();
+    if (!order) {
+        throw Object.assign(new Error("El pedido no existe."), { statusCode: 404 });
+    }
+    if (order.status !== "delivered") {
+        throw Object.assign(new Error("Solo puedes anular facturas de pedidos completados."), { statusCode: 400 });
+    }
+    if (order.invoiceVoided === true) {
+        throw Object.assign(new Error("Esta factura ya esta anulada."), { statusCode: 400 });
+    }
+    const actor = normalizeOrderEditActor(body);
+    if (!actor || !canVoidDeliveredInvoice(actor.role)) {
+        throw Object.assign(new Error("No tienes permiso para anular esta factura."), { statusCode: 403 });
+    }
+    const invoiceNumber = Number(order.invoiceNumber ?? 0) || null;
+    const voidReason = typeof body.voidReason === "string" ? body.voidReason.trim() : "";
+    const voidedAt = new Date();
+    await restoreOrderInventoryOnDelete(order);
+    await deactivateCarteraForOrder(String(order._id));
+    await LogisticsInvoice.updateMany({ orderId: String(order._id), active: { $ne: false } }, {
+        active: false,
+        syncExcluded: true,
+        notes: voidReason
+            ? `Factura anulada: ${voidReason}`
+            : "Factura anulada. El consecutivo se conserva y no se reutiliza.",
+    });
+    const updatedOrder = await Order.findByIdAndUpdate(orderId, {
+        invoiceVoided: true,
+        invoiceVoidedAt: voidedAt,
+        invoiceVoidedByUserId: actor.userId,
+        invoiceVoidedByUserName: actor.userName,
+        invoiceVoidedByRole: actor.role,
+        invoiceVoidReason: voidReason,
+        // Keep status=delivered and invoiceNumber so the invoice remains visible
+        // and the consecutive number is never reused.
+    }, { new: true, runValidators: true }).lean();
+    if (!updatedOrder) {
+        throw Object.assign(new Error("El pedido no existe."), { statusCode: 404 });
+    }
+    await recordOrderEditLog({
+        orderId: String(updatedOrder._id),
+        storeName: String(updatedOrder.storeName ?? ""),
+        invoiceNumber,
+        actor,
+        action: "invoice_voided",
+        changes: [{
+                field: "invoiceVoided",
+                summary: invoiceNumber
+                    ? `Factura #${invoiceNumber} anulada${voidReason ? `: ${voidReason}` : ""}`
+                    : `Factura anulada${voidReason ? `: ${voidReason}` : ""}`,
+                before: "activa",
+                after: "anulada",
+            }],
+    });
+    return {
+        message: invoiceNumber
+            ? `Factura #${invoiceNumber} anulada. El consecutivo se conserva y no se reutiliza.`
+            : "Factura anulada. El consecutivo se conserva y no se reutiliza.",
+        order: updatedOrder,
+        invoiceNumber,
+    };
 }
 async function deleteWarehouseOrderWithCleanup(orderId) {
     const order = await Order.findById(orderId).lean();
@@ -3418,6 +3683,7 @@ async function resolveCompleteInvoiceAmountAwg(order, rawInvoiceAmount, rawItems
         .filter((item) => item.productId);
     const itemsWithPrices = mergeOrderItemPrices(orderItems, rawItems);
     const lines = await buildWarehouseInvoiceDocumentLines({
+        storeId: order.storeId,
         items: itemsWithPrices,
         giftItems: Array.isArray(order.giftItems) ? order.giftItems : [],
     });
@@ -3430,6 +3696,9 @@ async function completeWarehouseOrderById(orderId, body = {}) {
     }
     if (order.status === "delivered") {
         const actor = normalizeOrderEditActor(body);
+        if (order.invoiceVoided === true) {
+            throw Object.assign(new Error("Esta factura ya esta anulada. No se puede volver a facturar."), { statusCode: 400 });
+        }
         if (actor) {
             await recordOrderEditLog({
                 orderId: String(order._id),
@@ -3470,7 +3739,28 @@ async function completeWarehouseOrderById(orderId, body = {}) {
     const initialOutstandingAmountAwg = isCreditInvoice ? invoiceAmountAwg : 0;
     const invoiceNumber = await resolveRequestedInvoiceNumber(body.invoiceNumber, order);
     const orderItems = Array.isArray(order.items) ? order.items : [];
-    const itemsWithPrices = mergeOrderItemPrices(orderItems, body.items);
+    const catalogSalePriceByProductId = await getClientCatalogProductSalePrices(String(order.storeId ?? ""));
+    const itemsWithPrices = mergeOrderItemPrices(orderItems, body.items).map((item) => {
+        const productId = String(item.productId ?? "");
+        const currentPrice = Number(item.salePriceAwg ?? NaN);
+        const catalogSalePrice = catalogSalePriceByProductId.get(productId);
+        if (catalogSalePrice !== undefined) {
+            if (Number.isFinite(currentPrice) && currentPrice >= 0 && currentPrice <= catalogSalePrice + 0.009) {
+                return {
+                    ...item,
+                    salePriceAwg: Math.round(currentPrice * 100) / 100,
+                };
+            }
+            return {
+                ...item,
+                salePriceAwg: catalogSalePrice,
+            };
+        }
+        if (Number.isFinite(currentPrice) && currentPrice >= 0) {
+            return item;
+        }
+        return item;
+    });
     await applyOrderInventoryDeduction({
         _id: order._id,
         items: itemsWithPrices,
@@ -3642,6 +3932,26 @@ apiRouter.put("/warehouse/orders/:id/complete", async (request, response) => {
             carteraEntryId: result.carteraEntryId,
             invoiceNumber: result.invoiceNumber,
             creditCollectionsApplied: result.creditCollectionsApplied,
+        });
+    }
+    catch (error) {
+        if (error instanceof Error && "statusCode" in error && typeof error.statusCode === "number") {
+            response.status(error.statusCode).json({ message: error.message });
+            return;
+        }
+        sendCreationError(response, error);
+    }
+});
+apiRouter.put("/warehouse/orders/:id/void-invoice", async (request, response) => {
+    try {
+        const body = typeof request.body === "object" && request.body !== null
+            ? request.body
+            : {};
+        const result = await voidDeliveredInvoiceById(String(request.params.id), body);
+        response.json({
+            message: result.message,
+            order: await mapWarehouseOrderRecord(result.order),
+            invoiceNumber: result.invoiceNumber,
         });
     }
     catch (error) {
@@ -5424,6 +5734,7 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
     try {
         const warehouseId = typeof request.body?.warehouseId === "string" ? request.body.warehouseId.trim() : "";
         const usdToAwgRate = Number(request.body?.usdToAwgRate ?? 0);
+        const entryNotes = typeof request.body?.notes === "string" ? request.body.notes.trim() : "";
         const rawItems = Array.isArray(request.body?.items) ? request.body.items : [];
         const rawAdditionalExpenses = Array.isArray(request.body?.additionalExpenses) ? request.body.additionalExpenses : [];
         if (!Number.isFinite(usdToAwgRate) || usdToAwgRate <= 0) {
@@ -5567,7 +5878,7 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
                 productId: product._id,
                 quantity: item.quantity,
                 reason: "Entrada de inventario",
-                notes: "Registro de entrada manual o por carga de Excel.",
+                notes: entryNotes || "Registro de entrada manual o por carga de Excel.",
                 entryGroupId,
                 entryWarehouseId: String(warehouse._id),
                 entryWarehouseName: String(warehouse.name ?? ""),
@@ -5724,6 +6035,9 @@ apiRouter.put("/management/inventory-entries/:groupId", async (request, response
         const warehouseId = typeof request.body?.warehouseId === "string" ? request.body.warehouseId.trim() : "";
         const usdToAwgRate = Number(request.body?.usdToAwgRate ?? 0);
         const entryDateRaw = typeof request.body?.entryDate === "string" ? request.body.entryDate.trim() : "";
+        const entryNotes = typeof request.body?.notes === "string"
+            ? request.body.notes.trim()
+            : String(existingAdjustments[0]?.notes ?? "").trim();
         const rawItems = Array.isArray(request.body?.items) ? request.body.items : [];
         if (!Number.isFinite(usdToAwgRate) || usdToAwgRate <= 0) {
             response.status(400).json({ message: "Ingresa una tasa valida en USD@AWG mayor a cero." });
@@ -5904,7 +6218,7 @@ apiRouter.put("/management/inventory-entries/:groupId", async (request, response
                 productId: product._id,
                 quantity: item.quantity,
                 reason: "Entrada de inventario",
-                notes: "Registro de entrada editado.",
+                notes: entryNotes || "Registro de entrada editado.",
                 entryGroupId: groupId,
                 entryWarehouseId: String(warehouse._id),
                 entryWarehouseName: String(warehouse.name ?? ""),
@@ -7059,7 +7373,7 @@ function normalizeLogisticsExpensePayload(body) {
     return { name, category, amountAwg, expenseDate, notes };
 }
 async function syncDeliveredOrdersIntoLogisticsInvoices() {
-    const deliveredOrders = await Order.find({ status: "delivered" })
+    const deliveredOrders = await Order.find({ status: "delivered", invoiceVoided: { $ne: true } })
         .select({
         _id: 1,
         storeId: 1,

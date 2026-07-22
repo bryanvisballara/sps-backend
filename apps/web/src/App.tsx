@@ -422,10 +422,24 @@ type InventoryEntryHistoryGroup = {
   warehouseId: string;
   warehouseName: string;
   usdToAwgRate: number;
+  notes: string;
   items: InventoryHistoryRow[];
   productCount: number;
   totalUnits: number;
 };
+
+const DEFAULT_INVENTORY_ENTRY_NOTES = new Set([
+  "Registro de entrada manual o por carga de Excel.",
+  "Registro de entrada editado.",
+]);
+
+function normalizeInventoryEntryGroupNotes(notes: string | undefined | null) {
+  const trimmed = String(notes ?? "").trim();
+  if (!trimmed || DEFAULT_INVENTORY_ENTRY_NOTES.has(trimmed)) {
+    return "";
+  }
+  return trimmed;
+}
 
 type InventoryEntryExpenseItem = {
   id: string;
@@ -822,6 +836,12 @@ type SellerOrderRecord = {
   deliveryOverdue?: boolean;
   status: "draft" | "submitted" | "picking" | "dispatched" | "delivered";
   invoiceNumber?: number | null;
+  invoiceVoided?: boolean;
+  invoiceVoidedAt?: string | null;
+  invoiceVoidedByUserId?: string;
+  invoiceVoidedByUserName?: string;
+  invoiceVoidedByRole?: string;
+  invoiceVoidReason?: string;
   orderNotes?: string;
   internalOrderNotes?: string;
   createdAt: string;
@@ -833,6 +853,7 @@ type SellerOrderRecord = {
     stockRowId?: string;
     notes: string;
     salePriceAwg?: number;
+    catalogSalePriceAwg?: number;
     productName: string;
     productSku: string;
   }>;
@@ -2947,7 +2968,11 @@ function formatWarehouseLotOptionLabel(
   return `${lot.lotName || "Lote"} · ${lot.expirationDate ? lot.expirationDate.slice(0, 10) : "Sin vencimiento"} · ${lot.quantity} und.${lot.promotion ? ` · promo ${lot.promotion.discountPercent}%` : ""}${lotIndex === 0 ? " · sugerido" : ""}`;
 }
 
-function formatSellerOrderStatus(status: SellerOrderRecord["status"]) {
+function formatSellerOrderStatus(status: SellerOrderRecord["status"], invoiceVoided = false) {
+  if (invoiceVoided) {
+    return "Anulada";
+  }
+
   const labels: Record<SellerOrderRecord["status"], string> = {
     draft: "Borrador",
     submitted: "Enviado a bodega",
@@ -2957,6 +2982,14 @@ function formatSellerOrderStatus(status: SellerOrderRecord["status"]) {
   };
 
   return labels[status] ?? status;
+}
+
+function formatInvoiceNumberLabel(order: Pick<SellerOrderRecord, "invoiceNumber" | "invoiceVoided">) {
+  if (!order.invoiceNumber) {
+    return "-";
+  }
+
+  return order.invoiceVoided ? `#${order.invoiceNumber} (anulada)` : `#${order.invoiceNumber}`;
 }
 
 function formatPaymentMethodLabel(paymentMethod: string) {
@@ -3240,6 +3273,7 @@ type WarehouseOrderListProps = {
   showConsecutivo?: boolean;
   showInvoiceNotes?: boolean;
   showInternalNotes?: boolean;
+  showRoute?: boolean;
   selectable?: boolean;
   selectedOrderIds?: Set<string>;
   onToggleOrderSelection?: (orderId: string, selected: boolean) => void;
@@ -3260,11 +3294,13 @@ function WarehouseOrderList({
   showConsecutivo = false,
   showInvoiceNotes = false,
   showInternalNotes = false,
+  showRoute = true,
   selectable = false,
   selectedOrderIds = new Set<string>(),
   onToggleOrderSelection,
 }: WarehouseOrderListProps) {
-  const columnCount = 6
+  const columnCount = 5
+    + Number(showRoute)
     + Number(showStatus)
     + Number(showInvoiceNumber)
     + Number(showConsecutivo)
@@ -3283,7 +3319,7 @@ function WarehouseOrderList({
       {showSalesRep ? <th className="warehouse-order-col-optional">Vendedor</th> : null}
       {!showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
       <th className="warehouse-order-client-col">Cliente</th>
-      <th className="warehouse-order-col-optional">Ruta</th>
+      {showRoute ? <th className="warehouse-order-col-optional">Ruta</th> : null}
       {showStatus ? <th>Estado</th> : null}
       {showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
       {showInvoiceNotes ? <th className="warehouse-order-col-optional">Observación factura</th> : null}
@@ -3383,14 +3419,16 @@ function WarehouseOrderList({
                         </div>
                       </td>
                       {showConsecutivo ? (
-                        <td>{order.invoiceNumber ? `#${order.invoiceNumber}` : "-"}</td>
+                        <td>{formatInvoiceNumberLabel(order)}</td>
                       ) : null}
                       {showSalesRep ? <td className="warehouse-order-col-optional">{order.salesRepName}</td> : null}
-                      {!showSalesRep && showInvoiceNumber ? <td>{order.invoiceNumber ? `#${order.invoiceNumber}` : "-"}</td> : null}
+                      {!showSalesRep && showInvoiceNumber ? <td>{formatInvoiceNumberLabel(order)}</td> : null}
                       <td className="warehouse-order-client-cell">{order.storeName}</td>
-                      <td className="warehouse-order-col-optional">{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
-                      {showStatus ? <td>{formatSellerOrderStatus(order.status)}</td> : null}
-                      {showSalesRep && showInvoiceNumber ? <td>{order.invoiceNumber ? `#${order.invoiceNumber}` : "-"}</td> : null}
+                      {showRoute ? (
+                        <td className="warehouse-order-col-optional">{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
+                      ) : null}
+                      {showStatus ? <td>{formatSellerOrderStatus(order.status, order.invoiceVoided)}</td> : null}
+                      {showSalesRep && showInvoiceNumber ? <td>{formatInvoiceNumberLabel(order)}</td> : null}
                       {showInvoiceNotes ? (
                         <td className="warehouse-order-notes-cell warehouse-order-col-optional">
                           {order.orderNotes?.trim() || "-"}
@@ -3576,6 +3614,8 @@ function formatOrderEditActionLabel(action: string) {
       return "Impresion y facturacion";
     case "reprint":
       return "Reimpresion";
+    case "invoice_voided":
+      return "Anulacion de factura";
     default:
       return action || "Cambio";
   }
@@ -3787,20 +3827,44 @@ function readApiResponse<T>(response: Response, text: string): T {
   }
 }
 
-function openPdfInNewTab(pdf: jsPDF, fileName: string) {
+function openPdfInNewTab(pdf: jsPDF, fileName: string, options?: { previewWindow?: Window | null }) {
+  const safeFileName = fileName.toLowerCase().endsWith(".pdf") ? fileName : `${fileName}.pdf`;
   const pdfBlob = pdf.output("blob");
   const url = URL.createObjectURL(pdfBlob);
-  const popup = window.open(url, "_blank", "noopener,noreferrer");
+  let openedInTab = false;
+  const previewWindow = options?.previewWindow ?? null;
 
-  if (!popup) {
-    const link = document.createElement("a");
-    link.href = url;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.click();
+  if (previewWindow && !previewWindow.closed) {
+    try {
+      previewWindow.location.href = url;
+      previewWindow.focus();
+      openedInTab = true;
+    } catch {
+      try {
+        previewWindow.close();
+      } catch {
+        // Ignore close failures from blocked/cross-origin windows.
+      }
+    }
   }
 
+  if (!openedInTab) {
+    const popup = window.open(url, "_blank", "noopener,noreferrer");
+    openedInTab = Boolean(popup);
+  }
+
+  // Always download as well: after long async work (batch invoice), browsers often
+  // block popups and target=_blank clicks that are no longer tied to the user gesture.
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = safeFileName;
+  link.rel = "noopener noreferrer";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
   window.setTimeout(() => URL.revokeObjectURL(url), 120_000);
+  return openedInTab;
 }
 
 async function loadImageForPdf(imageUrl: string) {
@@ -4606,6 +4670,7 @@ export default function App() {
   const [isSavingInventoryEntryEdit, setIsSavingInventoryEntryEdit] = useState(false);
   const [inventoryEntryWarehouseId, setInventoryEntryWarehouseId] = useState("");
   const [inventoryUsdToAwgRate, setInventoryUsdToAwgRate] = useState("1.79");
+  const [inventoryEntryNotes, setInventoryEntryNotes] = useState("");
   const [inventoryEntryItems, setInventoryEntryItems] = useState<InventoryEntryDraftItem[]>(() => [
     createInventoryEntryDraftItem(),
   ]);
@@ -4781,6 +4846,8 @@ export default function App() {
   const [routeForm, setRouteForm] = useState<RouteFormState>(() => createInitialRouteForm());
   const [sellerRoutes, setSellerRoutes] = useState<SalesRouteRecord[]>([]);
   const [staffOrderRoutes, setStaffOrderRoutes] = useState<SalesRouteRecord[]>([]);
+  const [isDirectInvoiceModalOpen, setIsDirectInvoiceModalOpen] = useState(false);
+  const [directInvoicePaymentMethod, setDirectInvoicePaymentMethod] = useState<CarteraPaymentMethod | "">("");
   const [isLoadingStaffOrderRoutes, setIsLoadingStaffOrderRoutes] = useState(false);
   const [staffOrderRoutesError, setStaffOrderRoutesError] = useState("");
   const [isLoadingSellerRoutes, setIsLoadingSellerRoutes] = useState(false);
@@ -4845,6 +4912,7 @@ export default function App() {
   const [orderEditHistorySourceFilter, setOrderEditHistorySourceFilter] = useState("");
   const [orderEditHistorySearch, setOrderEditHistorySearch] = useState("");
   const [deletingWarehouseOrderId, setDeletingWarehouseOrderId] = useState("");
+  const [voidingWarehouseOrderId, setVoidingWarehouseOrderId] = useState("");
   const [cancellingWarehouseDispatchOrderId, setCancellingWarehouseDispatchOrderId] = useState("");
   const [warehouseOrderChecklist, setWarehouseOrderChecklist] = useState<Record<string, boolean>>({});
   const [warehouseOrderCompletionStatus, setWarehouseOrderCompletionStatus] = useState<CreationStatus | null>(null);
@@ -5122,6 +5190,7 @@ export default function App() {
           usdToAwgRate: Number(row.entryUsdToAwgRate ?? 0) > 0
             ? Number(row.entryUsdToAwgRate)
             : fallbackUsdToAwgRate,
+          notes: normalizeInventoryEntryGroupNotes(row.notes),
           items: [],
           productCount: 0,
           totalUnits: 0,
@@ -5145,6 +5214,10 @@ export default function App() {
 
         if (!(current.usdToAwgRate > 0) && Number(row.entryUsdToAwgRate ?? 0) > 0) {
           current.usdToAwgRate = Number(row.entryUsdToAwgRate ?? 0);
+        }
+
+        if (!current.notes) {
+          current.notes = normalizeInventoryEntryGroupNotes(row.notes);
         }
 
         map.set(groupId, current);
@@ -5263,7 +5336,8 @@ export default function App() {
     colombiaOpsAllowedSections.has(item.key)
   ));
   const visibleSidebarItems = sessionUser?.role === "colombia-ops" ? colombiaOpsSidebarItems : sidebarItems;
-  const isStaffOrderComposerActive = activeSection === "create-order";
+  const isStaffOrderComposerActive = activeSection === "create-order" || isDirectInvoiceModalOpen;
+  const isDirectInvoiceComposer = isDirectInvoiceModalOpen;
   const activeComposerRoutes = isStaffOrderComposerActive ? staffOrderRoutes : sellerRoutes;
   const selectedSellerRoute = activeComposerRoutes.find((route) => (route._id ?? route.code) === selectedSellerRouteId) ?? null;
   const selectedSellerDay = selectedSellerRoute?.days.find((day) => day.day === selectedSellerDayKey) ?? null;
@@ -5360,11 +5434,18 @@ export default function App() {
     setSellerClientProductsError("");
     setSellerAssignedStore(null);
     setSellerClientProducts([]);
+    setDirectInvoicePaymentMethod("");
   }
 
   function closeStaffOrderComposer() {
     resetStaffOrderComposerDraft();
+    setIsDirectInvoiceModalOpen(false);
     setActiveSection("orders");
+  }
+
+  function closeDirectInvoiceModal() {
+    resetStaffOrderComposerDraft();
+    setIsDirectInvoiceModalOpen(false);
   }
 
   function openStaffOrderComposer() {
@@ -5373,7 +5454,19 @@ export default function App() {
     }
 
     resetStaffOrderComposerDraft();
+    setIsDirectInvoiceModalOpen(false);
     setActiveSection("create-order");
+  }
+
+  function openDirectInvoiceComposer() {
+    if (!canCreateStaffOrders(sessionUser?.role)) {
+      return;
+    }
+
+    resetStaffOrderComposerDraft();
+    setDirectInvoicePaymentMethod("credito");
+    setIsDirectInvoiceModalOpen(true);
+    void loadStaffOrderComposerRoutes();
   }
 
   async function loadStaffOrderComposerRoutes() {
@@ -5569,14 +5662,16 @@ export default function App() {
       const hasFrozenPrice = storedSalePrice > 0;
       const selectedStockRowId = warehouseOrderLotDraft[item.productId] || item.stockRowId || "";
       const selectedLot = (inventoryLotsByProductId.get(item.productId) ?? []).find((lot) => lot.stockRowId === selectedStockRowId);
-      const catalogItem = findCatalogPreviewItem(
+      const openCatalogItem = findCatalogPreviewItem(
         catalogPreviewItems,
         item.productId,
         selectedStockRowId,
       );
-      const catalogSalePrice = selectedCatalogId && catalogItem
-        ? roundCurrencyValue(Number(catalogItem.salePrice ?? 0))
-        : null;
+      const catalogSalePrice = Number(item.catalogSalePriceAwg ?? NaN) >= 0 && item.catalogSalePriceAwg !== undefined
+        ? roundCurrencyValue(Number(item.catalogSalePriceAwg))
+        : selectedCatalogId && openCatalogItem
+          ? roundCurrencyValue(Number(openCatalogItem.salePrice ?? 0))
+          : null;
       const liveSalePrice = catalogSalePrice !== null
         ? catalogSalePrice
         : roundCurrencyValue(Number(selectedLot?.salePrice ?? productOption?.salePrice ?? 0));
@@ -5586,9 +5681,12 @@ export default function App() {
         ? roundCurrencyValue(liveSalePrice * (1 - lotPromotionDiscount / 100))
         : 0;
       const selectedLotChanged = Boolean(selectedStockRowId && item.stockRowId && selectedStockRowId !== item.stockRowId);
-      const defaultSalePrice = hasLotPromotion
-        ? lotPromotionPrice
-        : (hasFrozenPrice && !selectedLotChanged ? roundCurrencyValue(storedSalePrice) : liveSalePrice);
+      // Catalog client pricing wins over a stale frozen product price when still open.
+      const defaultSalePrice = catalogSalePrice !== null && selectedWarehouseOrderDetail.status !== "delivered"
+        ? (hasLotPromotion ? lotPromotionPrice : catalogSalePrice)
+        : hasLotPromotion
+          ? lotPromotionPrice
+          : (hasFrozenPrice && !selectedLotChanged ? roundCurrencyValue(storedSalePrice) : liveSalePrice);
       const quantity = Number(warehouseOrderItemDraft[item.productId] ?? item.quantity ?? 0);
       const defaultLineTotal = roundCurrencyValue(defaultSalePrice * quantity);
       const accountingPricing = canAccountingAdjustDispatchPricing
@@ -5616,10 +5714,10 @@ export default function App() {
         lineTotal,
         priceSource: canAccountingAdjustDispatchPricing
           ? "manual"
+          : catalogSalePrice !== null
+            ? "catalog"
           : hasFrozenPrice
           ? "frozen"
-          : catalogItem
-            ? "catalog"
             : productOption?.variableSalePrice
               ? "variable"
               : "product",
@@ -5635,7 +5733,18 @@ export default function App() {
   );
   const canMutateSelectedWarehouseOrder = Boolean(
     selectedWarehouseOrderDetail
+    && !selectedWarehouseOrderDetail.invoiceVoided
     && (selectedWarehouseOrderDetail.status !== "delivered" || canEditCompletedWarehouseOrders)
+  );
+  const canVoidSelectedWarehouseInvoice = Boolean(
+    selectedWarehouseOrderDetail
+    && selectedWarehouseOrderDetail.status === "delivered"
+    && !selectedWarehouseOrderDetail.invoiceVoided
+    && (
+      sessionUser?.role === "warehouse-aruba"
+      || sessionUser?.role === "management"
+      || sessionUser?.role === "contabilidad"
+    )
   );
   const warehouseOrderDiscountAmount = selectedWarehouseOrderDetail?.status === "dispatched"
     ? roundCurrencyValue(Math.max(0, Number(warehouseOrderDiscountDraft || 0)))
@@ -7397,10 +7506,13 @@ export default function App() {
       Object.fromEntries(
         selectedWarehouseOrderDetail.items.map((item) => {
           const storedPrice = Number(item.salePriceAwg ?? 0);
+          const catalogPrice = Number(item.catalogSalePriceAwg ?? 0);
           const productOption = productOptions.find((option) => option.value === item.productId);
           const invRow = inventoryRows.find((row) => row.productId === item.productId);
-          const fallbackPrice = storedPrice > 0
-            ? storedPrice
+          const fallbackPrice = catalogPrice > 0
+            ? catalogPrice
+            : storedPrice > 0
+              ? storedPrice
             : Number(invRow?.salePrice ?? productOption?.salePrice ?? 0);
 
           return [item.productId, fallbackPrice > 0 ? String(roundCurrencyValue(fallbackPrice)) : ""];
@@ -7527,12 +7639,12 @@ export default function App() {
   }, [staffOrderRoutes, isStaffOrderComposerActive]);
 
   useEffect(() => {
-    if (activeSection !== "create-order" || !canCreateStaffOrders(sessionUser?.role)) {
+    if ((!isDirectInvoiceModalOpen && activeSection !== "create-order") || !canCreateStaffOrders(sessionUser?.role)) {
       return;
     }
 
     void loadStaffOrderComposerRoutes();
-  }, [activeSection, sessionUser?.role]);
+  }, [activeSection, isDirectInvoiceModalOpen, sessionUser?.role]);
 
   useEffect(() => {
     if (!selectedSellerRoute) {
@@ -8331,22 +8443,187 @@ export default function App() {
               />
             </label>
           </div>
-          <p>{sellerDraftedItems.length > 0 ? `${sellerDraftedItems.length} producto${sellerDraftedItems.length === 1 ? "" : "s"} listos para registrar.` : "Agrega cantidades en los productos asignados antes de enviar el pedido a bodega."}</p>
+          <p>
+            {sellerDraftedItems.length > 0
+              ? `${sellerDraftedItems.length} producto${sellerDraftedItems.length === 1 ? "" : "s"} listos para registrar.`
+              : isDirectInvoiceComposer
+                ? "Agrega cantidades en los productos asignados antes de facturar el pedido."
+                : "Agrega cantidades en los productos asignados antes de enviar el pedido a bodega."}
+          </p>
           {sellerDraftedItems.length > 0 ? (
             <p className="seller-order-estimated-total">
               Total estimado: <strong>{formatAwgCurrency(sellerOrderEstimatedTotal)} AWG</strong>
             </p>
           ) : null}
+          {isDirectInvoiceComposer ? (
+            <label className="field seller-order-delivery-date">
+              <span>Metodo de pago</span>
+              <select
+                value={directInvoicePaymentMethod}
+                onChange={(event) => setDirectInvoicePaymentMethod(event.target.value as CarteraPaymentMethod | "")}
+              >
+                <option value="">Selecciona metodo</option>
+                <option value="credito">Credito</option>
+                <option value="transferencia">Transferencia</option>
+                <option value="efectivo">Efectivo</option>
+              </select>
+            </label>
+          ) : null}
           <button
             className="submit-button seller-order-submit"
             type="button"
             onClick={() => void handleSellerOrderSubmit()}
-            disabled={isSubmittingSellerOrder || isLoadingSellerClientProducts || sellerDraftedItems.length === 0}
+            disabled={
+              isSubmittingSellerOrder
+              || isLoadingSellerClientProducts
+              || sellerDraftedItems.length === 0
+              || (isDirectInvoiceComposer && !directInvoicePaymentMethod)
+            }
           >
-            {isSubmittingSellerOrder ? "Enviando pedido a bodega..." : "Enviar pedido a bodega"}
+            {isSubmittingSellerOrder
+              ? (isDirectInvoiceComposer ? "Facturando pedido..." : "Enviando pedido a bodega...")
+              : (isDirectInvoiceComposer ? "Facturar pedido ahora" : "Enviar pedido a bodega")}
           </button>
         </div>
       </>
+    );
+  }
+
+  function renderStaffOrderComposerBody() {
+    return (
+      <div className="staff-order-composer-body">
+        <article className="database-card">
+          <div className="management-table-header">
+            <div>
+              <h2>Rutas comerciales</h2>
+              <p>Selecciona la ruta del vendedor que visita al cliente.</p>
+            </div>
+            <p className="management-table-meta">{activeComposerRoutes.length} rutas</p>
+          </div>
+
+          {composerRoutesError ? <p className="form-feedback error">{composerRoutesError}</p> : null}
+
+          <div className="seller-route-list">
+            {isLoadingComposerRoutes ? (
+              <article className="route-summary-card is-loading" />
+            ) : activeComposerRoutes.length > 0 ? (
+              activeComposerRoutes.map((route) => {
+                const routeKey = route._id ?? route.code;
+                const isSelected = routeKey === selectedSellerRouteId;
+
+                return (
+                  <button
+                    key={routeKey}
+                    className={`seller-route-list-item ${isSelected ? "is-active" : ""}`}
+                    type="button"
+                    onClick={() => setSelectedSellerRouteId(routeKey)}
+                  >
+                    <div>
+                      <p className="section-label">{route.weekLabel}</p>
+                      <strong>{route.name}</strong>
+                      <span>{route.salesRepName} · {route.days.length} días planeados</span>
+                    </div>
+                    <span>{route.plannedStops} tiendas</span>
+                  </button>
+                );
+              })
+            ) : (
+              <p className="route-empty-state">No hay rutas activas disponibles.</p>
+            )}
+          </div>
+        </article>
+
+        {selectedSellerRoute ? (
+          <article className="route-builder-card seller-route-workspace">
+            <div className="management-table-header">
+              <div>
+                <p className="section-label">Ruta activa</p>
+                <h2>{selectedSellerRoute.name}</h2>
+                <p>{selectedSellerRoute.weekLabel} · {selectedSellerRoute.salesRepName}</p>
+              </div>
+              <p className="management-table-meta">{selectedSellerRoute.plannedStops} tiendas</p>
+            </div>
+
+            <div className="seller-route-day-tabs">
+              {selectedSellerRoute.days.map((day) => (
+                <button
+                  key={`${selectedSellerRoute._id ?? selectedSellerRoute.code}-${day.day}`}
+                  className={`seller-route-day-button ${selectedSellerDayKey === day.day ? "is-active" : ""}`}
+                  type="button"
+                  onClick={() => {
+                    setSelectedSellerDayKey(day.day);
+                    setSellerRouteStoreSearch("");
+                  }}
+                >
+                  <strong>{formatRouteDayLabel(day.day)}</strong>
+                  <span>{day.stores.length} clientes</span>
+                </button>
+              ))}
+            </div>
+
+            {selectedSellerDay ? (
+              <>
+                <div className="seller-route-client-panel">
+                  <label className="field field-full">
+                    <span>Buscar tienda</span>
+                    <input
+                      type="search"
+                      placeholder="Buscar entre todas las tiendas de la ruta"
+                      value={sellerRouteStoreSearch}
+                      onChange={(event) => setSellerRouteStoreSearch(event.target.value)}
+                    />
+                  </label>
+
+                  <div className="field field-full">
+                    <span>{normalizedSellerRouteStoreSearch ? "Resultados en toda la ruta" : "Cliente de la ruta"}</span>
+                    <p className="seller-route-store-search-meta">
+                      {normalizedSellerRouteStoreSearch
+                        ? `${sellerRouteStoresForPanel.length} de ${allSelectedSellerRouteStores.length} tiendas`
+                        : `${sellerRouteStoresForPanel.length} tiendas`}
+                    </p>
+                    <div className="seller-route-store-chips">
+                      {sellerRouteStoresForPanel.length > 0 ? sellerRouteStoresForPanel.map((store) => (
+                        <button
+                          key={`${store.routeDay}-${store.storeId}`}
+                          className={`seller-route-store-chip ${selectedSellerStoreId === store.storeId ? "is-active" : ""}`}
+                          type="button"
+                          onClick={() => handleSelectSellerRouteStore(store)}
+                        >
+                          {normalizedSellerRouteStoreSearch ? (
+                            <span className="seller-route-store-chip-content">
+                              <strong>{store.storeName}</strong>
+                              <span>{formatRouteDayLabel(store.routeDay)}</span>
+                            </span>
+                          ) : store.storeName}
+                        </button>
+                      )) : (
+                        <p className="route-empty-state">No hay tiendas que coincidan con la búsqueda.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {selectedSellerStore ? (
+                    <p className="warehouse-selected-meta">{selectedSellerStore.storeName} · {selectedSellerStore.address || "Sin dirección"}</p>
+                  ) : null}
+
+                  {selectedSellerStoreId ? (
+                    <div className="seller-route-order-extras">
+                      {sellerOrderStatus ? <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p> : null}
+                      {renderSellerRouteOrderExtras()}
+                    </div>
+                  ) : sellerOrderStatus ? (
+                    <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p>
+                  ) : null}
+                </div>
+
+                {renderSellerProductCatalogPanel(selectedSellerStoreId || null, { showOrderFields: true })}
+              </>
+            ) : (
+              <p className="route-empty-state">Selecciona un día de la ruta para ver sus clientes.</p>
+            )}
+          </article>
+        ) : null}
+      </div>
     );
   }
 
@@ -8358,7 +8635,9 @@ export default function App() {
             <div>
               <p className="section-label">Nuevo pedido</p>
               <h2>Agregar pedido</h2>
-              <p className="route-helper-text">Selecciona ruta, cliente y productos igual que en el portal del vendedor. El pedido queda a nombre del vendedor de la ruta.</p>
+              <p className="route-helper-text">
+                Selecciona ruta, cliente y productos igual que en el portal del vendedor. El pedido queda a nombre del vendedor de la ruta.
+              </p>
             </div>
             <button className="ghost-button ghost-button--back" type="button" onClick={closeStaffOrderComposer}>
               Volver a pedidos
@@ -8366,140 +8645,51 @@ export default function App() {
           </div>
         </article>
 
-        <div className="staff-order-composer-body">
-          <article className="database-card">
-            <div className="management-table-header">
-              <div>
-                <h2>Rutas comerciales</h2>
-                <p>Selecciona la ruta del vendedor que visita al cliente.</p>
-              </div>
-              <p className="management-table-meta">{activeComposerRoutes.length} rutas</p>
-            </div>
-
-            {composerRoutesError ? <p className="form-feedback error">{composerRoutesError}</p> : null}
-
-            <div className="seller-route-list">
-              {isLoadingComposerRoutes ? (
-                <article className="route-summary-card is-loading" />
-              ) : activeComposerRoutes.length > 0 ? (
-                activeComposerRoutes.map((route) => {
-                  const routeKey = route._id ?? route.code;
-                  const isSelected = routeKey === selectedSellerRouteId;
-
-                  return (
-                    <button
-                      key={routeKey}
-                      className={`seller-route-list-item ${isSelected ? "is-active" : ""}`}
-                      type="button"
-                      onClick={() => setSelectedSellerRouteId(routeKey)}
-                    >
-                      <div>
-                        <p className="section-label">{route.weekLabel}</p>
-                        <strong>{route.name}</strong>
-                        <span>{route.salesRepName} · {route.days.length} días planeados</span>
-                      </div>
-                      <span>{route.plannedStops} tiendas</span>
-                    </button>
-                  );
-                })
-              ) : (
-                <p className="route-empty-state">No hay rutas activas disponibles.</p>
-              )}
-            </div>
-          </article>
-
-          {selectedSellerRoute ? (
-            <article className="route-builder-card seller-route-workspace">
-              <div className="management-table-header">
-                <div>
-                  <p className="section-label">Ruta activa</p>
-                  <h2>{selectedSellerRoute.name}</h2>
-                  <p>{selectedSellerRoute.weekLabel} · {selectedSellerRoute.salesRepName}</p>
-                </div>
-                <p className="management-table-meta">{selectedSellerRoute.plannedStops} tiendas</p>
-              </div>
-
-              <div className="seller-route-day-tabs">
-                {selectedSellerRoute.days.map((day) => (
-                  <button
-                    key={`${selectedSellerRoute._id ?? selectedSellerRoute.code}-${day.day}`}
-                    className={`seller-route-day-button ${selectedSellerDayKey === day.day ? "is-active" : ""}`}
-                    type="button"
-                    onClick={() => {
-                      setSelectedSellerDayKey(day.day);
-                      setSellerRouteStoreSearch("");
-                    }}
-                  >
-                    <strong>{formatRouteDayLabel(day.day)}</strong>
-                    <span>{day.stores.length} clientes</span>
-                  </button>
-                ))}
-              </div>
-
-              {selectedSellerDay ? (
-                <>
-                  <div className="seller-route-client-panel">
-                    <label className="field field-full">
-                      <span>Buscar tienda</span>
-                      <input
-                        type="search"
-                        placeholder="Buscar entre todas las tiendas de la ruta"
-                        value={sellerRouteStoreSearch}
-                        onChange={(event) => setSellerRouteStoreSearch(event.target.value)}
-                      />
-                    </label>
-
-                    <div className="field field-full">
-                      <span>{normalizedSellerRouteStoreSearch ? "Resultados en toda la ruta" : "Cliente de la ruta"}</span>
-                      <p className="seller-route-store-search-meta">
-                        {normalizedSellerRouteStoreSearch
-                          ? `${sellerRouteStoresForPanel.length} de ${allSelectedSellerRouteStores.length} tiendas`
-                          : `${sellerRouteStoresForPanel.length} tiendas`}
-                      </p>
-                      <div className="seller-route-store-chips">
-                        {sellerRouteStoresForPanel.length > 0 ? sellerRouteStoresForPanel.map((store) => (
-                          <button
-                            key={`${store.routeDay}-${store.storeId}`}
-                            className={`seller-route-store-chip ${selectedSellerStoreId === store.storeId ? "is-active" : ""}`}
-                            type="button"
-                            onClick={() => handleSelectSellerRouteStore(store)}
-                          >
-                            {normalizedSellerRouteStoreSearch ? (
-                              <span className="seller-route-store-chip-content">
-                                <strong>{store.storeName}</strong>
-                                <span>{formatRouteDayLabel(store.routeDay)}</span>
-                              </span>
-                            ) : store.storeName}
-                          </button>
-                        )) : (
-                          <p className="route-empty-state">No hay tiendas que coincidan con la búsqueda.</p>
-                        )}
-                      </div>
-                    </div>
-
-                    {selectedSellerStore ? (
-                      <p className="warehouse-selected-meta">{selectedSellerStore.storeName} · {selectedSellerStore.address || "Sin dirección"}</p>
-                    ) : null}
-
-                    {selectedSellerStoreId ? (
-                      <div className="seller-route-order-extras">
-                        {sellerOrderStatus ? <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p> : null}
-                        {renderSellerRouteOrderExtras()}
-                      </div>
-                    ) : sellerOrderStatus ? (
-                      <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p>
-                    ) : null}
-                  </div>
-
-                  {renderSellerProductCatalogPanel(selectedSellerStoreId || null, { showOrderFields: true })}
-                </>
-              ) : (
-                <p className="route-empty-state">Selecciona un día de la ruta para ver sus clientes.</p>
-              )}
-            </article>
-          ) : null}
-        </div>
+        {renderStaffOrderComposerBody()}
       </section>
+    );
+  }
+
+  function renderDirectInvoiceOrderModal() {
+    if (!isDirectInvoiceModalOpen) {
+      return null;
+    }
+
+    return (
+      <AppModalOverlay
+        onDismiss={() => {
+          if (!isSubmittingSellerOrder) {
+            closeDirectInvoiceModal();
+          }
+        }}
+      >
+        <div
+          className="modal-card modal-card--wide direct-invoice-order-modal"
+          role="dialog"
+          aria-modal="true"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="modal-header">
+            <div>
+              <p className="section-label">Facturacion directa</p>
+              <h2>Facturar pedido</h2>
+              <p className="route-helper-text">
+                Para ventas del camion que no pasan por bodega. Selecciona ruta, cliente y productos; el pedido queda facturado y completado al instante.
+              </p>
+            </div>
+            <button
+              className="modal-close-button"
+              type="button"
+              disabled={isSubmittingSellerOrder}
+              onClick={closeDirectInvoiceModal}
+            >
+              Cerrar
+            </button>
+          </div>
+
+          {renderStaffOrderComposerBody()}
+        </div>
+      </AppModalOverlay>
     );
   }
 
@@ -9559,6 +9749,7 @@ export default function App() {
     setInventoryEntryStatus(null);
     setInventoryEntryWarehouseId(selectedWarehouseId || availableWarehouseOptions[0]?.value || "");
     setInventoryUsdToAwgRate("1.79");
+    setInventoryEntryNotes("");
     setInventoryEntryItems([]);
     setInventoryEntryExpenseItems([]);
     setInventoryEntryItemDraft({
@@ -9582,6 +9773,7 @@ export default function App() {
     setInventoryEntryStatus(null);
     setInventoryEntryWarehouseId(selectedWarehouseId || availableWarehouseOptions[0]?.value || "");
     setInventoryUsdToAwgRate("1.79");
+    setInventoryEntryNotes("");
     setInventoryEntryItems([createInventoryEntryDraftItem()]);
     setInventoryEntryExpenseItems([]);
     setInventoryExcelFileName("");
@@ -9591,6 +9783,7 @@ export default function App() {
   function closeInventoryEntryModal() {
     setIsInventoryEntryModalOpen(false);
     setInventoryEntryStatus(null);
+    setInventoryEntryNotes("");
   }
 
   function addInventoryEntryRow() {
@@ -9664,6 +9857,7 @@ export default function App() {
     );
     setInventoryEntryWarehouseId(warehouseId);
     setInventoryUsdToAwgRate(String(usdToAwgRate));
+    setInventoryEntryNotes(selectedGroup.notes || "");
     setInventoryEntryItems(selectedGroup.items.map((item) => {
       const product = productOptions.find((option) => option.value === item.productId);
 
@@ -9689,6 +9883,7 @@ export default function App() {
     setInventoryEntryEditDate("");
     setIsSavingInventoryEntryEdit(false);
     setInventoryEntryStatus(null);
+    setInventoryEntryNotes("");
   }
 
   async function handleInventoryEntryEditSubmit(event: FormEvent<HTMLFormElement>) {
@@ -9764,6 +9959,7 @@ export default function App() {
             warehouseId: inventoryEntryWarehouseId,
             usdToAwgRate,
             entryDate: inventoryEntryEditDate.trim(),
+            notes: inventoryEntryNotes.trim(),
             items: normalizedItems,
           }),
         },
@@ -10702,6 +10898,7 @@ export default function App() {
         body: JSON.stringify({
           warehouseId: inventoryEntryWarehouseId,
           usdToAwgRate,
+          notes: inventoryEntryNotes.trim(),
           items: normalizedItems,
           additionalExpenses: normalizedExpenses,
         }),
@@ -10715,6 +10912,7 @@ export default function App() {
 
       await refreshInventorySummary();
       setInventoryEntryStatus({ tone: "success", message: data.message ?? "Inventario registrado correctamente." });
+      setInventoryEntryNotes("");
       setIsInventoryEntryModalOpen(false);
     } catch (error) {
       setInventoryEntryStatus({
@@ -11588,6 +11786,9 @@ export default function App() {
       setIsDispatchingWarehouseOrder(true);
       setWarehouseOrderCompletionStatus(null);
 
+      // Preserve user gesture so the PDF tab is not blocked after the API round-trip.
+      const previewWindow = window.open("about:blank", "_blank");
+
       const defaultPaymentMethod = resolveStoreDefaultPaymentMethod(
         storeOptionsById.get(selectedWarehouseOrderDetail.storeId)?.defaultPaymentMethod,
       ) || "credito";
@@ -11622,6 +11823,11 @@ export default function App() {
       }>(response, responseText);
 
       if (!response.ok || !data.order) {
+        try {
+          previewWindow?.close();
+        } catch {
+          // Ignore.
+        }
         throw new Error(data.message ?? "No fue posible imprimir y facturar el pedido.");
       }
 
@@ -11650,14 +11856,16 @@ export default function App() {
         "invoice",
         data.invoiceNumber ?? null,
       );
-      openPdfInNewTab(pdf, fileName);
+      const openedInTab = openPdfInNewTab(pdf, fileName, { previewWindow });
 
       setSelectedWarehouseOrderDetail(null);
       setWarehouseOrderChecklist({});
       setWarehouseActiveSection("orders");
       setWarehouseOrderCompletionStatus({
         tone: "success",
-        message: "Pedido impreso, facturado y marcado como completado.",
+        message: openedInTab
+          ? "Pedido impreso, facturado y marcado como completado. PDF abierto y descargado."
+          : "Pedido impreso, facturado y marcado como completado. El PDF se descargo (revisa la carpeta de descargas).",
       });
     } catch (error) {
       setWarehouseOrderCompletionStatus({
@@ -11877,6 +12085,14 @@ export default function App() {
   }
 
   async function handlePrintCompletedOrderSummary(order: SellerOrderRecord) {
+    if (order.invoiceVoided) {
+      setWarehouseOrderCompletionStatus({
+        tone: "error",
+        message: "No puedes reimprimir una factura anulada.",
+      });
+      return;
+    }
+
     try {
       const response = await fetch(`${apiBaseUrl}/warehouse/orders/${order._id}/invoice-document`);
       const data = (await response.json()) as {
@@ -12156,7 +12372,10 @@ export default function App() {
     };
   }
 
-  async function handlePrintAndDispatchIncomingOrders(orders: SellerOrderRecord[]) {
+  async function handlePrintAndDispatchIncomingOrders(
+    orders: SellerOrderRecord[],
+    options?: { previewWindow?: Window | null },
+  ) {
     if (orders.length === 0) {
       setWarehouseOrderCompletionStatus({ tone: "error", message: "Selecciona al menos un pedido para imprimir y facturar." });
       return;
@@ -12174,15 +12393,19 @@ export default function App() {
     }
 
     const { pdf, fileName } = await buildCommercialInvoiceBatchPdf(documents);
-    openPdfInNewTab(pdf, fileName);
+    const openedInTab = openPdfInNewTab(pdf, fileName, { previewWindow: options?.previewWindow });
     await refreshWarehouseOrders();
     setSelectedIncomingOrderIds(new Set());
     setSelectedWarehouseOrderDetail(null);
     setWarehouseOrderCompletionStatus({
       tone: "success",
       message: orders.length === 1
-        ? "Pedido impreso, facturado y completado."
-        : `${orders.length} pedidos impresos, facturados y completados en un solo PDF.`,
+        ? (openedInTab
+          ? "Pedido impreso, facturado y completado. PDF abierto y descargado."
+          : "Pedido impreso, facturado y completado. El PDF se descargo (revisa la carpeta de descargas).")
+        : (openedInTab
+          ? `${orders.length} pedidos impresos, facturados y completados. PDF abierto y descargado.`
+          : `${orders.length} pedidos impresos, facturados y completados. El PDF se descargo (revisa la carpeta de descargas).`),
     });
   }
 
@@ -12191,11 +12414,21 @@ export default function App() {
       selectedIncomingOrderIds.has(String(order._id))
     ));
 
+    // Open while still in the click gesture so the browser allows the PDF tab later.
+    const previewWindow = selectedOrders.length > 0
+      ? window.open("about:blank", "_blank")
+      : null;
+
     try {
       setIsPrintingSelectedIncomingOrders(true);
       setWarehouseOrderCompletionStatus(null);
-      await handlePrintAndDispatchIncomingOrders(selectedOrders);
+      await handlePrintAndDispatchIncomingOrders(selectedOrders, { previewWindow });
     } catch (error) {
+      try {
+        previewWindow?.close();
+      } catch {
+        // Ignore.
+      }
       setWarehouseOrderCompletionStatus({
         tone: "error",
         message: error instanceof Error ? error.message : "No fue posible imprimir y enviar a despacho los pedidos seleccionados.",
@@ -12207,11 +12440,18 @@ export default function App() {
   }
 
   async function handlePrintIncomingOrder(order: SellerOrderRecord) {
+    const previewWindow = window.open("about:blank", "_blank");
+
     try {
       setPrintingIncomingOrderId(String(order._id));
       setWarehouseOrderCompletionStatus(null);
-      await handlePrintAndDispatchIncomingOrders([order]);
+      await handlePrintAndDispatchIncomingOrders([order], { previewWindow });
     } catch (error) {
+      try {
+        previewWindow?.close();
+      } catch {
+        // Ignore.
+      }
       setWarehouseOrderCompletionStatus({
         tone: "error",
         message: error instanceof Error ? error.message : "No fue posible imprimir el pedido.",
@@ -12502,6 +12742,9 @@ export default function App() {
                   <p>
                     {`${selectedInventoryEntryHistoryGroup.productCount} productos · ${selectedInventoryEntryHistoryGroup.totalUnits} unidades · ${formatAwgCurrency(getInventoryEntryGroupTotalCostAwg(selectedInventoryEntryHistoryGroup))} · TRM ${Number(selectedInventoryEntryHistoryGroup.usdToAwgRate || 0).toFixed(2)}`}
                   </p>
+                  {selectedInventoryEntryHistoryGroup.notes ? (
+                    <p className="route-helper-text">{`Nota: ${selectedInventoryEntryHistoryGroup.notes}`}</p>
+                  ) : null}
                 </div>
                 <button className="modal-close-button" type="button" onClick={closeInventoryEntryHistoryGroupDetails}>Cerrar</button>
               </div>
@@ -12587,6 +12830,16 @@ export default function App() {
                       value={inventoryUsdToAwgRate}
                       placeholder="1.79"
                       onChange={(event) => setInventoryUsdToAwgRate(event.target.value)}
+                    />
+                  </label>
+
+                  <label className="field field-full">
+                    <span>Nota general del registro</span>
+                    <textarea
+                      rows={2}
+                      value={inventoryEntryNotes}
+                      placeholder="Opcional: contenedor, factura proveedor, observaciones del lote..."
+                      onChange={(event) => setInventoryEntryNotes(event.target.value)}
                     />
                   </label>
                 </div>
@@ -13035,6 +13288,102 @@ export default function App() {
       });
     } finally {
       setDeletingWarehouseOrderId("");
+    }
+  }
+
+  async function handleVoidWarehouseInvoice(order: SellerOrderRecord) {
+    if (!order._id || !sessionUser) {
+      setWarehouseOrderCompletionStatus({ tone: "error", message: "No fue posible identificar el pedido." });
+      return;
+    }
+
+    if (order.status !== "delivered") {
+      setWarehouseOrderCompletionStatus({ tone: "error", message: "Solo puedes anular facturas de pedidos completados." });
+      return;
+    }
+
+    if (order.invoiceVoided) {
+      setWarehouseOrderCompletionStatus({ tone: "error", message: "Esta factura ya esta anulada." });
+      return;
+    }
+
+    const invoiceLabel = order.invoiceNumber ? `#${order.invoiceNumber}` : "sin consecutivo";
+    if (!globalThis.confirm(
+      `Se anulara la factura ${invoiceLabel} de ${order.storeName}.\n\n`
+      + "La factura seguira visible como anulada, el consecutivo NO se reutiliza, "
+      + "se restaura inventario y se retira de cartera activa.",
+    )) {
+      return;
+    }
+
+    const voidReasonRaw = globalThis.prompt("Motivo de anulacion (opcional):");
+
+    if (voidReasonRaw === null) {
+      return;
+    }
+
+    const voidReason = voidReasonRaw.trim();
+
+    try {
+      setVoidingWarehouseOrderId(order._id);
+      setWarehouseOrderCompletionStatus(null);
+      const response = await fetch(`${apiBaseUrl}/warehouse/orders/${order._id}/void-invoice`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          voidReason,
+          requestedByUserId: sessionUser.id,
+          requestedByUserName: sessionUser.name,
+          requestedByRole: sessionUser.role,
+        }),
+      });
+      const data = (await response.json()) as {
+        message?: string;
+        order?: SellerOrderRecord;
+      };
+
+      if (!response.ok || !data.order) {
+        setWarehouseOrderCompletionStatus({
+          tone: "error",
+          message: data.message ?? "No fue posible anular la factura.",
+        });
+        return;
+      }
+
+      const voidedOrder = {
+        ...data.order,
+        items: Array.isArray(data.order.items) ? data.order.items : order.items,
+        giftItems: Array.isArray(data.order.giftItems) ? data.order.giftItems : order.giftItems,
+      };
+
+      setWarehouseOrders((current) => current.map((entry) => (
+        String(entry._id) === String(order._id) ? { ...entry, ...voidedOrder } : entry
+      )));
+      setSelectedWarehouseOrderDetail((current) => (
+        current && String(current._id) === String(order._id)
+          ? { ...current, ...voidedOrder }
+          : current
+      ));
+
+      if (sessionUser.role === "management" || sessionUser.role === "contabilidad" || sessionUser.role === "warehouse-aruba") {
+        await refreshInventorySummary();
+      }
+
+      if (sessionUser.role === "management" || sessionUser.role === "contabilidad") {
+        await refreshCarteraData();
+      }
+
+      setWarehouseOrderCompletionStatus({
+        tone: "success",
+        message: data.message ?? "Factura anulada correctamente.",
+      });
+    } catch (error) {
+      setWarehouseOrderCompletionStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible conectar con el backend.",
+      });
+    } finally {
+      setVoidingWarehouseOrderId("");
     }
   }
 
@@ -14891,33 +15240,76 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
     }
 
     if (sellerDraftedItems.length === 0) {
-      setSellerOrderStatus({ tone: "error", message: "Agrega stock actual o cantidad en al menos un producto antes de enviar el registro a bodega." });
+      setSellerOrderStatus({
+        tone: "error",
+        message: isDirectInvoiceComposer
+          ? "Agrega cantidad en al menos un producto antes de facturar."
+          : "Agrega stock actual o cantidad en al menos un producto antes de enviar el registro a bodega.",
+      });
+      return;
+    }
+
+    if (isDirectInvoiceComposer && !directInvoicePaymentMethod) {
+      setSellerOrderStatus({ tone: "error", message: "Selecciona el metodo de pago antes de facturar." });
       return;
     }
 
     try {
       setIsSubmittingSellerOrder(true);
       setSellerOrderStatus(null);
+
+      const orderPayload = {
+        routeId: selectedSellerRoute._id ?? selectedSellerRoute.code,
+        routeName: selectedSellerRoute.name,
+        routeDay: selectedSellerDayKey,
+        storeId: selectedSellerStore.storeId,
+        salesRepId,
+        deliveryDate: sellerDeliveryDateDraft,
+        orderNotes: sellerOrderNotesDraft.trim(),
+        internalOrderNotes: sellerInternalOrderNotesDraft.trim(),
+        items: sellerDraftedItems,
+        giftItems: sellerGiftDraftItems.map((item) => ({
+          productId: item.productId,
+          stockRowId: item.stockRowId,
+          quantity: item.quantity,
+          notes: "Obsequio",
+        })),
+      };
+
+      if (isStaffComposer && isDirectInvoiceComposer) {
+        const response = await fetch(`${apiBaseUrl}/management/orders/direct-invoice`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...orderPayload,
+            paymentMethod: directInvoicePaymentMethod,
+            requestedByUserId: sessionUser.id,
+            requestedByUserName: sessionUser.name,
+            requestedByRole: sessionUser.role,
+          }),
+        });
+        const data = (await response.json()) as { message?: string; invoiceNumber?: number };
+
+        if (!response.ok) {
+          setSellerOrderStatus({ tone: "error", message: data.message ?? "No fue posible facturar el pedido." });
+          return;
+        }
+
+        closeDirectInvoiceModal();
+        setWarehouseOrderCompletionStatus({
+          tone: "success",
+          message: data.message
+            ?? `Pedido facturado${data.invoiceNumber ? ` con #${data.invoiceNumber}` : ""} correctamente.`,
+        });
+        await refreshWarehouseOrders();
+        await refreshInventorySummary();
+        return;
+      }
+
       const response = await fetch(`${apiBaseUrl}/sales/orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          routeId: selectedSellerRoute._id ?? selectedSellerRoute.code,
-          routeName: selectedSellerRoute.name,
-          routeDay: selectedSellerDayKey,
-          storeId: selectedSellerStore.storeId,
-          salesRepId,
-          deliveryDate: sellerDeliveryDateDraft,
-          orderNotes: sellerOrderNotesDraft.trim(),
-          internalOrderNotes: sellerInternalOrderNotesDraft.trim(),
-          items: sellerDraftedItems,
-          giftItems: sellerGiftDraftItems.map((item) => ({
-            productId: item.productId,
-            stockRowId: item.stockRowId,
-            quantity: item.quantity,
-            notes: "Obsequio",
-          })),
-        }),
+        body: JSON.stringify(orderPayload),
       });
       const data = (await response.json()) as { message?: string };
 
@@ -18136,26 +18528,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </div>
                     </div>
 
-                    <div className="warehouse-gifts-panel">
-                      <div className="management-table-header">
-                        <div>
-                          <p className="section-label">Obsequios</p>
-                          <h3>Productos de regalo</h3>
-                          <p>Se muestran en la factura a precio 0 y se descuentan del inventario al facturar.</p>
+                    {(selectedWarehouseOrderDetail.giftItems ?? []).length > 0 ? (
+                      <div className="warehouse-gifts-panel">
+                        <div className="management-table-header">
+                          <div>
+                            <p className="section-label">Obsequios</p>
+                            <h3>Productos de regalo</h3>
+                            <p>Se muestran en la factura a precio 0. Solo lectura en bodega.</p>
+                          </div>
                         </div>
-                        {canMutateSelectedWarehouseOrder ? (
-                          <button
-                            className="warehouse-action-button warehouse-action-button--add"
-                            type="button"
-                            disabled={isSavingWarehouseOrderEdit || isCompletingWarehouseOrder || isDispatchingWarehouseOrder}
-                            onClick={openWarehouseAddGiftModal}
-                          >
-                            Añadir obsequio
-                          </button>
-                        ) : null}
-                      </div>
 
-                      {(selectedWarehouseOrderDetail.giftItems ?? []).length > 0 ? (
                         <div className="table-wrap table-wrap--warehouse-items">
                           <table className="data-table data-table--warehouse-order-items">
                             <thead>
@@ -18165,7 +18547,6 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 <th>Lote</th>
                                 <th>Cant.</th>
                                 <th>Precio</th>
-                                {canMutateSelectedWarehouseOrder ? <th>Quitar</th> : null}
                               </tr>
                             </thead>
                             <tbody>
@@ -18180,31 +18561,32 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                     <td>{lot ? formatWarehouseLotOptionLabel(lot, 0) : (gift.stockRowId ? "Lote seleccionado" : "-")}</td>
                                     <td>{gift.quantity}</td>
                                     <td>0 AWG</td>
-                                    {canMutateSelectedWarehouseOrder ? (
-                                      <td>
-                                        <button
-                                          className="ghost-button warehouse-order-remove-item"
-                                          type="button"
-                                          onClick={() => removeWarehouseGiftItem(giftKey)}
-                                        >
-                                          Quitar
-                                        </button>
-                                      </td>
-                                    ) : null}
                                   </tr>
                                 );
                               })}
                             </tbody>
                           </table>
                         </div>
-                      ) : (
-                        <p className="route-helper-text">Este pedido aun no tiene obsequios.</p>
-                      )}
-                    </div>
+                      </div>
+                    ) : null}
 
                     <div className="warehouse-order-toolbar">
                       <p>
-                        Estado actual: <strong>{formatSellerOrderStatus(selectedWarehouseOrderDetail.status)}</strong>
+                        Estado actual:{" "}
+                        <strong>
+                          {formatSellerOrderStatus(
+                            selectedWarehouseOrderDetail.status,
+                            selectedWarehouseOrderDetail.invoiceVoided,
+                          )}
+                        </strong>
+                        {selectedWarehouseOrderDetail.invoiceVoided ? (
+                          <span className="warehouse-order-overdue-badge" style={{ marginLeft: 8 }}>
+                            Anulada
+                            {selectedWarehouseOrderDetail.invoiceVoidedByUserName
+                              ? ` por ${selectedWarehouseOrderDetail.invoiceVoidedByUserName}`
+                              : ""}
+                          </span>
+                        ) : null}
                       </p>
                       {canMutateSelectedWarehouseOrder ? (
                         <p className="route-helper-text">
@@ -18214,7 +18596,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             ? (canWarehouseInvoiceOrder
                               ? "Ajusta cantidad y total por producto si hace falta. El precio unitario se calcula automaticamente antes de facturar."
                               : "Ajusta cantidades o quita productos si el cliente cambio de opinion antes de la entrega.")
-                            : "Ajusta cantidades, lotes u obsequios antes de imprimir y facturar."}
+                            : "Ajusta cantidades o lotes antes de imprimir y facturar."}
                         </p>
                       ) : null}
                       {warehouseOrderCompletionHints.length > 0 ? (
@@ -18235,7 +18617,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           {isSavingWarehouseOrderEdit ? "Guardando cambios..." : "Guardar cambios al pedido"}
                         </button>
                       ) : null}
-                      {selectedWarehouseOrderDetail.status === "delivered" ? (
+                      {selectedWarehouseOrderDetail.status === "delivered" && !selectedWarehouseOrderDetail.invoiceVoided ? (
                         <button
                           className="warehouse-action-button warehouse-action-button--print"
                           type="button"
@@ -18243,6 +18625,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           onClick={() => void handlePrintCompletedOrderSummary(selectedWarehouseOrderDetail)}
                         >
                           Reimprimir factura
+                        </button>
+                      ) : null}
+                      {canVoidSelectedWarehouseInvoice ? (
+                        <button
+                          className="warehouse-action-button warehouse-action-button--danger"
+                          type="button"
+                          disabled={voidingWarehouseOrderId === String(selectedWarehouseOrderDetail._id)}
+                          onClick={() => void handleVoidWarehouseInvoice(selectedWarehouseOrderDetail)}
+                        >
+                          {voidingWarehouseOrderId === String(selectedWarehouseOrderDetail._id) ? "Anulando..." : "Anular factura"}
                         </button>
                       ) : null}
                       {(selectedWarehouseOrderDetail.status === "submitted" || selectedWarehouseOrderDetail.status === "dispatched") ? (
@@ -18335,7 +18727,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         ? "No hay pedidos recibidos para ese cliente."
                         : "No hay pedidos pendientes por procesar."}
                       loadingMessage="Cargando pedidos recibidos..."
-                      showInvoiceNotes
+                      showInternalNotes
+                      showRoute={false}
                       showConsecutivo
                       selectable
                       selectedOrderIds={selectedIncomingOrderIds}
@@ -18456,30 +18849,58 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       loadingMessage="Cargando pedidos completados..."
                       groupByDeliveryDate={false}
                       showConsecutivo
+                      showRoute={false}
+                      showInternalNotes
                       onSelectOrder={setSelectedWarehouseOrderDetail}
                       hideDefaultViewButton
-                      renderActions={(order) => (
+                      renderActions={(order) => {
+                        const isVoidingOrder = voidingWarehouseOrderId === String(order._id);
+                        const canVoidOrder = order.status === "delivered"
+                          && !order.invoiceVoided
+                          && (
+                            sessionUser?.role === "warehouse-aruba"
+                            || sessionUser?.role === "management"
+                            || sessionUser?.role === "contabilidad"
+                          );
+
+                        return (
                         <>
                           <button
                             className="seller-order-detail-trigger"
                             type="button"
                             onClick={() => setSelectedWarehouseOrderDetail(order)}
                           >
-                            {canEditCompletedWarehouseOrders ? "Editar" : "Ver"}
+                            {order.invoiceVoided ? "Ver" : canEditCompletedWarehouseOrders ? "Editar" : "Ver"}
                           </button>
-                          <button
-                            className="table-action-icon"
-                            type="button"
-                            aria-label="Reimprimir factura"
-                            title="Reimprimir factura"
-                            onClick={() => void handlePrintCompletedOrderSummary(order)}
-                          >
-                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                              <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
-                            </svg>
-                          </button>
+                          {!order.invoiceVoided ? (
+                            <button
+                              className="table-action-icon"
+                              type="button"
+                              aria-label="Reimprimir factura"
+                              title="Reimprimir factura"
+                              disabled={isVoidingOrder}
+                              onClick={() => void handlePrintCompletedOrderSummary(order)}
+                            >
+                              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
+                              </svg>
+                            </button>
+                          ) : null}
+                          {canVoidOrder ? (
+                            <button
+                              className="seller-order-detail-trigger seller-order-detail-trigger--danger"
+                              type="button"
+                              aria-label="Anular factura"
+                              title="Anular factura"
+                              disabled={isVoidingOrder}
+                              onClick={() => void handleVoidWarehouseInvoice(order)}
+                            >
+                              {isVoidingOrder ? "Anulando..." : "Anular"}
+                            </button>
+                          ) : null}
                         </>
-                      )}
+                        );
+                      }}
                     />
                   </article>
                 </>
@@ -18682,6 +19103,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             value={inventoryUsdToAwgRate}
                             placeholder="1.79"
                             onChange={(event) => setInventoryUsdToAwgRate(event.target.value)}
+                          />
+                        </label>
+
+                        <label className="field field-full">
+                          <span>Nota general del registro</span>
+                          <textarea
+                            rows={2}
+                            value={inventoryEntryNotes}
+                            placeholder="Opcional: contenedor, factura proveedor, observaciones del lote..."
+                            onChange={(event) => setInventoryEntryNotes(event.target.value)}
                           />
                         </label>
 
@@ -25519,6 +25950,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         />
                       </label>
 
+                      <label className="field field-full">
+                        <span>Nota general del registro</span>
+                        <textarea
+                          rows={2}
+                          value={inventoryEntryNotes}
+                          placeholder="Opcional: contenedor, factura proveedor, observaciones del lote..."
+                          onChange={(event) => setInventoryEntryNotes(event.target.value)}
+                        />
+                      </label>
+
                       <div className="inventory-entry-warehouse-add">
                         <label className="field field-full">
                           <span>Producto</span>
@@ -26030,6 +26471,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   </label>
 
                   <label className="field field-full">
+                    <span>Nota general del registro</span>
+                    <textarea
+                      rows={2}
+                      value={inventoryEntryNotes}
+                      placeholder="Opcional: contenedor, factura proveedor, observaciones del lote..."
+                      onChange={(event) => setInventoryEntryNotes(event.target.value)}
+                    />
+                  </label>
+
+                  <label className="field field-full">
                     <span>Cargar Excel de facturacion</span>
                     <input
                       type="file"
@@ -26392,6 +26843,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <p>
                         {`${selectedInventoryEntryHistoryGroup.productCount} productos · ${selectedInventoryEntryHistoryGroup.totalUnits} unidades · USD@AWG ${Number(selectedInventoryEntryHistoryGroup.usdToAwgRate || 0).toFixed(2)}`}
                       </p>
+                      {selectedInventoryEntryHistoryGroup.notes ? (
+                        <p className="route-helper-text">{`Nota: ${selectedInventoryEntryHistoryGroup.notes}`}</p>
+                      ) : null}
                     </div>
                     <button className="modal-close-button" type="button" onClick={closeInventoryEntryHistoryGroupDetails}>Cerrar</button>
                   </div>
@@ -26967,7 +27421,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   ? "No hay pedidos recibidos para ese cliente."
                   : "Todavia no han llegado pedidos desde el portal de vendedores."}
                 loadingMessage="Cargando pedidos recibidos..."
-                showInvoiceNotes
+                showInternalNotes
+                showRoute={false}
                 onSelectOrder={setSelectedWarehouseOrderDetail}
                 renderActions={(order) => {
                   const isDeletingOrder = deletingWarehouseOrderId === order._id;
@@ -26992,9 +27447,17 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               <div className="management-table-header">
                 <div>
                   <h2>Pedidos completados</h2>
-                  <p>Pedidos ya facturados y cerrados. Filtra por fecha de entrega y exporta a QuickBooks.</p>
+                  <p>Pedidos ya facturados y cerrados. Filtra por fecha de entrega, factura ventas del camion o exporta a QuickBooks.</p>
                 </div>
                 <div className="management-table-header-actions">
+                  <button
+                    className="primary-action-button"
+                    type="button"
+                    disabled={!canCreateStaffOrders(sessionUser?.role)}
+                    onClick={() => openDirectInvoiceComposer()}
+                  >
+                    Facturar pedido
+                  </button>
                   <button
                     className="ghost-button ghost-button--accent"
                     type="button"
@@ -27084,35 +27547,44 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       filteredWarehouseCompletedOrders.map((order) => {
                         const totalUnits = order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
                         const isDeletingOrder = deletingWarehouseOrderId === order._id;
+                        const isVoidingOrder = voidingWarehouseOrderId === order._id;
+                        const canVoidOrder = !order.invoiceVoided
+                          && (
+                            sessionUser.role === "management"
+                            || sessionUser.role === "contabilidad"
+                            || sessionUser.role === "warehouse-aruba"
+                          );
 
                         return (
-                          <tr key={order._id}>
+                          <tr key={order._id} className={order.invoiceVoided ? "is-voided-invoice" : undefined}>
                             <td>{formatDeliveryDateLabel(getOrderDeliveryDateKey(order))}</td>
-                            <td>{order.invoiceNumber ? `#${order.invoiceNumber}` : "-"}</td>
+                            <td>{formatInvoiceNumberLabel(order)}</td>
                             <td>{order.salesRepName}</td>
                             <td>{order.storeName}</td>
                             <td>{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
                             <td>{`${order.items.length} producto${order.items.length === 1 ? "" : "s"} / ${totalUnits} und`}</td>
                             <td className="table-actions-cell">
-                              <button
-                                className="table-action-icon"
-                                type="button"
-                                aria-label="Reimprimir factura"
-                                title="Reimprimir factura"
-                                disabled={isDeletingOrder}
-                                onClick={() => void handlePrintCompletedOrderSummary(order)}
-                              >
-                                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                  <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
-                                </svg>
-                              </button>
-                              {(sessionUser.role === "management" || sessionUser.role === "contabilidad") ? (
+                              {!order.invoiceVoided ? (
+                                <button
+                                  className="table-action-icon"
+                                  type="button"
+                                  aria-label="Reimprimir factura"
+                                  title="Reimprimir factura"
+                                  disabled={isDeletingOrder || isVoidingOrder}
+                                  onClick={() => void handlePrintCompletedOrderSummary(order)}
+                                >
+                                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                    <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
+                                  </svg>
+                                </button>
+                              ) : null}
+                              {(sessionUser.role === "management" || sessionUser.role === "contabilidad") && !order.invoiceVoided ? (
                                 <button
                                   className="table-action-icon"
                                   type="button"
                                   aria-label="Editar factura"
                                   title={pendingInvoiceChangeOrderIds.has(String(order._id)) ? "Solicitud pendiente" : "Editar factura"}
-                                  disabled={isDeletingOrder || pendingInvoiceChangeOrderIds.has(String(order._id))}
+                                  disabled={isDeletingOrder || isVoidingOrder || pendingInvoiceChangeOrderIds.has(String(order._id))}
                                   onClick={() => openInvoiceChangeModal(order)}
                                 >
                                   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -27125,23 +27597,37 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 type="button"
                                 aria-label="Ver detalle del pedido"
                                 title="Ver detalle"
-                                disabled={isDeletingOrder}
+                                disabled={isDeletingOrder || isVoidingOrder}
                                 onClick={() => setSelectedWarehouseOrderDetail(order)}
                               >
                                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                   <path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z" fill="currentColor" />
                                 </svg>
                               </button>
-                              <button
-                                className="table-action-icon is-danger"
-                                type="button"
-                                aria-label={pendingOrderDeleteOrderIds.has(String(order._id)) ? "Solicitud pendiente" : sessionUser?.role === "management" ? "Borrar pedido" : "Solicitar borrado"}
-                                title={pendingOrderDeleteOrderIds.has(String(order._id)) ? "Solicitud pendiente" : sessionUser?.role === "management" ? "Borrar pedido" : "Solicitar borrado"}
-                                disabled={isDeletingOrder || pendingOrderDeleteOrderIds.has(String(order._id))}
-                                onClick={() => void handleDeleteWarehouseOrder(order)}
-                              >
-                                x
-                              </button>
+                              {canVoidOrder ? (
+                                <button
+                                  className="seller-order-detail-trigger seller-order-detail-trigger--danger"
+                                  type="button"
+                                  aria-label="Anular factura"
+                                  title="Anular factura"
+                                  disabled={isDeletingOrder || isVoidingOrder}
+                                  onClick={() => void handleVoidWarehouseInvoice(order)}
+                                >
+                                  {isVoidingOrder ? "Anulando..." : "Anular"}
+                                </button>
+                              ) : null}
+                              {!order.invoiceVoided ? (
+                                <button
+                                  className="table-action-icon is-danger"
+                                  type="button"
+                                  aria-label={pendingOrderDeleteOrderIds.has(String(order._id)) ? "Solicitud pendiente" : sessionUser?.role === "management" ? "Borrar pedido" : "Solicitar borrado"}
+                                  title={pendingOrderDeleteOrderIds.has(String(order._id)) ? "Solicitud pendiente" : sessionUser?.role === "management" ? "Borrar pedido" : "Solicitar borrado"}
+                                  disabled={isDeletingOrder || isVoidingOrder || pendingOrderDeleteOrderIds.has(String(order._id))}
+                                  onClick={() => void handleDeleteWarehouseOrder(order)}
+                                >
+                                  x
+                                </button>
+                              ) : null}
                             </td>
                           </tr>
                         );
@@ -27387,14 +27873,29 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       ) : null}
                       <div className="warehouse-order-toolbar">
                         <p>
-                          Estado actual: <strong>{formatSellerOrderStatus(selectedWarehouseOrderDetail.status)}</strong>
+                          Estado actual:{" "}
+                        <strong>
+                          {formatSellerOrderStatus(
+                            selectedWarehouseOrderDetail.status,
+                            selectedWarehouseOrderDetail.invoiceVoided,
+                          )}
+                        </strong>
+                        {selectedWarehouseOrderDetail.invoiceVoided ? (
+                          <span className="warehouse-order-overdue-badge" style={{ marginLeft: 8 }}>
+                            Anulada
+                            {selectedWarehouseOrderDetail.invoiceVoidedByUserName
+                              ? ` por ${selectedWarehouseOrderDetail.invoiceVoidedByUserName}`
+                              : ""}
+                          </span>
+                        ) : null}
                         </p>
                         <div className="warehouse-order-toolbar-actions">
                           <button
                             className="warehouse-action-button warehouse-action-button--save"
                             type="button"
                             disabled={
-                              isSavingAccountingOrderPrices
+                              Boolean(selectedWarehouseOrderDetail.invoiceVoided)
+                              || isSavingAccountingOrderPrices
                               || isDispatchingWarehouseOrder
                               || isCompletingWarehouseOrder
                               || !selectedWarehouseOrderDetail.items.some((item) => {
@@ -27424,7 +27925,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           >
                             {isSavingAccountingOrderPrices ? "Guardando cambios..." : "Guardar cambios del pedido"}
                           </button>
-                          {selectedWarehouseOrderDetail.status === "delivered" ? (
+                          {selectedWarehouseOrderDetail.status === "delivered" && !selectedWarehouseOrderDetail.invoiceVoided ? (
                             <button
                               className="warehouse-action-button warehouse-action-button--print"
                               type="button"
@@ -27432,6 +27933,21 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               onClick={() => void handlePrintCompletedOrderSummary(selectedWarehouseOrderDetail)}
                             >
                               Reimprimir factura
+                            </button>
+                          ) : null}
+                          {canVoidSelectedWarehouseInvoice ? (
+                            <button
+                              className="warehouse-action-button warehouse-action-button--danger"
+                              type="button"
+                              disabled={
+                                voidingWarehouseOrderId === String(selectedWarehouseOrderDetail._id)
+                                || isSavingAccountingOrderPrices
+                              }
+                              onClick={() => void handleVoidWarehouseInvoice(selectedWarehouseOrderDetail)}
+                            >
+                              {voidingWarehouseOrderId === String(selectedWarehouseOrderDetail._id)
+                                ? "Anulando..."
+                                : "Anular factura"}
                             </button>
                           ) : null}
                           {(selectedWarehouseOrderDetail.status === "submitted" || selectedWarehouseOrderDetail.status === "dispatched") ? (
@@ -27460,6 +27976,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 </div>
               </AppModalOverlay>
             ) : null}
+            {renderDirectInvoiceOrderModal()}
           </section>
         ) : (
           <section className="dashboard-grid" />

@@ -111,7 +111,7 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
     const defaults = resolveDefaultDateRange();
     const startDate = isValidDateKey(params.startDate ?? "") ? String(params.startDate) : defaults.startDate;
     const endDate = isValidDateKey(params.endDate ?? "") ? String(params.endDate) : defaults.endDate;
-    const deliveredOrders = await Order.find({ status: "delivered" })
+    const deliveredOrders = await Order.find({ status: "delivered", invoiceVoided: { $ne: true } })
         .sort({ deliveryDate: 1, updatedAt: 1 })
         .lean();
     const filteredOrders = deliveredOrders.filter((order) => {
