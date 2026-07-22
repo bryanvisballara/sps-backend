@@ -10583,11 +10583,19 @@ export default function App() {
       return;
     }
 
+    const storageKey = `spste:catalog-assigned-clients:${catalogId}`;
+
     const applyClientIds = (clientIds: string[]) => {
       const normalized = [...new Set(clientIds.map((entry) => entry.trim()).filter(Boolean))];
 
       if (normalized.length > 0) {
         setSelectedCatalogClientIds(normalized);
+
+        try {
+          window.localStorage.setItem(storageKey, JSON.stringify(normalized));
+        } catch {
+          // Ignore private-mode / storage quota errors.
+        }
       }
     };
 
@@ -10603,7 +10611,7 @@ export default function App() {
         return;
       }
     } catch {
-      // Fall through to catalog list / preview payloads.
+      // Fall through to catalog list / local cache.
     }
 
     const catalog = catalogs.find((entry) => String(entry._id) === String(catalogId));
@@ -10618,6 +10626,18 @@ export default function App() {
 
     if (Array.isArray(catalog?.assignedClientIds) && catalog.assignedClientIds.length > 0) {
       applyClientIds(catalog.assignedClientIds.map((entry) => String(entry)));
+      return;
+    }
+
+    try {
+      const cached = window.localStorage.getItem(storageKey);
+      const parsed = cached ? JSON.parse(cached) as unknown : null;
+
+      if (Array.isArray(parsed)) {
+        applyClientIds(parsed.map((entry) => String(entry ?? "")));
+      }
+    } catch {
+      // Ignore invalid cache payloads.
     }
   }
 
@@ -13385,6 +13405,15 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
     if (!response.ok) {
       throw new Error(data.message ?? "No fue posible guardar los precios del catalogo.");
+    }
+
+    try {
+      window.localStorage.setItem(
+        `spste:catalog-assigned-clients:${catalogId}`,
+        JSON.stringify(selectedCatalogClientIds),
+      );
+    } catch {
+      // Ignore private-mode / storage quota errors.
     }
 
     return data;
