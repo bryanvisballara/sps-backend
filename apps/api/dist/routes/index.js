@@ -6036,6 +6036,9 @@ apiRouter.put("/management/catalogs/:id/client-pricing", async (request, respons
         if (items.length === 0) {
             throw new Error("Ninguno de los productos enviados pertenece al catalogo seleccionado. Vuelve a cargar el catalogo e intenta de nuevo.");
         }
+        const selectedClientObjectIds = payload.clientIds
+            .map((clientId) => clientsById.get(clientId)?._id)
+            .filter(Boolean);
         await Promise.all(payload.clientIds.map(async (clientId) => {
             const client = clientsById.get(clientId);
             if (!client) {
@@ -6056,12 +6059,20 @@ apiRouter.put("/management/catalogs/:id/client-pricing", async (request, respons
                 runValidators: true,
             });
         }));
+        // Drop clients removed from the destination list so they do not reappear on reload.
+        await CatalogClientPricing.deleteMany({
+            catalogId: catalog._id,
+            clientId: { $nin: selectedClientObjectIds },
+        });
         await CatalogRecord.findByIdAndUpdate(catalog._id, {
             availableForOrders: true,
         }, {
             runValidators: true,
         });
-        response.json({ message: "Catalogo del cliente guardado correctamente." });
+        response.json({
+            message: "Catalogo del cliente guardado correctamente.",
+            clientIds: payload.clientIds,
+        });
     }
     catch (error) {
         sendCreationError(response, error);
