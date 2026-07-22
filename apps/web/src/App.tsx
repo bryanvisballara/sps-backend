@@ -10460,17 +10460,14 @@ export default function App() {
 
       setCatalogs(data);
       setSelectedCatalogId((current) => {
+        // Keep the user's current selection whenever that catalog still exists,
+        // even if it is not yet marked availableForOrders (pricing not saved).
+        if (current && data.some((catalog) => String(catalog._id) === String(current))) {
+          return String(current);
+        }
+
         const orderReady = data.filter((catalog) => catalog.availableForOrders === true);
-
-        if (current && orderReady.some((catalog) => catalog._id === current)) {
-          return current;
-        }
-
-        if (current && orderReady.length === 0 && data.some((catalog) => catalog._id === current)) {
-          return current;
-        }
-
-        return orderReady[0]?._id ?? "";
+        return String(orderReady[0]?._id ?? data[0]?._id ?? "");
       });
     } catch {
       setCatalogError("No fue posible conectar con el backend.");
@@ -13034,8 +13031,62 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
     return data.secure_url;
   }
 
-  async function saveCatalogPricingForSelectedClients() {
-    const response = await fetch(`${apiBaseUrl}/management/catalogs/${selectedCatalogId}/client-pricing`, {
+  async function ensureCatalogSelectedForPricing() {
+    if (selectedCatalogId) {
+      return selectedCatalogId;
+    }
+
+    const hasCatalogSelection = catalogForm.categoryNames.length > 0 || catalogForm.productIds.length > 0;
+
+    if (!catalogForm.name.trim() || !hasCatalogSelection) {
+      throw new Error("Selecciona un catalogo creado o guarda primero el catalogo con categorias/productos.");
+    }
+
+    const response = await fetch(`${apiBaseUrl}/management/catalogs${editingCatalogId ? `/${editingCatalogId}` : ""}`, {
+      method: editingCatalogId ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: catalogForm.name.trim(),
+        description: catalogForm.description.trim(),
+        categoryNames: catalogForm.categoryNames,
+        productIds: catalogForm.productIds,
+        excludedProductIds: catalogForm.excludedProductIds,
+      }),
+    });
+    const data = (await response.json()) as CatalogRecord | { message?: string };
+
+    if (!response.ok) {
+      throw new Error("message" in data ? data.message ?? "No fue posible guardar el catalogo." : "No fue posible guardar el catalogo.");
+    }
+
+    const savedCatalog = data as CatalogRecord;
+    const savedCatalogId = typeof savedCatalog._id === "string" ? savedCatalog._id : editingCatalogId;
+
+    if (!savedCatalogId) {
+      throw new Error("No fue posible identificar el catalogo guardado.");
+    }
+
+    setSelectedCatalogId(savedCatalogId);
+    setEditingCatalogId(savedCatalogId);
+    setCatalogForm({
+      name: savedCatalog.name ?? catalogForm.name.trim(),
+      description: savedCatalog.description ?? catalogForm.description.trim(),
+      categoryNames: [...(savedCatalog.categoryNames ?? catalogForm.categoryNames)],
+      productIds: [...(savedCatalog.productIds ?? catalogForm.productIds)],
+      excludedProductIds: [...(savedCatalog.excludedProductIds ?? catalogForm.excludedProductIds)],
+    });
+    await refreshCatalogs();
+    setSelectedCatalogId(savedCatalogId);
+    await refreshCatalogPreview(savedCatalogId);
+    return savedCatalogId;
+  }
+
+  async function saveCatalogPricingForSelectedClients(catalogId = selectedCatalogId) {
+    if (!catalogId) {
+      throw new Error("Selecciona un catalogo antes de guardar precios.");
+    }
+
+    const response = await fetch(`${apiBaseUrl}/management/catalogs/${catalogId}/client-pricing`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -13057,6 +13108,39 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
     }
 
     return data;
+  }
+
+  async function handleCatalogPricingSubmit() {
+    if (selectedCatalogClientIds.length === 0) {
+      setCatalogPricingStatus({ tone: "error", message: "Agrega al menos un cliente antes de guardar el catalogo." });
+      return;
+    }
+
+    if (catalogPreviewItems.length === 0) {
+      setCatalogPricingStatus({ tone: "error", message: "El catalogo seleccionado no tiene productos para guardar." });
+      return;
+    }
+
+    try {
+      setIsSavingCatalogPricing(true);
+      setCatalogPricingStatus(null);
+      const catalogId = await ensureCatalogSelectedForPricing();
+      await saveCatalogPricingForSelectedClients(catalogId);
+      await refreshCatalogs();
+      setSelectedCatalogId(catalogId);
+      await refreshCatalogPreview(catalogId);
+      setCatalogPricingStatus({
+        tone: "success",
+        message: `Catalogo guardado para ${selectedCatalogClientIds.length} cliente${selectedCatalogClientIds.length === 1 ? "" : "s"}. Este guardado alimenta los pedidos del portal de bodega.`,
+      });
+    } catch (error) {
+      setCatalogPricingStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible guardar el catalogo para pedidos.",
+      });
+    } finally {
+      setIsSavingCatalogPricing(false);
+    }
   }
 
   async function handleCatalogWhatsappSend() {
@@ -16103,46 +16187,6 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       await refreshCatalogs();
     } catch {
       setCatalogStatus({ tone: "error", message: "No fue posible conectar con el backend." });
-    }
-  }
-
-  async function handleCatalogPricingSubmit() {
-    if (!selectedCatalogId) {
-      setCatalogPricingStatus({ tone: "error", message: "Selecciona un catalogo antes de guardar precios." });
-      return;
-    }
-
-    if (selectedCatalogClientIds.length === 0) {
-      setCatalogPricingStatus({ tone: "error", message: "Agrega al menos un cliente antes de guardar el catalogo." });
-      return;
-    }
-
-    if (catalogPreviewItems.length === 0) {
-      setCatalogPricingStatus({ tone: "error", message: "El catalogo seleccionado no tiene productos para guardar." });
-      return;
-    }
-
-    if (!selectedCatalogRecord) {
-      setCatalogPricingStatus({ tone: "error", message: "Selecciona el catalogo que deseas guardar." });
-      return;
-    }
-
-    try {
-      setIsSavingCatalogPricing(true);
-      setCatalogPricingStatus(null);
-      await saveCatalogPricingForSelectedClients();
-      await refreshCatalogs();
-      setCatalogPricingStatus({
-        tone: "success",
-        message: `Catalogo guardado para ${selectedCatalogClientIds.length} cliente${selectedCatalogClientIds.length === 1 ? "" : "s"}. Este guardado alimenta los pedidos del portal de bodega.`,
-      });
-    } catch (error) {
-      setCatalogPricingStatus({
-        tone: "error",
-        message: error instanceof Error ? error.message : "No fue posible guardar el catalogo para pedidos.",
-      });
-    } finally {
-      setIsSavingCatalogPricing(false);
     }
   }
 
@@ -19628,7 +19672,19 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   className="submit-button catalog-action-button catalog-generate-button"
                   type="button"
                   onClick={() => void handleCatalogPricingSubmit()}
-                  disabled={isSavingCatalogPricing || isSendingCatalogWhatsapp || !selectedCatalogId || selectedCatalogClientIds.length === 0 || catalogPreviewItems.length === 0}
+                  disabled={
+                    isSavingCatalogPricing
+                    || isSendingCatalogWhatsapp
+                    || selectedCatalogClientIds.length === 0
+                    || catalogPreviewItems.length === 0
+                    || (
+                      !selectedCatalogId
+                      && !(
+                        catalogForm.name.trim()
+                        && (catalogForm.categoryNames.length > 0 || catalogForm.productIds.length > 0)
+                      )
+                    )
+                  }
                 >
                   {isSavingCatalogPricing ? "Guardando cambios..." : "Guardar cambios"}
                 </button>
@@ -19637,7 +19693,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   className="ghost-button catalog-action-button catalog-whatsapp-button"
                   type="button"
                   onClick={() => void handleCatalogPdfDownload()}
-                  disabled={isSendingCatalogWhatsapp || isSavingCatalogPricing || !selectedCatalogId || catalogPreviewItems.length === 0}
+                  disabled={isSendingCatalogWhatsapp || isSavingCatalogPricing || catalogPreviewItems.length === 0 || !selectedCatalogId}
                 >
                   Descargar PDF del catálogo
                 </button>
@@ -19646,7 +19702,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   className="ghost-button catalog-action-button catalog-whatsapp-button"
                   type="button"
                   onClick={toggleCatalogWhatsappComposer}
-                  disabled={isSendingCatalogWhatsapp || isSavingCatalogPricing || !selectedCatalogId || selectedCatalogClientIds.length === 0 || catalogPreviewItems.length === 0}
+                  disabled={isSendingCatalogWhatsapp || isSavingCatalogPricing || selectedCatalogClientIds.length === 0 || catalogPreviewItems.length === 0 || !selectedCatalogId}
                 >
                   {isCatalogWhatsappComposerOpen
                     ? "Ocultar envío por WhatsApp"

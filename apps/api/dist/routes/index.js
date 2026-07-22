@@ -510,39 +510,41 @@ async function normalizeOperationsClientPayload(body) {
     return operationsClientPayload;
 }
 async function resolveCatalogProducts(catalog) {
-    const explicitProductIds = Array.isArray(catalog.productIds)
+    const explicitProductIds = new Set(Array.isArray(catalog.productIds)
         ? catalog.productIds.map((entry) => String(entry)).filter(Boolean)
-        : [];
-    const categoryNames = Array.isArray(catalog.categoryNames)
-        ? catalog.categoryNames.map((entry) => entry.trim()).filter(Boolean)
-        : [];
+        : []);
+    const categoryNames = new Set(Array.isArray(catalog.categoryNames)
+        ? catalog.categoryNames.map((entry) => String(entry).trim().toLowerCase()).filter(Boolean)
+        : []);
     const excludedProductIds = new Set(Array.isArray(catalog.excludedProductIds)
         ? catalog.excludedProductIds.map((entry) => String(entry)).filter(Boolean)
         : []);
-    const filters = [];
-    if (explicitProductIds.length > 0) {
-        filters.push({ _id: { $in: explicitProductIds } });
-    }
-    if (categoryNames.length > 0) {
-        filters.push({
-            $or: [
-                { arubaCategory: { $in: categoryNames } },
-                { category: { $in: categoryNames } },
-            ],
-        });
-    }
-    if (filters.length === 0) {
+    if (explicitProductIds.size === 0 && categoryNames.size === 0) {
         return [];
     }
     const products = await Product.find({
         active: { $ne: false },
         shareWithAruba: { $ne: false },
-        $or: filters,
     })
         .sort({ name: 1 })
         .lean();
+    const matchedProducts = products.filter((product) => {
+        const productId = String(product._id);
+        if (excludedProductIds.has(productId)) {
+            return false;
+        }
+        if (explicitProductIds.has(productId)) {
+            return true;
+        }
+        if (categoryNames.size === 0) {
+            return false;
+        }
+        const arubaCategory = String(product.arubaCategory ?? "").trim().toLowerCase();
+        const category = String(product.category ?? "").trim().toLowerCase();
+        return categoryNames.has(arubaCategory) || categoryNames.has(category);
+    });
     const latestImportCosts = await ImportCost.find({
-        productId: { $in: products.map((product) => product._id) },
+        productId: { $in: matchedProducts.map((product) => product._id) },
     })
         .sort({ importDate: -1, createdAt: -1 })
         .lean();
@@ -553,9 +555,7 @@ async function resolveCatalogProducts(catalog) {
             latestCostMap.set(productId, Number(row.landedUnitCost ?? 0));
         }
     });
-    return products
-        .filter((product) => !excludedProductIds.has(String(product._id)))
-        .map((product) => {
+    return matchedProducts.map((product) => {
         const arubaPurchaseCostUsd = Number(product.arubaPurchaseCostUsd ?? 0);
         const arubaUsdToAwgRate = Number(product.arubaUsdToAwgRate ?? 1.79);
         const arubaCostAwg = arubaPurchaseCostUsd * arubaUsdToAwgRate;

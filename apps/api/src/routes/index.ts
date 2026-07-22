@@ -701,47 +701,55 @@ async function resolveCatalogProducts(catalog: {
   categoryNames?: Array<string>;
   excludedProductIds?: Array<unknown>;
 }) {
-  const explicitProductIds = Array.isArray(catalog.productIds)
-    ? catalog.productIds.map((entry) => String(entry)).filter(Boolean)
-    : [];
-  const categoryNames = Array.isArray(catalog.categoryNames)
-    ? catalog.categoryNames.map((entry) => entry.trim()).filter(Boolean)
-    : [];
+  const explicitProductIds = new Set(
+    Array.isArray(catalog.productIds)
+      ? catalog.productIds.map((entry) => String(entry)).filter(Boolean)
+      : [],
+  );
+  const categoryNames = new Set(
+    Array.isArray(catalog.categoryNames)
+      ? catalog.categoryNames.map((entry) => String(entry).trim().toLowerCase()).filter(Boolean)
+      : [],
+  );
   const excludedProductIds = new Set(
     Array.isArray(catalog.excludedProductIds)
       ? catalog.excludedProductIds.map((entry) => String(entry)).filter(Boolean)
       : [],
   );
 
-  const filters: Array<Record<string, unknown>> = [];
-
-  if (explicitProductIds.length > 0) {
-    filters.push({ _id: { $in: explicitProductIds } });
-  }
-
-  if (categoryNames.length > 0) {
-    filters.push({
-      $or: [
-        { arubaCategory: { $in: categoryNames } },
-        { category: { $in: categoryNames } },
-      ],
-    });
-  }
-
-  if (filters.length === 0) {
+  if (explicitProductIds.size === 0 && categoryNames.size === 0) {
     return [];
   }
 
   const products = await Product.find({
     active: { $ne: false },
     shareWithAruba: { $ne: false },
-    $or: filters,
   })
     .sort({ name: 1 })
     .lean();
 
+  const matchedProducts = products.filter((product) => {
+    const productId = String(product._id);
+
+    if (excludedProductIds.has(productId)) {
+      return false;
+    }
+
+    if (explicitProductIds.has(productId)) {
+      return true;
+    }
+
+    if (categoryNames.size === 0) {
+      return false;
+    }
+
+    const arubaCategory = String(product.arubaCategory ?? "").trim().toLowerCase();
+    const category = String(product.category ?? "").trim().toLowerCase();
+    return categoryNames.has(arubaCategory) || categoryNames.has(category);
+  });
+
   const latestImportCosts = await ImportCost.find({
-    productId: { $in: products.map((product) => product._id) },
+    productId: { $in: matchedProducts.map((product) => product._id) },
   })
     .sort({ importDate: -1, createdAt: -1 })
     .lean();
@@ -756,25 +764,23 @@ async function resolveCatalogProducts(catalog: {
     }
   });
 
-  return products
-    .filter((product) => !excludedProductIds.has(String(product._id)))
-    .map((product) => {
-      const arubaPurchaseCostUsd = Number(product.arubaPurchaseCostUsd ?? 0);
-      const arubaUsdToAwgRate = Number(product.arubaUsdToAwgRate ?? 1.79);
-      const arubaCostAwg = arubaPurchaseCostUsd * arubaUsdToAwgRate;
-      const arubaCategory = String(product.arubaCategory ?? "").trim();
+  return matchedProducts.map((product) => {
+    const arubaPurchaseCostUsd = Number(product.arubaPurchaseCostUsd ?? 0);
+    const arubaUsdToAwgRate = Number(product.arubaUsdToAwgRate ?? 1.79);
+    const arubaCostAwg = arubaPurchaseCostUsd * arubaUsdToAwgRate;
+    const arubaCategory = String(product.arubaCategory ?? "").trim();
 
-      return {
-        productId: String(product._id),
-        name: product.name,
-        sku: product.sku,
-        category: arubaCategory || product.category,
-        arubaCategory,
-        imageUrl: String(product.imageUrl ?? ""),
-        cost: arubaCostAwg > 0 ? arubaCostAwg : latestCostMap.get(String(product._id)) ?? Number(product.cost ?? 0),
-        salePrice: Number(product.salePrice ?? 0),
-      };
-    });
+    return {
+      productId: String(product._id),
+      name: product.name,
+      sku: product.sku,
+      category: arubaCategory || product.category,
+      arubaCategory,
+      imageUrl: String(product.imageUrl ?? ""),
+      cost: arubaCostAwg > 0 ? arubaCostAwg : latestCostMap.get(String(product._id)) ?? Number(product.cost ?? 0),
+      salePrice: Number(product.salePrice ?? 0),
+    };
+  });
 }
 
 function normalizeImportCostPayload(body: unknown) {
