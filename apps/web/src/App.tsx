@@ -4018,11 +4018,24 @@ function SearchableStoreSelect({
   const selectedStore = stores.find((store) => store.value === value) ?? null;
   const [query, setQuery] = useState(selectedStore ? selectedStore.label : "");
   const [isOpen, setIsOpen] = useState(false);
+  const previousValueRef = useRef(value);
 
   useEffect(() => {
+    const previousValue = previousValueRef.current;
+    previousValueRef.current = value;
+
+    // Multi-add pickers keep value="" while typing. Do not wipe the query when
+    // the parent re-creates the stores array on every render.
+    if (!value) {
+      if (previousValue) {
+        setQuery("");
+      }
+      return;
+    }
+
     const nextSelectedStore = stores.find((store) => store.value === value) ?? null;
     setQuery(nextSelectedStore ? nextSelectedStore.label : "");
-  }, [stores, value]);
+  }, [value, stores]);
 
   const normalizedQuery = query.trim().toLowerCase();
   const filteredStores = normalizedQuery
@@ -4068,7 +4081,8 @@ function SearchableStoreSelect({
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
                   onChange(store.value);
-                  setQuery(store.label);
+                  // Keep search box clear in multi-add mode (value stays empty).
+                  setQuery(value ? store.label : "");
                   setIsOpen(false);
                 }}
               >

@@ -4324,37 +4324,53 @@ apiRouter.get("/management/catalogs/:id/preview", async (request, response) => {
             response.status(404).json({ message: "El catalogo no existe." });
             return;
         }
-        const catalogId = catalog._id;
         const clientId = typeof request.query.clientId === "string" ? request.query.clientId.trim() : "";
         const [catalogProducts, clientPricing] = await Promise.all([
             resolveCatalogProducts(catalog),
             clientId
                 ? CatalogClientPricing.findOne({ catalogId: catalog._id, clientId }).lean()
-                : CatalogClientPricing.findOne({ catalogId: catalog._id, active: { $ne: false } }).sort({ updatedAt: -1 }).lean(),
+                : Promise.resolve(null),
         ]);
         const catalogProductMap = new Map(catalogProducts.map((item) => [item.productId, item]));
         const savedItems = Array.isArray(clientPricing?.items) ? clientPricing.items : [];
-        const previewItems = savedItems.length > 0
-            ? savedItems.map((savedItem) => {
+        const previewItems = (() => {
+            if (savedItems.length === 0) {
+                return catalogProducts.map((item) => ({
+                    ...item,
+                    stockRowId: "",
+                    lotName: "",
+                }));
+            }
+            const usedProductIds = new Set();
+            const fromSaved = savedItems.flatMap((savedItem) => {
                 const productId = String(savedItem.productId ?? "");
                 const product = catalogProductMap.get(productId);
-                return {
-                    productId,
-                    stockRowId: String(savedItem.stockRowId ?? ""),
-                    lotName: String(savedItem.lotName ?? ""),
-                    name: String(savedItem.productName ?? product?.name ?? "Producto"),
-                    sku: String(savedItem.productSku ?? product?.sku ?? ""),
-                    category: String(product?.category ?? ""),
-                    imageUrl: String(product?.imageUrl ?? ""),
-                    cost: Number(savedItem.cost ?? product?.cost ?? 0),
-                    salePrice: Number(savedItem.salePrice ?? product?.salePrice ?? 0),
-                };
-            })
-            : catalogProducts.map((item) => ({
+                // Skip priced rows for products no longer in this catalog.
+                if (!product) {
+                    return [];
+                }
+                usedProductIds.add(productId);
+                return [{
+                        productId,
+                        stockRowId: String(savedItem.stockRowId ?? ""),
+                        lotName: String(savedItem.lotName ?? ""),
+                        name: String(savedItem.productName ?? product.name ?? "Producto"),
+                        sku: String(savedItem.productSku ?? product.sku ?? ""),
+                        category: String(product.category ?? ""),
+                        imageUrl: String(product.imageUrl ?? ""),
+                        cost: Number(savedItem.cost ?? product.cost ?? 0),
+                        salePrice: Number(savedItem.salePrice ?? product.salePrice ?? 0),
+                    }];
+            });
+            const missingProducts = catalogProducts
+                .filter((item) => !usedProductIds.has(item.productId))
+                .map((item) => ({
                 ...item,
                 stockRowId: "",
                 lotName: "",
             }));
+            return [...fromSaved, ...missingProducts];
+        })();
         response.json({
             catalog,
             clientPricing,
@@ -5673,21 +5689,24 @@ apiRouter.put("/management/catalogs/:id/client-pricing", async (request, respons
         }
         const catalogProducts = await resolveCatalogProducts(catalog);
         const catalogProductMap = new Map(catalogProducts.map((item) => [item.productId, item]));
-        const items = payload.items.map((item) => {
+        const items = payload.items.flatMap((item) => {
             const product = catalogProductMap.get(item.productId);
             if (!product) {
-                throw new Error("Uno o varios productos ya no hacen parte del catalogo seleccionado.");
+                return [];
             }
-            return {
-                productId: item.productId,
-                stockRowId: item.stockRowId,
-                lotName: item.lotName || product.name,
-                productName: product.name,
-                productSku: product.sku,
-                cost: item.cost,
-                salePrice: item.salePrice,
-            };
+            return [{
+                    productId: item.productId,
+                    stockRowId: item.stockRowId,
+                    lotName: item.lotName || product.name,
+                    productName: product.name,
+                    productSku: product.sku,
+                    cost: item.cost,
+                    salePrice: item.salePrice,
+                }];
         });
+        if (items.length === 0) {
+            throw new Error("Ninguno de los productos enviados pertenece al catalogo seleccionado. Vuelve a cargar el catalogo e intenta de nuevo.");
+        }
         await Promise.all(payload.clientIds.map(async (clientId) => {
             const client = clientsById.get(clientId);
             if (!client) {
