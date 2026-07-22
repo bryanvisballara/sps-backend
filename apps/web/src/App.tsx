@@ -229,6 +229,11 @@ type CatalogRecord = {
   excludedProductIds?: string[];
   availableForOrders?: boolean;
   active?: boolean;
+  assignedClientIds?: string[];
+  assignedClients?: Array<{
+    clientId: string;
+    clientName: string;
+  }>;
 };
 
 type CatalogPreviewItem = {
@@ -262,6 +267,10 @@ type CatalogClientPricingRecord = {
 type CatalogPreviewResponse = {
   catalog: CatalogRecord;
   clientPricing?: CatalogClientPricingRecord | null;
+  assignedClients?: Array<{
+    clientId: string;
+    clientName: string;
+  }>;
   items: CatalogPreviewItem[];
 };
 
@@ -5095,6 +5104,12 @@ export default function App() {
   const creationSectionKpis = buildCreationKpis(activeCreationSectionKey, creationRows, warehouseLocations);
   const selectedCatalogRecord = catalogs.find((catalog) => catalog._id === selectedCatalogId) ?? null;
   const orderReadyCatalogs = catalogs.filter((catalog) => catalog.availableForOrders === true);
+  const catalogAssignedClientsById = new Map(
+    (selectedCatalogRecord?.assignedClients ?? []).map((entry) => [
+      String(entry.clientId),
+      String(entry.clientName || entry.clientId),
+    ]),
+  );
   const storeOptionsById = new Map(storeOptions.map((store) => [store.value, store]));
   const totalRouteSelectedStores = routeDayOptions.reduce(
     (total, day) => total + routeForm.dayAssignments[day.key].length,
@@ -5140,9 +5155,31 @@ export default function App() {
     ))
     .sort((left, right) => left.store.label.localeCompare(right.store.label, "es"));
   const selectedSalesRepPerformance = salesRepPerformanceRows.find((rep) => rep.salesRepId === selectedSalesRepPerformanceId) ?? null;
-  const selectedCatalogClients = selectedCatalogClientIds
-    .map((clientId) => storeOptionsById.get(clientId))
-    .filter((store): store is StoreOption => Boolean(store));
+  const selectedCatalogClients = selectedCatalogClientIds.flatMap((clientId) => {
+    const fromStores = storeOptionsById.get(clientId);
+
+    if (fromStores) {
+      return [fromStores];
+    }
+
+    const fallbackName = catalogAssignedClientsById.get(clientId);
+
+    if (!fallbackName) {
+      return [];
+    }
+
+    return [{
+      value: clientId,
+      label: fallbackName,
+      address: "",
+      code: "",
+      email: "",
+      phone: "",
+      managerName: "",
+      defaultPaymentMethod: "",
+      assignedProductIds: [],
+    }];
+  });
   const userRoleLabel = sessionUser ? getRoleLabel(sessionUser.role) : "Acceso";
   const pushNotificationBannerNode = sessionUser && !pushNotificationDismissed ? (
     <PushNotificationBanner
@@ -7003,17 +7040,18 @@ export default function App() {
       return;
     }
 
-    void refreshCatalogAssignedClients(selectedCatalogId);
-  }, [activeSection, selectedCatalogId, sessionUser]);
+    const assignedFromCatalog = catalogs.find((catalog) => String(catalog._id) === String(selectedCatalogId));
+    const assignedIds = (assignedFromCatalog?.assignedClients ?? assignedFromCatalog?.assignedClientIds ?? [])
+      .map((entry) => (typeof entry === "string" ? entry : String(entry.clientId ?? "")))
+      .map((entry) => entry.trim())
+      .filter(Boolean);
 
-  useEffect(() => {
-    // Avoid wiping saved recipients while store options are still loading.
-    if (storeOptions.length === 0) {
-      return;
+    if (assignedIds.length > 0) {
+      setSelectedCatalogClientIds(assignedIds);
     }
 
-    setSelectedCatalogClientIds((current) => current.filter((clientId) => storeOptions.some((store) => store.value === clientId)));
-  }, [storeOptions]);
+    void refreshCatalogAssignedClients(selectedCatalogId);
+  }, [activeSection, catalogs, selectedCatalogId, sessionUser]);
 
   useEffect(() => {
     setRouteForm((current) => {
@@ -10511,6 +10549,27 @@ export default function App() {
           ? String(data.clientPricing.markupPercent)
           : "",
       );
+
+      const assignedClients = (data.assignedClients ?? data.catalog?.assignedClients ?? [])
+        .map((entry) => ({
+          clientId: String(entry.clientId ?? "").trim(),
+          clientName: String(entry.clientName ?? "").trim(),
+        }))
+        .filter((entry) => entry.clientId);
+      const assignedIds = assignedClients.map((entry) => entry.clientId);
+
+      if (assignedIds.length > 0 && !clientId) {
+        setSelectedCatalogClientIds(assignedIds);
+        setCatalogs((current) => current.map((catalog) => (
+          String(catalog._id) === String(catalogId)
+            ? {
+              ...catalog,
+              assignedClients,
+              assignedClientIds: assignedIds,
+            }
+            : catalog
+        )));
+      }
     } catch {
       setCatalogPreviewError("No fue posible conectar con el backend.");
     } finally {
@@ -10524,6 +10583,14 @@ export default function App() {
       return;
     }
 
+    const applyClientIds = (clientIds: string[]) => {
+      const normalized = [...new Set(clientIds.map((entry) => entry.trim()).filter(Boolean))];
+
+      if (normalized.length > 0) {
+        setSelectedCatalogClientIds(normalized);
+      }
+    };
+
     try {
       const response = await fetch(`${apiBaseUrl}/management/catalogs/${catalogId}/client-pricing`);
       const data = (await response.json()) as {
@@ -10531,17 +10598,26 @@ export default function App() {
         message?: string;
       };
 
-      if (!response.ok || !Array.isArray(data.clients)) {
+      if (response.ok && Array.isArray(data.clients)) {
+        applyClientIds(data.clients.map((entry) => String(entry.clientId ?? "")));
         return;
       }
-
-      setSelectedCatalogClientIds(
-        data.clients
-          .map((entry) => String(entry.clientId ?? "").trim())
-          .filter(Boolean),
-      );
     } catch {
-      // Keep current selection if the assigned-clients lookup fails.
+      // Fall through to catalog list / preview payloads.
+    }
+
+    const catalog = catalogs.find((entry) => String(entry._id) === String(catalogId));
+    const fromCatalog = (catalog?.assignedClients ?? [])
+      .map((entry) => String(entry.clientId ?? "").trim())
+      .filter(Boolean);
+
+    if (fromCatalog.length > 0) {
+      applyClientIds(fromCatalog);
+      return;
+    }
+
+    if (Array.isArray(catalog?.assignedClientIds) && catalog.assignedClientIds.length > 0) {
+      applyClientIds(catalog.assignedClientIds.map((entry) => String(entry)));
     }
   }
 

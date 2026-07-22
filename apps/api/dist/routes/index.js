@@ -4315,7 +4315,34 @@ apiRouter.get("/management/products", async (_request, response) => {
 });
 apiRouter.get("/management/catalogs", async (_request, response) => {
     const catalogs = await CatalogRecord.find().sort({ createdAt: -1 }).lean();
-    response.json(catalogs);
+    const catalogIds = catalogs.map((catalog) => catalog._id);
+    const pricingRows = catalogIds.length > 0
+        ? await CatalogClientPricing.find({
+            catalogId: { $in: catalogIds },
+            active: { $ne: false },
+        }).select({ catalogId: 1, clientId: 1, clientName: 1 }).lean()
+        : [];
+    const assignedClientsByCatalogId = new Map();
+    pricingRows.forEach((row) => {
+        const catalogId = String(row.catalogId ?? "");
+        const clientId = String(row.clientId ?? "").trim();
+        const clientName = String(row.clientName ?? "").trim();
+        if (!catalogId || !clientId) {
+            return;
+        }
+        const current = assignedClientsByCatalogId.get(catalogId) ?? [];
+        current.push({ clientId, clientName: clientName || clientId });
+        assignedClientsByCatalogId.set(catalogId, current);
+    });
+    response.json(catalogs.map((catalog) => {
+        const assignedClients = (assignedClientsByCatalogId.get(String(catalog._id)) ?? [])
+            .sort((left, right) => left.clientName.localeCompare(right.clientName, "es"));
+        return {
+            ...catalog,
+            assignedClients,
+            assignedClientIds: assignedClients.map((entry) => entry.clientId),
+        };
+    }));
 });
 apiRouter.get("/management/catalogs/:id/preview", async (request, response) => {
     try {
@@ -4325,11 +4352,15 @@ apiRouter.get("/management/catalogs/:id/preview", async (request, response) => {
             return;
         }
         const clientId = typeof request.query.clientId === "string" ? request.query.clientId.trim() : "";
-        const [catalogProducts, clientPricing] = await Promise.all([
+        const [catalogProducts, clientPricing, assignedClientRows] = await Promise.all([
             resolveCatalogProducts(catalog),
             clientId
                 ? CatalogClientPricing.findOne({ catalogId: catalog._id, clientId }).lean()
                 : Promise.resolve(null),
+            CatalogClientPricing.find({
+                catalogId: catalog._id,
+                active: { $ne: false },
+            }).select({ clientId: 1, clientName: 1 }).sort({ clientName: 1 }).lean(),
         ]);
         const catalogProductMap = new Map(catalogProducts.map((item) => [item.productId, item]));
         const savedItems = Array.isArray(clientPricing?.items) ? clientPricing.items : [];
@@ -4374,6 +4405,10 @@ apiRouter.get("/management/catalogs/:id/preview", async (request, response) => {
         response.json({
             catalog,
             clientPricing,
+            assignedClients: assignedClientRows.map((row) => ({
+                clientId: String(row.clientId ?? ""),
+                clientName: String(row.clientName ?? ""),
+            })).filter((row) => row.clientId),
             items: previewItems,
         });
     }
