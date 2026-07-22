@@ -6006,9 +6006,13 @@ apiRouter.get("/management/inventory-summary", async (request, response) => {
   };
 
   const productById = new Map(products.map((product) => [String(product._id), product]));
+  const toIsoDateTime = (value: unknown) => {
+    const parsed = value instanceof Date ? value : new Date(String(value ?? ""));
+    return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+  };
   const history = inventoryAdjustments
     .filter((adjustment) => !Boolean((adjustment as { hiddenFromHistory?: boolean }).hiddenFromHistory))
-    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
+    .sort((left, right) => toIsoDateTime(right.createdAt).localeCompare(toIsoDateTime(left.createdAt)))
     .map((adjustment) => {
       const product = productById.get(String(adjustment.productId));
       const source = String(adjustment.source ?? "");
@@ -6032,7 +6036,8 @@ apiRouter.get("/management/inventory-summary", async (request, response) => {
         entryCostUsd: Number(adjustment.entryCostUsd ?? 0) > 0
           ? Number(adjustment.entryCostUsd)
           : Number(product?.arubaPurchaseCostUsd ?? 0),
-        createdAt: String(adjustment.createdAt ?? new Date().toISOString()),
+        // Always ISO so Inventario ingresado date filters (YYYY-MM-DD) work.
+        createdAt: toIsoDateTime(adjustment.createdAt),
       };
     });
 

@@ -5075,7 +5075,10 @@ export default function App() {
   const normalizedInventoryEntriesStartDate = inventoryEntriesStartDate.trim() || "0000-01-01";
   const normalizedInventoryEntriesEndDate = inventoryEntriesEndDate.trim() || "9999-12-31";
   const filteredInventoryEntryHistoryGroups = inventoryEntryHistoryGroups.filter((group) => {
-    const dateKey = String(group.createdAt).slice(0, 10);
+    const parsedCreatedAt = new Date(group.createdAt);
+    const dateKey = Number.isNaN(parsedCreatedAt.getTime())
+      ? String(group.createdAt).slice(0, 10)
+      : getBusinessDateKey(parsedCreatedAt);
     return dateKey >= normalizedInventoryEntriesStartDate && dateKey <= normalizedInventoryEntriesEndDate;
   });
   const selectedInventoryEntryHistoryGroup = inventoryEntryHistoryGroups.find((group) => group.id === selectedInventoryEntryHistoryGroupId) ?? null;
