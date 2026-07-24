@@ -3902,15 +3902,16 @@ function openPdfInNewTab(pdf: jsPDF, fileName: string, options?: { previewWindow
     openedInTab = Boolean(popup);
   }
 
-  // Always download as well: after long async work (batch invoice), browsers often
-  // block popups and target=_blank clicks that are no longer tied to the user gesture.
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = safeFileName;
-  link.rel = "noopener noreferrer";
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
+  // Only fall back to a file download if the browser blocked the PDF tab.
+  if (!openedInTab) {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = safeFileName;
+    link.rel = "noopener noreferrer";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
 
   window.setTimeout(() => URL.revokeObjectURL(url), 120_000);
   return openedInTab;
@@ -12112,7 +12113,7 @@ export default function App() {
       setWarehouseOrderCompletionStatus({
         tone: "success",
         message: openedInTab
-          ? "Pedido impreso, facturado y marcado como completado. PDF abierto y descargado."
+          ? "Pedido impreso, facturado y marcado como completado. PDF abierto en el navegador."
           : "Pedido impreso, facturado y marcado como completado. El PDF se descargo (revisa la carpeta de descargas).",
       });
     } catch (error) {
@@ -12649,10 +12650,10 @@ export default function App() {
       tone: "success",
       message: orders.length === 1
         ? (openedInTab
-          ? "Pedido impreso, facturado y completado. PDF abierto y descargado."
+          ? "Pedido impreso, facturado y completado. PDF abierto en el navegador."
           : "Pedido impreso, facturado y completado. El PDF se descargo (revisa la carpeta de descargas).")
         : (openedInTab
-          ? `${orders.length} pedidos impresos, facturados y completados. PDF abierto y descargado.`
+          ? `${orders.length} pedidos impresos, facturados y completados. PDF abierto en el navegador.`
           : `${orders.length} pedidos impresos, facturados y completados. El PDF se descargo (revisa la carpeta de descargas).`),
     });
   }
