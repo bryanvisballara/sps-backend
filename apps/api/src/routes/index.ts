@@ -1441,7 +1441,7 @@ async function createSubmittedSalesOrder(payload: ReturnType<typeof normalizeSal
 
 function normalizeWarehouseOrderItems(
   rawItems: unknown,
-  existingItems: Array<{ productId: unknown; stockCurrent?: unknown; notes?: unknown; salePriceAwg?: unknown; stockRowId?: unknown }>,
+  existingItems: Array<{ productId: unknown; stockCurrent?: unknown; notes?: unknown; description?: unknown; salePriceAwg?: unknown; stockRowId?: unknown }>,
 ) {
   if (!Array.isArray(rawItems) || rawItems.length === 0) {
     throw new Error("Agrega al menos un producto al pedido.");
@@ -1461,6 +1461,7 @@ function normalizeWarehouseOrderItems(
       stockCurrent?: unknown;
       quantity?: unknown;
       notes?: unknown;
+      description?: unknown;
       salePriceAwg?: unknown;
       stockRowId?: unknown;
     };
@@ -1468,6 +1469,7 @@ function normalizeWarehouseOrderItems(
     const stockRowId = typeof currentItem.stockRowId === "string" ? currentItem.stockRowId.trim() : "";
     const quantity = Number(currentItem.quantity ?? 0);
     const notes = typeof currentItem.notes === "string" ? currentItem.notes.trim() : undefined;
+    const description = typeof currentItem.description === "string" ? currentItem.description.trim() : undefined;
     const stockCurrentValue = currentItem.stockCurrent;
     const hasStockCurrent = stockCurrentValue !== undefined && stockCurrentValue !== null && String(stockCurrentValue).trim() !== "";
     const stockCurrent = hasStockCurrent ? Number(stockCurrentValue) : null;
@@ -1502,6 +1504,7 @@ function normalizeWarehouseOrderItems(
         quantity,
         ...(stockRowId ? { stockRowId } : {}),
         notes: notes ?? "",
+        ...(description !== undefined ? { description } : {}),
         ...(normalizedPayloadSalePrice !== undefined ? { salePriceAwg: normalizedPayloadSalePrice } : {}),
       }];
     }
@@ -1512,6 +1515,7 @@ function normalizeWarehouseOrderItems(
       : (Number.isFinite(existingSalePriceAwg) && existingSalePriceAwg >= 0
         ? Math.round(existingSalePriceAwg * 100) / 100
         : undefined);
+    const existingDescription = typeof existingItem.description === "string" ? existingItem.description.trim() : "";
 
     return [{
       productId,
@@ -1521,6 +1525,7 @@ function normalizeWarehouseOrderItems(
       quantity,
       ...(stockRowId || existingItem.stockRowId ? { stockRowId: stockRowId || String(existingItem.stockRowId) } : {}),
       notes: notes ?? (typeof existingItem.notes === "string" ? existingItem.notes.trim() : ""),
+      description: description !== undefined ? description : existingDescription,
       ...(resolvedSalePriceAwg !== undefined ? { salePriceAwg: resolvedSalePriceAwg } : {}),
     }];
   });
@@ -2377,15 +2382,30 @@ function normalizeInvoiceChangeRequestItems(rawItems: unknown, existingItems: Ar
   return normalizeWarehouseOrderItems(rawItems, existingItems);
 }
 
-async function enrichInvoiceChangeItems(items: Array<{ productId: string; quantity: number; notes?: string }>) {
+async function enrichInvoiceChangeItems(items: Array<{
+  productId: string;
+  quantity: number;
+  notes?: string;
+  description?: string;
+  salePriceAwg?: number;
+}>) {
   const productIds = items.map((item) => item.productId);
   const products = productIds.length > 0
-    ? await Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1 }).lean()
+    ? await Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1, description: 1, salePrice: 1 }).lean()
     : [];
   const productsById = new Map(products.map((product) => [String(product._id), product]));
 
   return items.map((item) => {
     const product = productsById.get(item.productId);
+    const payloadSalePrice = Number(item.salePriceAwg ?? NaN);
+    const productSalePrice = Number(product?.salePrice ?? NaN);
+    const resolvedSalePrice = Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0
+      ? Math.round(payloadSalePrice * 100) / 100
+      : (Number.isFinite(productSalePrice) && productSalePrice >= 0
+        ? Math.round(productSalePrice * 100) / 100
+        : undefined);
+    const description = String(item.description ?? "").trim()
+      || String(product?.description ?? "").trim();
 
     return {
       productId: item.productId,
@@ -2393,6 +2413,8 @@ async function enrichInvoiceChangeItems(items: Array<{ productId: string; quanti
       productSku: String(product?.sku ?? "-"),
       quantity: item.quantity,
       notes: item.notes ?? "",
+      description,
+      ...(resolvedSalePrice !== undefined ? { salePriceAwg: resolvedSalePrice } : {}),
     };
   });
 }
@@ -5550,6 +5572,10 @@ apiRouter.post("/warehouse/orders/:id/invoice-change-requests", async (request, 
         productId: String(item.productId),
         quantity: Number(item.quantity ?? 0),
         notes: typeof item.notes === "string" ? item.notes : "",
+        description: typeof item.description === "string" ? item.description : "",
+        ...(Number.isFinite(Number(item.salePriceAwg)) && Number(item.salePriceAwg) >= 0
+          ? { salePriceAwg: Math.round(Number(item.salePriceAwg) * 100) / 100 }
+          : {}),
       })),
     );
     const enrichedProposedItems = await enrichInvoiceChangeItems(proposedItems);
@@ -5567,8 +5593,18 @@ apiRouter.post("/warehouse/orders/:id/invoice-change-requests", async (request, 
       payload.proposedInvoiceNumber ?? currentInvoiceNumber,
       order,
     );
-    const currentSnapshot = JSON.stringify(currentItems.map((item) => ({ productId: item.productId, quantity: item.quantity })));
-    const proposedSnapshot = JSON.stringify(enrichedProposedItems.map((item) => ({ productId: item.productId, quantity: item.quantity })));
+    const currentSnapshot = JSON.stringify(currentItems.map((item) => ({
+      productId: item.productId,
+      quantity: item.quantity,
+      description: item.description ?? "",
+      salePriceAwg: Number(item.salePriceAwg ?? 0),
+    })));
+    const proposedSnapshot = JSON.stringify(enrichedProposedItems.map((item) => ({
+      productId: item.productId,
+      quantity: item.quantity,
+      description: item.description ?? "",
+      salePriceAwg: Number(item.salePriceAwg ?? 0),
+    })));
     const invoiceNumberChanged = currentInvoiceNumber !== proposedInvoiceNumber;
 
     if (currentSnapshot === proposedSnapshot && Math.abs(currentInvoiceAmountAwg - proposedInvoiceAmountAwg) < 0.009 && !invoiceNumberChanged) {
@@ -5659,12 +5695,20 @@ apiRouter.put("/management/invoice-change-requests/:id/approve", async (request,
       return;
     }
 
-    const proposedItems = changeRequest.proposedItems.map((item) => ({
-      productId: String(item.productId),
-      stockCurrent: null,
-      quantity: Number(item.quantity ?? 0),
-      notes: String(item.notes ?? ""),
-    }));
+    const proposedItems = changeRequest.proposedItems.map((item) => {
+      const salePriceAwg = Number(item.salePriceAwg ?? NaN);
+
+      return {
+        productId: String(item.productId),
+        stockCurrent: null,
+        quantity: Number(item.quantity ?? 0),
+        notes: String(item.notes ?? ""),
+        description: String(item.description ?? "").trim(),
+        ...(Number.isFinite(salePriceAwg) && salePriceAwg >= 0
+          ? { salePriceAwg: Math.round(salePriceAwg * 100) / 100 }
+          : {}),
+      };
+    });
 
     await applyOrderInventoryDelta(String(order._id), order.items, proposedItems);
 
@@ -5678,6 +5722,13 @@ apiRouter.put("/management/invoice-change-requests/:id/approve", async (request,
       },
       { new: true, runValidators: true },
     );
+
+    const updatedOrder = await Order.findById(order._id).lean();
+
+    if (updatedOrder) {
+      const invoiceLines = await buildWarehouseInvoiceDocumentLines(updatedOrder);
+      await syncLogisticsInvoiceItemsFromOrder(updatedOrder, invoiceLines);
+    }
 
     await updateCarteraAfterInvoiceChange({
       carteraEntryId: String(carteraEntry._id),
@@ -5697,7 +5748,7 @@ apiRouter.put("/management/invoice-change-requests/:id/approve", async (request,
     response.json({
       message: "Solicitud aprobada. La factura y el inventario fueron actualizados.",
       request: mapInvoiceChangeRequestRecord(changeRequest.toObject()),
-      order: await mapWarehouseOrderRecord((await Order.findById(order._id).lean())!),
+      order: await mapWarehouseOrderRecord(updatedOrder ?? (await Order.findById(order._id).lean())!),
     });
   } catch (error) {
     sendCreationError(response, error);

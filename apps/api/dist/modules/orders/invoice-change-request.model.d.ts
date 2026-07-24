@@ -15,41 +15,53 @@ export declare const InvoiceChangeRequest: import("mongoose").Model<{
     reviewNotes: string;
     currentItems: import("mongoose").Types.DocumentArray<{
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }> & {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }>;
     proposedItems: import("mongoose").Types.DocumentArray<{
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }> & {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }>;
     currentInvoiceAmountAwg: number;
     proposedInvoiceAmountAwg: number;
@@ -73,41 +85,53 @@ export declare const InvoiceChangeRequest: import("mongoose").Model<{
     reviewNotes: string;
     currentItems: import("mongoose").Types.DocumentArray<{
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }> & {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }>;
     proposedItems: import("mongoose").Types.DocumentArray<{
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }> & {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }>;
     currentInvoiceAmountAwg: number;
     proposedInvoiceAmountAwg: number;
@@ -133,41 +157,53 @@ export declare const InvoiceChangeRequest: import("mongoose").Model<{
     reviewNotes: string;
     currentItems: import("mongoose").Types.DocumentArray<{
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }> & {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }>;
     proposedItems: import("mongoose").Types.DocumentArray<{
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }> & {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }>;
     currentInvoiceAmountAwg: number;
     proposedInvoiceAmountAwg: number;
@@ -197,41 +233,53 @@ export declare const InvoiceChangeRequest: import("mongoose").Model<{
     reviewNotes: string;
     currentItems: import("mongoose").Types.DocumentArray<{
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }> & {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }>;
     proposedItems: import("mongoose").Types.DocumentArray<{
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }> & {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }>;
     currentInvoiceAmountAwg: number;
     proposedInvoiceAmountAwg: number;
@@ -255,41 +303,53 @@ export declare const InvoiceChangeRequest: import("mongoose").Model<{
     reviewNotes: string;
     currentItems: import("mongoose").Types.DocumentArray<{
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }> & {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }>;
     proposedItems: import("mongoose").Types.DocumentArray<{
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }> & {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }>;
     currentInvoiceAmountAwg: number;
     proposedInvoiceAmountAwg: number;
@@ -315,41 +375,53 @@ export declare const InvoiceChangeRequest: import("mongoose").Model<{
     reviewNotes: string;
     currentItems: import("mongoose").Types.DocumentArray<{
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }> & {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }>;
     proposedItems: import("mongoose").Types.DocumentArray<{
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }, import("mongoose").Types.Subdocument<import("bson").ObjectId, any, {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }> & {
         notes: string;
+        description: string;
         productId: string;
         productName: string;
         productSku: string;
         quantity: number;
+        salePriceAwg?: number | null | undefined;
     }>;
     currentInvoiceAmountAwg: number;
     proposedInvoiceAmountAwg: number;

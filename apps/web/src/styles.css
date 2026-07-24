@@ -2945,6 +2945,11 @@ h1 {
   margin-bottom: 16px;
 }
 
+.invoice-change-add-product {
+  grid-template-columns: minmax(220px, 1fr) auto;
+  margin-top: 8px;
+}
+
 .seller-order-gifts-detail {
   margin-top: 18px;
 }

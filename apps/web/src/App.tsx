@@ -926,6 +926,15 @@ type InvoiceChangeItemRecord = {
   productSku: string;
   quantity: number;
   notes: string;
+  description?: string;
+  salePriceAwg?: number;
+};
+
+type InvoiceChangeLineDraft = {
+  quantity: string;
+  salePriceAwg: string;
+  description: string;
+  lineSubtotalAwg: string;
 };
 
 type InvoiceChangeRequestRecord = {
@@ -5000,7 +5009,9 @@ export default function App() {
   const [warehouseOrderEditStatus, setWarehouseOrderEditStatus] = useState<CreationStatus | null>(null);
   const [isSavingWarehouseOrderEdit, setIsSavingWarehouseOrderEdit] = useState(false);
   const [invoiceChangeOrder, setInvoiceChangeOrder] = useState<SellerOrderRecord | null>(null);
-  const [invoiceChangeItemDraft, setInvoiceChangeItemDraft] = useState<Record<string, string>>({});
+  const [invoiceChangeItemDraft, setInvoiceChangeItemDraft] = useState<Record<string, InvoiceChangeLineDraft>>({});
+  const [invoiceChangeOriginalItems, setInvoiceChangeOriginalItems] = useState<SellerOrderRecord["items"]>([]);
+  const [invoiceChangeAddProductId, setInvoiceChangeAddProductId] = useState("");
   const [invoiceChangeNotes, setInvoiceChangeNotes] = useState("");
   const [invoiceChangeNumberDraft, setInvoiceChangeNumberDraft] = useState("");
   const [invoiceChangeOriginalNumber, setInvoiceChangeOriginalNumber] = useState<number | null>(null);
@@ -5833,27 +5844,62 @@ export default function App() {
     ? invoiceChangeOrder.items
       .filter((item) => invoiceChangeDraftProductIds.includes(item.productId))
       .map((item) => {
+        const draft = invoiceChangeItemDraft[item.productId];
         const productOption = productOptionsById.get(item.productId);
         const invRow = inventoryRowsByProductId.get(item.productId);
-        const resolvedSalePrice = roundCurrencyValue(Number(invRow?.salePrice ?? productOption?.salePrice ?? 0));
-        const quantity = Number(invoiceChangeItemDraft[item.productId] ?? item.quantity ?? 0);
+        const draftSalePrice = Number(draft?.salePriceAwg);
+        const fallbackSalePrice = Number(
+          item.salePriceAwg
+          ?? invRow?.salePrice
+          ?? productOption?.salePrice
+          ?? 0,
+        );
+        const resolvedSalePrice = roundCurrencyValue(
+          Number.isFinite(draftSalePrice) && String(draft?.salePriceAwg ?? "").trim() !== ""
+            ? Math.max(0, draftSalePrice)
+            : Math.max(0, fallbackSalePrice),
+        );
+        const quantity = Number(draft?.quantity ?? item.quantity ?? 0);
+        const description = String(draft?.description ?? "").trim();
 
         return {
           ...item,
-          quantity,
+          quantity: Number.isFinite(quantity) ? Math.max(0, quantity) : 0,
+          description,
           resolvedSalePrice,
-          lineTotal: roundCurrencyValue(resolvedSalePrice * quantity),
+          lineTotal: roundCurrencyValue(resolvedSalePrice * (Number.isFinite(quantity) ? Math.max(0, quantity) : 0)),
         };
       })
     : [];
   const invoiceChangeTotal = invoiceChangePricedItems.reduce((sum, item) => sum + item.lineTotal, 0);
+  const invoiceChangeOriginalProductIds = new Set(invoiceChangeOriginalItems.map((item) => item.productId));
   const invoiceChangeItemsDirty = Boolean(
     invoiceChangeOrder
     && (
-      invoiceChangeOrder.items.length !== invoiceChangeDraftProductIds.length
-      || invoiceChangeOrder.items.some((item) => (
-        String(item.quantity) !== (invoiceChangeItemDraft[item.productId] ?? String(item.quantity))
-      ))
+      invoiceChangeDraftProductIds.length !== invoiceChangeOriginalItems.length
+      || invoiceChangeDraftProductIds.some((productId) => !invoiceChangeOriginalProductIds.has(productId))
+      || invoiceChangeOriginalItems.some((item) => {
+        const draft = invoiceChangeItemDraft[item.productId];
+        if (!draft) {
+          return true;
+        }
+
+        const productOption = productOptionsById.get(item.productId);
+        const invRow = inventoryRowsByProductId.get(item.productId);
+        const originalPrice = roundCurrencyValue(Number(
+          item.salePriceAwg
+          ?? invRow?.salePrice
+          ?? productOption?.salePrice
+          ?? 0,
+        ));
+        const draftPrice = roundCurrencyValue(Number(draft.salePriceAwg || 0));
+        const originalDescription = String(item.description ?? "").trim()
+          || String(productOption?.description ?? "").trim();
+
+        return String(item.quantity) !== draft.quantity
+          || originalPrice !== draftPrice
+          || originalDescription !== String(draft.description ?? "").trim();
+      })
       || (
         invoiceChangeOriginalNumber !== null
         && Number(invoiceChangeNumberDraft.trim() || 0) !== invoiceChangeOriginalNumber
@@ -13072,11 +13118,34 @@ export default function App() {
     }
   }
 
+  function buildInvoiceChangeLineDraft(item: SellerOrderRecord["items"][number]): InvoiceChangeLineDraft {
+    const productOption = productOptionsById.get(item.productId);
+    const invRow = inventoryRowsByProductId.get(item.productId);
+    const unitPrice = roundCurrencyValue(Number(
+      item.salePriceAwg
+      ?? invRow?.salePrice
+      ?? productOption?.salePrice
+      ?? 0,
+    ));
+    const quantity = Number(item.quantity ?? 0);
+    const description = String(item.description ?? "").trim()
+      || String(productOption?.description ?? "").trim();
+
+    return {
+      quantity: String(item.quantity ?? ""),
+      salePriceAwg: formatSellerDraftMoney(unitPrice),
+      description,
+      lineSubtotalAwg: formatSellerDraftMoney(unitPrice * (Number.isFinite(quantity) ? Math.max(0, quantity) : 0)),
+    };
+  }
+
   function openInvoiceChangeModal(order: SellerOrderRecord) {
     setInvoiceChangeOrder(order);
+    setInvoiceChangeOriginalItems(order.items.map((item) => ({ ...item })));
     setInvoiceChangeItemDraft(
-      Object.fromEntries(order.items.map((item) => [item.productId, String(item.quantity)])),
+      Object.fromEntries(order.items.map((item) => [item.productId, buildInvoiceChangeLineDraft(item)])),
     );
+    setInvoiceChangeAddProductId("");
     setInvoiceChangeNotes("");
     setInvoiceChangeStatus(null);
 
@@ -13111,9 +13180,133 @@ export default function App() {
   function closeInvoiceChangeModal() {
     setInvoiceChangeOrder(null);
     setInvoiceChangeItemDraft({});
+    setInvoiceChangeOriginalItems([]);
+    setInvoiceChangeAddProductId("");
     setInvoiceChangeNotes("");
     setInvoiceChangeNumberDraft("");
     setInvoiceChangeOriginalNumber(null);
+    setInvoiceChangeStatus(null);
+  }
+
+  function addInvoiceChangeProduct(productId: string) {
+    if (!invoiceChangeOrder) {
+      return;
+    }
+
+    const normalizedProductId = productId.trim();
+
+    if (!normalizedProductId) {
+      setInvoiceChangeStatus({ tone: "error", message: "Selecciona un producto para agregarlo a la factura." });
+      return;
+    }
+
+    if (invoiceChangeItemDraft[normalizedProductId]) {
+      setInvoiceChangeStatus({ tone: "error", message: "Ese producto ya esta en la correccion de factura." });
+      return;
+    }
+
+    const productOption = productOptionsById.get(normalizedProductId);
+    const invRow = inventoryRowsByProductId.get(normalizedProductId);
+
+    if (!productOption) {
+      setInvoiceChangeStatus({ tone: "error", message: "No se encontro el producto seleccionado." });
+      return;
+    }
+
+    const unitPrice = roundCurrencyValue(Number(invRow?.salePrice ?? productOption.salePrice ?? 0));
+    const description = String(productOption.description ?? "").trim();
+    const newItem: SellerOrderRecord["items"][number] = {
+      productId: normalizedProductId,
+      stockCurrent: null,
+      quantity: 1,
+      notes: "",
+      description,
+      salePriceAwg: unitPrice,
+      productName: productOption.label,
+      productSku: productOption.sku,
+    };
+
+    setInvoiceChangeOrder((current) => (
+      current
+        ? { ...current, items: [...current.items, newItem] }
+        : current
+    ));
+    setInvoiceChangeItemDraft((current) => ({
+      ...current,
+      [normalizedProductId]: {
+        quantity: "1",
+        salePriceAwg: formatSellerDraftMoney(unitPrice),
+        description,
+        lineSubtotalAwg: formatSellerDraftMoney(unitPrice),
+      },
+    }));
+    setInvoiceChangeAddProductId("");
+    setInvoiceChangeStatus(null);
+  }
+
+  function handleInvoiceChangeLineField(
+    productId: string,
+    field: keyof InvoiceChangeLineDraft,
+    value: string,
+  ) {
+    setInvoiceChangeItemDraft((current) => {
+      const existing = current[productId];
+
+      if (!existing) {
+        return current;
+      }
+
+      const next: InvoiceChangeLineDraft = {
+        ...existing,
+        [field]: value,
+      };
+
+      if (field === "salePriceAwg") {
+        const quantityValue = Number(next.quantity || 0);
+        const unitPrice = Number(next.salePriceAwg);
+        next.lineSubtotalAwg = formatSellerDraftMoney(
+          (Number.isFinite(unitPrice) ? Math.max(0, unitPrice) : 0)
+          * (Number.isFinite(quantityValue) ? Math.max(0, quantityValue) : 0),
+        );
+      } else if (field === "lineSubtotalAwg") {
+        const quantityValue = Number(next.quantity || 0);
+        const subtotalValue = Number(value);
+
+        if (Number.isFinite(quantityValue) && quantityValue > 0 && Number.isFinite(subtotalValue) && value.trim() !== "") {
+          next.salePriceAwg = formatSellerDraftMoney(subtotalValue / quantityValue);
+        }
+      } else if (field === "quantity") {
+        const previousQuantity = Number(existing.quantity || 0);
+        const nextQuantity = Number(value || 0);
+        const unitPrice = Number(existing.salePriceAwg);
+        const previousSubtotal = Number(existing.lineSubtotalAwg);
+        const hasPreviousSubtotal = String(existing.lineSubtotalAwg ?? "").trim() !== ""
+          && Number.isFinite(previousSubtotal)
+          && previousSubtotal > 0;
+        const safeUnitPrice = Number.isFinite(unitPrice) ? Math.max(0, unitPrice) : 0;
+
+        if (
+          hasPreviousSubtotal
+          && Number.isFinite(previousQuantity)
+          && previousQuantity > 0
+          && Number.isFinite(nextQuantity)
+          && nextQuantity > 0
+        ) {
+          next.salePriceAwg = formatSellerDraftMoney(previousSubtotal / nextQuantity);
+          next.lineSubtotalAwg = formatSellerDraftMoney(previousSubtotal);
+        } else {
+          next.salePriceAwg = formatSellerDraftMoney(safeUnitPrice) || existing.salePriceAwg;
+          next.lineSubtotalAwg = formatSellerDraftMoney(
+            Number(next.salePriceAwg || 0) * (Number.isFinite(nextQuantity) ? Math.max(0, nextQuantity) : 0),
+          );
+        }
+      }
+
+      return {
+        ...current,
+        [productId]: next,
+      };
+    });
     setInvoiceChangeStatus(null);
   }
 
@@ -13134,6 +13327,11 @@ export default function App() {
       delete next[productId];
       return next;
     });
+    setInvoiceChangeOrder((current) => (
+      current
+        ? { ...current, items: current.items.filter((item) => item.productId !== productId) }
+        : current
+    ));
     setInvoiceChangeStatus(null);
   }
 
@@ -13149,12 +13347,22 @@ export default function App() {
 
     const nextItems = invoiceChangeOrder.items
       .filter((item) => item.productId in invoiceChangeItemDraft)
-      .map((item) => ({
-        productId: item.productId,
-        stockCurrent: item.stockCurrent,
-        quantity: Number(invoiceChangeItemDraft[item.productId] ?? item.quantity),
-        notes: item.notes,
-      }))
+      .map((item) => {
+        const draft = invoiceChangeItemDraft[item.productId];
+        const quantity = Number(draft?.quantity ?? item.quantity);
+        const salePriceAwg = Number(draft?.salePriceAwg ?? item.salePriceAwg ?? NaN);
+
+        return {
+          productId: item.productId,
+          stockCurrent: item.stockCurrent,
+          quantity,
+          notes: item.notes,
+          description: String(draft?.description ?? item.description ?? "").trim(),
+          ...(Number.isFinite(salePriceAwg) && salePriceAwg >= 0
+            ? { salePriceAwg: roundCurrencyValue(salePriceAwg) }
+            : {}),
+        };
+      })
       .filter((item) => Number.isFinite(item.quantity) && item.quantity > 0);
 
     if (nextItems.length === 0) {
@@ -27773,18 +27981,6 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                   </svg>
                                 </button>
                               ) : null}
-                              <button
-                                className="table-action-icon"
-                                type="button"
-                                aria-label="Ver detalle del pedido"
-                                title="Ver detalle"
-                                disabled={isDeletingOrder || isVoidingOrder}
-                                onClick={() => setSelectedWarehouseOrderDetail(order)}
-                              >
-                                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                  <path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z" fill="currentColor" />
-                                </svg>
-                              </button>
                               {canVoidOrder ? (
                                 <button
                                   className="seller-order-detail-trigger seller-order-detail-trigger--danger"
@@ -28178,7 +28374,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               </div>
 
               <p className="route-helper-text">
-                Ajusta cantidades, quita productos o corrige el consecutivo de factura. Los cambios no se aplican de inmediato: se enviaran a gerencia para aprobacion.
+                Ajusta descripcion, cantidad, precio o total por linea, agrega o quita productos. Los cambios no se aplican de inmediato: se enviaran a gerencia para aprobacion. La descripcion solo afecta esta factura.
               </p>
 
               {(sessionUser?.role === "management" || sessionUser?.role === "contabilidad") ? (
@@ -28199,14 +28395,35 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 </label>
               ) : null}
 
+              <div className="seller-gifts-form invoice-change-add-product">
+                <label className="field field-full">
+                  <span>Agregar producto</span>
+                  <SearchableProductSelect
+                    products={productOptions.filter((product) => product.shareWithAruba !== false)}
+                    value={invoiceChangeAddProductId}
+                    onChange={setInvoiceChangeAddProductId}
+                    placeholder="Buscar producto por nombre o SKU..."
+                    disabled={productOptions.length === 0}
+                  />
+                </label>
+                <button
+                  className="secondary-action-button"
+                  type="button"
+                  disabled={!invoiceChangeAddProductId}
+                  onClick={() => addInvoiceChangeProduct(invoiceChangeAddProductId)}
+                >
+                  + Agregar
+                </button>
+              </div>
+
               <div className="table-wrap table-wrap--warehouse-items">
                 <table className="data-table data-table--warehouse-order-items">
                   <thead>
                     <tr>
                       <th>SKU</th>
                       <th>Producto</th>
-                      <th>Cant. actual</th>
-                      <th>Nueva cant.</th>
+                      <th>Descripcion</th>
+                      <th>Cantidad</th>
                       <th>Precio</th>
                       <th>Total</th>
                       <th>Quitar</th>
@@ -28214,31 +28431,51 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   </thead>
                   <tbody>
                     {invoiceChangePricedItems.map((item) => {
-                      const originalItem = invoiceChangeOrder.items.find((entry) => entry.productId === item.productId);
+                      const draft = invoiceChangeItemDraft[item.productId];
 
                       return (
                         <tr key={`invoice-change-${item.productId}`}>
                           <td>{item.productSku}</td>
                           <td>{item.productName}</td>
-                          <td>{originalItem?.quantity ?? item.quantity}</td>
+                          <td>
+                            <input
+                              className="seller-order-note-input"
+                              type="text"
+                              value={draft?.description ?? item.description ?? ""}
+                              placeholder="Descripcion en factura"
+                              onChange={(event) => handleInvoiceChangeLineField(item.productId, "description", event.target.value)}
+                            />
+                          </td>
                           <td>
                             <input
                               className="warehouse-order-qty-input"
                               type="number"
                               min="0"
-                              step="1"
-                              value={invoiceChangeItemDraft[item.productId] ?? String(item.quantity)}
-                              onChange={(event) => {
-                                setInvoiceChangeItemDraft((current) => ({
-                                  ...current,
-                                  [item.productId]: event.target.value,
-                                }));
-                                setInvoiceChangeStatus(null);
-                              }}
+                              step="any"
+                              value={draft?.quantity ?? String(item.quantity)}
+                              onChange={(event) => handleInvoiceChangeLineField(item.productId, "quantity", event.target.value)}
                             />
                           </td>
-                          <td>{formatCurrency(item.resolvedSalePrice)}</td>
-                          <td>{formatCurrency(item.lineTotal)}</td>
+                          <td>
+                            <input
+                              className="warehouse-order-qty-input"
+                              type="number"
+                              min="0"
+                              step="any"
+                              value={draft?.salePriceAwg ?? String(item.resolvedSalePrice)}
+                              onChange={(event) => handleInvoiceChangeLineField(item.productId, "salePriceAwg", event.target.value)}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              className="warehouse-order-qty-input"
+                              type="number"
+                              min="0"
+                              step="any"
+                              value={draft?.lineSubtotalAwg ?? String(item.lineTotal)}
+                              onChange={(event) => handleInvoiceChangeLineField(item.productId, "lineSubtotalAwg", event.target.value)}
+                            />
+                          </td>
                           <td>
                             <button
                               className="ghost-button warehouse-order-remove-item"
@@ -28261,7 +28498,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <strong>{formatCurrency(invoiceChangeOrder.items.reduce((sum, item) => {
                     const invRow = inventoryRowsByProductId.get(item.productId);
                     const productOption = productOptionsById.get(item.productId);
-                    const price = Number(invRow?.salePrice ?? productOption?.salePrice ?? 0);
+                    const price = Number(item.salePriceAwg ?? invRow?.salePrice ?? productOption?.salePrice ?? 0);
                     return sum + price * Number(item.quantity ?? 0);
                   }, 0))}</strong>
                 </div>

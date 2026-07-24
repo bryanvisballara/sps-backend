@@ -7,6 +7,8 @@ const invoiceChangeItemSchema = new Schema(
     productSku: { type: String, trim: true, default: "" },
     quantity: { type: Number, required: true, min: 0 },
     notes: { type: String, trim: true, default: "" },
+    description: { type: String, trim: true, default: "" },
+    salePriceAwg: { type: Number, min: 0 },
   },
   { _id: false },
 );
