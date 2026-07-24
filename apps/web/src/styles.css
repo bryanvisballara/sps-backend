@@ -3227,6 +3227,11 @@ h1 {
   min-width: 120px;
 }
 
+.seller-product-catalog-field-total .catalog-price-input {
+  width: 100%;
+  min-width: 96px;
+}
+
 .seller-product-catalog-field-total strong {
   font-size: 0.95rem;
   color: #111111;
