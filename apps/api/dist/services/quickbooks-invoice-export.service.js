@@ -93,6 +93,10 @@ function resolveQuickBooksItemName(product, fallbackName = "Producto") {
         return quickbooksName;
     }
     const productName = String(product?.name ?? "").trim();
+    const arubaCategory = String(product?.arubaCategory ?? "").trim();
+    if (productName && arubaCategory && !productName.includes(":")) {
+        return `${arubaCategory}:${productName}`;
+    }
     if (productName) {
         return productName;
     }
@@ -132,7 +136,7 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
         CarteraEntry.find({ orderId: { $in: orderIds }, active: { $ne: false } }).lean(),
         LogisticsInvoice.find({ orderId: { $in: orderIds }, active: { $ne: false }, syncExcluded: { $ne: true } }).lean(),
         storeIds.length > 0
-            ? Store.find({ _id: { $in: storeIds } }).select({ _id: 1, defaultPaymentMethod: 1 }).lean()
+            ? Store.find({ _id: { $in: storeIds } }).select({ _id: 1, name: 1, address: 1, defaultPaymentMethod: 1 }).lean()
             : Promise.resolve([]),
     ]);
     const carteraByOrderId = new Map(carteraEntries.map((entry) => [String(entry.orderId), entry]));
@@ -147,7 +151,7 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
         ].filter(Boolean);
     })));
     const products = productIds.length > 0
-        ? await Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1, description: 1, quickbooksName: 1 }).lean()
+        ? await Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1, description: 1, quickbooksName: 1, arubaCategory: 1 }).lean()
         : [];
     const productsById = new Map(products.map((product) => [String(product._id), product]));
     const productsBySku = new Map(products
@@ -164,14 +168,16 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
             : resolveOrderInvoiceDateKey(order);
         const paymentMethod = String(carteraEntry?.paymentMethod ?? "credito");
         const invoiceNumber = Number(carteraEntry?.invoiceNumber ?? order.invoiceNumber ?? 0) || orderId.slice(-6);
-        const customerName = String(order.storeName ?? "Cliente");
         const store = storesById.get(String(order.storeId ?? ""));
+        // Prefer current store name (exact QBO Display Name). Apostrophes are quoted in CSV escape.
+        const customerName = String(store?.name ?? order.storeName ?? "Cliente").trim() || "Cliente";
         const terms = resolvePaymentTerms({
             storePaymentTerm: store?.defaultPaymentMethod,
             paymentMethod,
         });
         const dueDateKey = resolveDueDateKey(invoiceDateKey, terms);
-        const location = String(order.deliveryZone ?? "");
+        // Prefer store address over deliveryZone snapshots that sometimes glue name+address.
+        const location = String(store?.address ?? order.deliveryZone ?? "").trim();
         const memoParts = [
             String(order.routeName ?? "").trim(),
             String(order.salesRepName ?? "").trim(),

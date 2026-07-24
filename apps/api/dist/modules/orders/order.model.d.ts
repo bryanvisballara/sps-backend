@@ -10,6 +10,7 @@ export declare const Order: import("mongoose").Model<{
     routeDay: string;
     deliveryZone: string;
     items: Types.DocumentArray<{
+        description: string;
         productId: {
             prototype?: Types.ObjectId | null | undefined;
             cacheHexString?: unknown;
@@ -33,6 +34,7 @@ export declare const Order: import("mongoose").Model<{
         } | null | undefined;
         stockCurrent?: number | null | undefined;
     }, Types.Subdocument<import("bson").ObjectId, any, {
+        description: string;
         productId: {
             prototype?: Types.ObjectId | null | undefined;
             cacheHexString?: unknown;
@@ -56,6 +58,7 @@ export declare const Order: import("mongoose").Model<{
         } | null | undefined;
         stockCurrent?: number | null | undefined;
     }> & {
+        description: string;
         productId: {
             prototype?: Types.ObjectId | null | undefined;
             cacheHexString?: unknown;
@@ -165,6 +168,7 @@ export declare const Order: import("mongoose").Model<{
     routeDay: string;
     deliveryZone: string;
     items: Types.DocumentArray<{
+        description: string;
         productId: {
             prototype?: Types.ObjectId | null | undefined;
             cacheHexString?: unknown;
@@ -188,6 +192,7 @@ export declare const Order: import("mongoose").Model<{
         } | null | undefined;
         stockCurrent?: number | null | undefined;
     }, Types.Subdocument<import("bson").ObjectId, any, {
+        description: string;
         productId: {
             prototype?: Types.ObjectId | null | undefined;
             cacheHexString?: unknown;
@@ -211,6 +216,7 @@ export declare const Order: import("mongoose").Model<{
         } | null | undefined;
         stockCurrent?: number | null | undefined;
     }> & {
+        description: string;
         productId: {
             prototype?: Types.ObjectId | null | undefined;
             cacheHexString?: unknown;
@@ -322,6 +328,7 @@ export declare const Order: import("mongoose").Model<{
     routeDay: string;
     deliveryZone: string;
     items: Types.DocumentArray<{
+        description: string;
         productId: {
             prototype?: Types.ObjectId | null | undefined;
             cacheHexString?: unknown;
@@ -345,6 +352,7 @@ export declare const Order: import("mongoose").Model<{
         } | null | undefined;
         stockCurrent?: number | null | undefined;
     }, Types.Subdocument<import("bson").ObjectId, any, {
+        description: string;
         productId: {
             prototype?: Types.ObjectId | null | undefined;
             cacheHexString?: unknown;
@@ -368,6 +376,7 @@ export declare const Order: import("mongoose").Model<{
         } | null | undefined;
         stockCurrent?: number | null | undefined;
     }> & {
+        description: string;
         productId: {
             prototype?: Types.ObjectId | null | undefined;
             cacheHexString?: unknown;
@@ -483,6 +492,7 @@ export declare const Order: import("mongoose").Model<{
     routeDay: string;
     deliveryZone: string;
     items: Types.DocumentArray<{
+        description: string;
         productId: {
             prototype?: Types.ObjectId | null | undefined;
             cacheHexString?: unknown;
@@ -506,6 +516,7 @@ export declare const Order: import("mongoose").Model<{
         } | null | undefined;
         stockCurrent?: number | null | undefined;
     }, Types.Subdocument<import("bson").ObjectId, any, {
+        description: string;
         productId: {
             prototype?: Types.ObjectId | null | undefined;
             cacheHexString?: unknown;
@@ -529,6 +540,7 @@ export declare const Order: import("mongoose").Model<{
         } | null | undefined;
         stockCurrent?: number | null | undefined;
     }> & {
+        description: string;
         productId: {
             prototype?: Types.ObjectId | null | undefined;
             cacheHexString?: unknown;
@@ -638,6 +650,7 @@ export declare const Order: import("mongoose").Model<{
     routeDay: string;
     deliveryZone: string;
     items: Types.DocumentArray<{
+        description: string;
         productId: {
             prototype?: Types.ObjectId | null | undefined;
             cacheHexString?: unknown;
@@ -661,6 +674,7 @@ export declare const Order: import("mongoose").Model<{
         } | null | undefined;
         stockCurrent?: number | null | undefined;
     }, Types.Subdocument<import("bson").ObjectId, any, {
+        description: string;
         productId: {
             prototype?: Types.ObjectId | null | undefined;
             cacheHexString?: unknown;
@@ -684,6 +698,7 @@ export declare const Order: import("mongoose").Model<{
         } | null | undefined;
         stockCurrent?: number | null | undefined;
     }> & {
+        description: string;
         productId: {
             prototype?: Types.ObjectId | null | undefined;
             cacheHexString?: unknown;
@@ -795,6 +810,7 @@ export declare const Order: import("mongoose").Model<{
     routeDay: string;
     deliveryZone: string;
     items: Types.DocumentArray<{
+        description: string;
         productId: {
             prototype?: Types.ObjectId | null | undefined;
             cacheHexString?: unknown;
@@ -818,6 +834,7 @@ export declare const Order: import("mongoose").Model<{
         } | null | undefined;
         stockCurrent?: number | null | undefined;
     }, Types.Subdocument<import("bson").ObjectId, any, {
+        description: string;
         productId: {
             prototype?: Types.ObjectId | null | undefined;
             cacheHexString?: unknown;
@@ -841,6 +858,7 @@ export declare const Order: import("mongoose").Model<{
         } | null | undefined;
         stockCurrent?: number | null | undefined;
     }> & {
+        description: string;
         productId: {
             prototype?: Types.ObjectId | null | undefined;
             cacheHexString?: unknown;

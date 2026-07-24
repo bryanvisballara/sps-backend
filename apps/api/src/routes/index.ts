@@ -209,6 +209,36 @@ async function ensureImportSupplier(name: string) {
   });
 }
 
+/** QuickBooks Online item names use CATEGORY:PRODUCT (exact match required on import). */
+function buildQuickBooksProductName(params: {
+  name?: unknown;
+  arubaCategory?: unknown;
+  quickbooksName?: unknown;
+}) {
+  const explicit = String(params.quickbooksName ?? "").trim();
+
+  if (explicit.includes(":")) {
+    return explicit;
+  }
+
+  const name = String(params.name ?? "").trim();
+  const arubaCategory = String(params.arubaCategory ?? "").trim();
+
+  if (!name) {
+    return explicit;
+  }
+
+  if (name.includes(":")) {
+    return name;
+  }
+
+  if (!arubaCategory) {
+    return explicit;
+  }
+
+  return `${arubaCategory}:${name}`;
+}
+
 function buildCloudinarySignature(params: Record<string, string | number>, apiSecret: string) {
   const serializedParams = Object.entries(params)
     .sort(([left], [right]) => left.localeCompare(right))
@@ -1020,7 +1050,7 @@ function getBusinessDateKeyFromDate(referenceDate = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
-function normalizeDeliveryDate(value: unknown) {
+function normalizeDeliveryDate(value: unknown, options?: { allowPast?: boolean }) {
   const dateKey = typeof value === "string" ? value.trim() : "";
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
@@ -1029,12 +1059,12 @@ function normalizeDeliveryDate(value: unknown) {
     if (!Number.isNaN(parsed.getTime())) {
       const todayKey = getBusinessDateKeyFromDate();
 
-      if (dateKey < todayKey) {
+      if (!options?.allowPast && dateKey < todayKey) {
         throw new Error("La fecha de entrega no puede ser anterior a hoy.");
       }
 
       // Despues del corte de bodega, "hoy" ya no es despachable: usar manana.
-      if (dateKey === todayKey && getArubaHour() >= WAREHOUSE_DELIVERY_CUTOFF_HOUR) {
+      if (!options?.allowPast && dateKey === todayKey && getArubaHour() >= WAREHOUSE_DELIVERY_CUTOFF_HOUR) {
         return parseBusinessDateKey(addDaysToBusinessDateKey(todayKey, 1));
       }
 
@@ -1043,11 +1073,22 @@ function normalizeDeliveryDate(value: unknown) {
   }
 
   const todayKey = getBusinessDateKeyFromDate();
-  const defaultKey = getArubaHour() >= WAREHOUSE_DELIVERY_CUTOFF_HOUR
+  const defaultKey = !options?.allowPast && getArubaHour() >= WAREHOUSE_DELIVERY_CUTOFF_HOUR
     ? addDaysToBusinessDateKey(todayKey, 1)
     : todayKey;
 
   return new Date(`${defaultKey}T12:00:00`);
+}
+
+function normalizeInvoiceDate(value: unknown) {
+  const dateKey = typeof value === "string" ? value.trim() : "";
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+    return null;
+  }
+
+  const parsed = new Date(`${dateKey}T12:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 function serializeOrderDeliveryDate(value: Date | string | undefined, fallback?: Date) {
@@ -1207,7 +1248,7 @@ function normalizeOrderGiftItems(rawItems: unknown) {
   });
 }
 
-function normalizeSalesOrderPayload(body: unknown) {
+function normalizeSalesOrderPayload(body: unknown, options?: { allowPastDeliveryDate?: boolean }) {
   if (typeof body !== "object" || body === null) {
     throw new Error("El pedido enviado no es valido.");
   }
@@ -1251,6 +1292,7 @@ function normalizeSalesOrderPayload(body: unknown) {
       stockRowId?: unknown;
       salePriceAwg?: unknown;
       notes?: unknown;
+      description?: unknown;
     };
 
     const productId = typeof currentItem.productId === "string" ? currentItem.productId.trim() : "";
@@ -1261,6 +1303,7 @@ function normalizeSalesOrderPayload(body: unknown) {
     const quantity = Number(currentItem.quantity ?? 0);
     const salePriceAwg = Number(currentItem.salePriceAwg ?? NaN);
     const notes = typeof currentItem.notes === "string" ? currentItem.notes.trim() : "";
+    const description = typeof currentItem.description === "string" ? currentItem.description.trim() : "";
 
     if (!productId) {
       throw new Error(`El producto #${index + 1} no tiene identificador valido.`);
@@ -1285,6 +1328,7 @@ function normalizeSalesOrderPayload(body: unknown) {
       ...(stockRowId ? { stockRowId } : {}),
       ...(Number.isFinite(salePriceAwg) && salePriceAwg >= 0 ? { salePriceAwg: Math.round(salePriceAwg * 100) / 100 } : {}),
       notes,
+      ...(description ? { description } : {}),
     };
   });
 
@@ -1298,7 +1342,7 @@ function normalizeSalesOrderPayload(body: unknown) {
     routeDay,
     storeId,
     salesRepId,
-    deliveryDate: normalizeDeliveryDate(payload.deliveryDate),
+    deliveryDate: normalizeDeliveryDate(payload.deliveryDate, { allowPast: options?.allowPastDeliveryDate === true }),
     orderNotes,
     internalOrderNotes,
     items,
@@ -1350,24 +1394,19 @@ async function createSubmittedSalesOrder(payload: ReturnType<typeof normalizeSal
     const payloadSalePrice = Number(item.salePriceAwg ?? NaN);
     const catalogSalePrice = catalogSalePriceByProductId.get(item.productId);
 
-    if (catalogSalePrice !== undefined) {
-      // Keep a lower payload price (e.g. lot promotion on top of catalog).
-      // Replace a higher/generic product price with the negotiated catalog rate.
-      if (Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0 && payloadSalePrice <= catalogSalePrice + 0.009) {
-        return {
-          ...item,
-          salePriceAwg: Math.round(payloadSalePrice * 100) / 100,
-        };
-      }
+    // Prefer an explicit line price from the payload (direct invoice / staff edits).
+    if (Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0) {
+      return {
+        ...item,
+        salePriceAwg: Math.round(payloadSalePrice * 100) / 100,
+      };
+    }
 
+    if (catalogSalePrice !== undefined) {
       return {
         ...item,
         salePriceAwg: catalogSalePrice,
       };
-    }
-
-    if (Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0) {
-      return item;
     }
 
     const productSalePrice = Number(productsById.get(item.productId)?.salePrice ?? 0);
@@ -1517,7 +1556,7 @@ async function mapWarehouseOrderRecord(order: {
   internalOrderNotes?: string;
   createdAt: Date;
   updatedAt: Date;
-  items: Array<{ productId: unknown; stockCurrent?: unknown; quantity?: unknown; notes?: unknown; salePriceAwg?: unknown; stockRowId?: unknown }>;
+  items: Array<{ productId: unknown; stockCurrent?: unknown; quantity?: unknown; notes?: unknown; description?: unknown; salePriceAwg?: unknown; stockRowId?: unknown }>;
   giftItems?: Array<{ productId: unknown; quantity?: unknown; notes?: unknown; stockRowId?: unknown }>;
 }) {
   const productIds = Array.from(new Set([
@@ -1579,6 +1618,7 @@ async function mapWarehouseOrderRecord(order: {
         quantity: Number(item.quantity ?? 0),
         stockRowId: item.stockRowId ? String(item.stockRowId) : "",
         notes: item.notes ?? "",
+        description: typeof item.description === "string" ? item.description : "",
         ...(resolvedSalePrice !== undefined ? { salePriceAwg: resolvedSalePrice } : {}),
         ...(catalogSalePrice !== undefined ? { catalogSalePriceAwg: catalogSalePrice } : {}),
         productName: relatedProduct?.name ?? "Producto eliminado",
@@ -2780,6 +2820,7 @@ apiRouter.get("/sales/stores/:id/products", async (request, response) => {
           sku: product.sku,
           name: product.name,
           category: product.category,
+          description: String(product.description ?? "").trim(),
           imageUrl: product.imageUrl ?? "",
           salePrice: promotion ? promotion.promotionSalePrice : baseSalePrice,
           originalSalePrice: promotion ? baseSalePrice : null,
@@ -2953,7 +2994,13 @@ apiRouter.post("/management/orders/direct-invoice", async (request, response) =>
     const body = typeof request.body === "object" && request.body !== null
       ? request.body as Record<string, unknown>
       : {};
-    const payload = normalizeSalesOrderPayload(body);
+    const invoiceDate = normalizeInvoiceDate(body.invoiceDate)
+      ?? normalizeInvoiceDate(body.deliveryDate)
+      ?? parseBusinessDateKey(getBusinessDateKeyFromDate());
+    const payload = normalizeSalesOrderPayload({
+      ...body,
+      deliveryDate: getBusinessDateKeyFromDate(invoiceDate),
+    }, { allowPastDeliveryDate: true });
     const directNote = "Facturacion directa (venta en camion / sin pasar por bodega).";
     const internalOrderNotes = payload.internalOrderNotes
       ? `${payload.internalOrderNotes}\n${directNote}`
@@ -2968,6 +3015,7 @@ apiRouter.post("/management/orders/direct-invoice", async (request, response) =>
       paymentMethod: body.paymentMethod,
       invoiceAmountAwg: body.invoiceAmountAwg,
       invoiceNumber: body.invoiceNumber,
+      invoiceDate: getBusinessDateKeyFromDate(invoiceDate),
       items: body.items,
       creditCollections: body.creditCollections,
       requestedByUserId: body.requestedByUserId,
@@ -4241,6 +4289,7 @@ type OrderItemWithOptionalPrice = {
   productId?: unknown;
   quantity?: unknown;
   salePriceAwg?: unknown;
+  description?: unknown;
 };
 
 function mergeOrderItemPrices<T extends { productId: string }>(
@@ -4343,7 +4392,9 @@ async function buildWarehouseInvoiceDocumentLines(order: {
       productId,
       productName: String(product?.name ?? "Producto"),
       productSku: String(product?.sku ?? "-"),
-      productDescription: String(product?.description ?? "").trim() || String(product?.name ?? "Producto"),
+      productDescription: String(item.description ?? "").trim()
+        || String(product?.description ?? "").trim()
+        || String(product?.name ?? "Producto"),
       quantity,
       rate,
       amount,
@@ -4967,7 +5018,9 @@ async function completeWarehouseOrderById(orderId: string, body: Record<string, 
   const paymentMethod = await resolveCompletePaymentMethod(body.paymentMethod, order.storeId);
   const invoiceAmountAwg = await resolveCompleteInvoiceAmountAwg(order, body.invoiceAmountAwg, body.items);
   const creditCollections = normalizeCreditCollectionsPayload(body.creditCollections);
-  const invoicedAt = resolveOrderInvoiceDate(order);
+  const invoicedAt = normalizeInvoiceDate(body.invoiceDate)
+    ?? normalizeInvoiceDate(body.invoicedAt)
+    ?? resolveOrderInvoiceDate(order);
   const isCreditInvoice = paymentMethod === "credito";
   const initialCollectedAmountAwg = isCreditInvoice ? 0 : invoiceAmountAwg;
   const initialOutstandingAmountAwg = isCreditInvoice ? invoiceAmountAwg : 0;
@@ -8684,7 +8737,17 @@ apiRouter.delete("/management/categories/:id", async (request, response) => {
 
 apiRouter.post("/management/products", async (request, response) => {
   try {
-    const product = await Product.create(request.body);
+    const body = typeof request.body === "object" && request.body !== null
+      ? request.body as Record<string, unknown>
+      : {};
+    const product = await Product.create({
+      ...body,
+      quickbooksName: buildQuickBooksProductName({
+        name: body.name,
+        arubaCategory: body.arubaCategory,
+        quickbooksName: body.quickbooksName,
+      }),
+    });
     response.status(201).json(product);
   } catch (error) {
     sendCreationError(response, error);
@@ -8693,10 +8756,36 @@ apiRouter.post("/management/products", async (request, response) => {
 
 apiRouter.put("/management/products/:id", async (request, response) => {
   try {
-    const product = await Product.findByIdAndUpdate(request.params.id, request.body, {
-      new: true,
-      runValidators: true,
-    });
+    const body = typeof request.body === "object" && request.body !== null
+      ? request.body as Record<string, unknown>
+      : {};
+    const existing = await Product.findById(request.params.id).lean();
+
+    if (!existing) {
+      response.status(404).json({ message: "El producto no existe." });
+      return;
+    }
+
+    const nextName = body.name !== undefined ? body.name : existing.name;
+    const nextArubaCategory = body.arubaCategory !== undefined ? body.arubaCategory : existing.arubaCategory;
+    const product = await Product.findByIdAndUpdate(
+      request.params.id,
+      {
+        ...body,
+        quickbooksName: buildQuickBooksProductName({
+          name: nextName,
+          arubaCategory: nextArubaCategory,
+          // Rebuild from Aruba category + name unless an explicit full QB name is provided.
+          quickbooksName: typeof body.quickbooksName === "string" && body.quickbooksName.trim().includes(":")
+            ? body.quickbooksName
+            : "",
+        }),
+      },
+      {
+        new: true,
+        runValidators: true,
+      },
+    );
 
     if (!product) {
       response.status(404).json({ message: "El producto no existe." });
@@ -9672,8 +9761,7 @@ async function syncDeliveredOrdersIntoLogisticsInvoices() {
     const totalRevenueAwg = normalizedItems.reduce((sum, item) => sum + Number(item.lineTotalAwg ?? 0), 0);
     const totalCostAwg = normalizedItems.reduce((sum, item) => sum + Number(item.unitCostAwg ?? 0) * Number(item.quantity ?? 0), 0);
     const totalUtilityAwg = totalRevenueAwg - totalCostAwg;
-    const invoiceDateCandidate = order.updatedAt ?? order.createdAt;
-    const invoiceDate = invoiceDateCandidate ? new Date(invoiceDateCandidate) : now;
+    const invoiceDate = resolveOrderInvoiceDate(order);
 
     await LogisticsInvoice.findOneAndUpdate(
       { orderId },

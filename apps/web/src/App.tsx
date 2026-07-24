@@ -35,6 +35,7 @@ type ActiveSection =
   | "inventory-entry"
   | "orders"
   | "create-order"
+  | "direct-invoice"
   | "routes"
   | "store-performance"
   | "sales-rep-performance"
@@ -610,6 +611,7 @@ type SellerClientProduct = {
   sku: string;
   name: string;
   category: string;
+  description?: string;
   imageUrl: string;
   salePrice: number;
   originalSalePrice?: number | null;
@@ -804,7 +806,13 @@ type SellerAssignedStoreResponse = {
 
 type SellerActiveSection = "routes" | "orders" | "clients" | "performance";
 
-type SellerOrderDraft = Record<string, { stockCurrent: string; quantity: string; notes: string }>;
+type SellerOrderDraft = Record<string, {
+  stockCurrent: string;
+  quantity: string;
+  notes: string;
+  salePriceAwg: string;
+  description: string;
+}>;
 
 type OrderGiftItemRecord = {
   productId: string;
@@ -852,6 +860,7 @@ type SellerOrderRecord = {
     quantity: number;
     stockRowId?: string;
     notes: string;
+    description?: string;
     salePriceAwg?: number;
     catalogSalePriceAwg?: number;
     productName: string;
@@ -1535,6 +1544,7 @@ const contabilidadSidebarSections = [
 const contabilidadAllowedSections = new Set<ActiveSection>([
   "orders",
   "create-order",
+  "direct-invoice",
   "catalog",
   "cartera",
   "financial-reports",
@@ -2543,6 +2553,7 @@ function getCollectionConfigs(
         { key: "name", label: "Producto" },
         { key: "category", label: "Cat. COL" },
         { key: "arubaCategory", label: "Cat. Aruba" },
+        { key: "quickbooksName", label: "Nombre QB" },
         { key: "warehouseStock", label: "Stock" },
         { key: "description", label: "Descripción" },
         { key: "arubaPurchaseCostUsd", label: "Costo (USD)" },
@@ -4846,7 +4857,6 @@ export default function App() {
   const [routeForm, setRouteForm] = useState<RouteFormState>(() => createInitialRouteForm());
   const [sellerRoutes, setSellerRoutes] = useState<SalesRouteRecord[]>([]);
   const [staffOrderRoutes, setStaffOrderRoutes] = useState<SalesRouteRecord[]>([]);
-  const [isDirectInvoiceModalOpen, setIsDirectInvoiceModalOpen] = useState(false);
   const [directInvoicePaymentMethod, setDirectInvoicePaymentMethod] = useState<CarteraPaymentMethod | "">("");
   const [isLoadingStaffOrderRoutes, setIsLoadingStaffOrderRoutes] = useState(false);
   const [staffOrderRoutesError, setStaffOrderRoutesError] = useState("");
@@ -5336,8 +5346,8 @@ export default function App() {
     colombiaOpsAllowedSections.has(item.key)
   ));
   const visibleSidebarItems = sessionUser?.role === "colombia-ops" ? colombiaOpsSidebarItems : sidebarItems;
-  const isStaffOrderComposerActive = activeSection === "create-order" || isDirectInvoiceModalOpen;
-  const isDirectInvoiceComposer = isDirectInvoiceModalOpen;
+  const isStaffOrderComposerActive = activeSection === "create-order" || activeSection === "direct-invoice";
+  const isDirectInvoiceComposer = activeSection === "direct-invoice";
   const activeComposerRoutes = isStaffOrderComposerActive ? staffOrderRoutes : sellerRoutes;
   const selectedSellerRoute = activeComposerRoutes.find((route) => (route._id ?? route.code) === selectedSellerRouteId) ?? null;
   const selectedSellerDay = selectedSellerRoute?.days.find((day) => day.day === selectedSellerDayKey) ?? null;
@@ -5439,13 +5449,12 @@ export default function App() {
 
   function closeStaffOrderComposer() {
     resetStaffOrderComposerDraft();
-    setIsDirectInvoiceModalOpen(false);
     setActiveSection("orders");
   }
 
-  function closeDirectInvoiceModal() {
+  function closeDirectInvoiceComposer() {
     resetStaffOrderComposerDraft();
-    setIsDirectInvoiceModalOpen(false);
+    setActiveSection("orders");
   }
 
   function openStaffOrderComposer() {
@@ -5454,7 +5463,6 @@ export default function App() {
     }
 
     resetStaffOrderComposerDraft();
-    setIsDirectInvoiceModalOpen(false);
     setActiveSection("create-order");
   }
 
@@ -5465,7 +5473,8 @@ export default function App() {
 
     resetStaffOrderComposerDraft();
     setDirectInvoicePaymentMethod("credito");
-    setIsDirectInvoiceModalOpen(true);
+    setSellerDeliveryDateDraft(getBusinessDateKey());
+    setActiveSection("direct-invoice");
     void loadStaffOrderComposerRoutes();
   }
 
@@ -5505,27 +5514,45 @@ export default function App() {
 
     setSelectedSellerStoreId(store.storeId);
   }
+
+  function getSellerOrderDraftForProduct(product: Pick<SellerClientProduct, "productId" | "salePrice" | "description" | "promotion">) {
+    const existing = sellerOrderDraft[product.productId];
+    const defaultSalePrice = String(product.promotion?.promotionSalePrice ?? product.salePrice ?? "");
+    const defaultDescription = String(product.description ?? "").trim();
+
+    return {
+      stockCurrent: existing?.stockCurrent ?? "",
+      quantity: existing?.quantity ?? "",
+      notes: existing?.notes ?? "",
+      salePriceAwg: existing?.salePriceAwg ?? (isDirectInvoiceComposer ? defaultSalePrice : ""),
+      description: existing?.description ?? (isDirectInvoiceComposer ? defaultDescription : ""),
+    };
+  }
+
   const sellerDraftedItems = sellerClientProducts
     .map((product) => {
-      const draft = sellerOrderDraft[product.productId] ?? { stockCurrent: "", quantity: "", notes: "" };
+      const draft = getSellerOrderDraftForProduct(product);
       const hasStockCurrent = draft.stockCurrent.trim().length > 0;
       const stockCurrent = hasStockCurrent ? Number(draft.stockCurrent) : null;
+      const draftSalePrice = Number(draft.salePriceAwg);
+      const resolvedSalePrice = Number.isFinite(draftSalePrice) && draft.salePriceAwg.trim() !== ""
+        ? draftSalePrice
+        : Number(product.promotion?.promotionSalePrice ?? product.salePrice ?? 0);
 
       return {
         productId: product.productId,
         stockCurrent,
         quantity: Number(draft.quantity || 0),
         stockRowId: product.promotion?.stockRowId,
-        salePriceAwg: product.promotion?.promotionSalePrice ?? product.salePrice,
+        salePriceAwg: roundCurrencyValue(Math.max(0, resolvedSalePrice)),
         notes: draft.notes.trim(),
+        description: draft.description.trim(),
       };
     })
     .filter((item) => Number.isFinite(item.quantity) && item.quantity > 0);
-  const sellerOrderEstimatedTotal = sellerDraftedItems.reduce((sum, item) => {
-    const product = sellerClientProducts.find((entry) => entry.productId === item.productId);
-    const unitPrice = Number(product?.promotion?.promotionSalePrice ?? product?.salePrice ?? 0);
-    return sum + roundCurrencyValue(unitPrice * item.quantity);
-  }, 0);
+  const sellerOrderEstimatedTotal = sellerDraftedItems.reduce((sum, item) => (
+    sum + roundCurrencyValue(Number(item.salePriceAwg ?? 0) * item.quantity)
+  ), 0);
   const sellerGiftProductOptions = productOptions.filter((product) => product.shareWithAruba !== false);
   const inventoryRowsByProductId = inventoryRows.reduce((map, row) => {
     const current = map.get(row.productId);
@@ -7275,7 +7302,7 @@ export default function App() {
       return;
     }
 
-    if (activeSection !== "inventory" && activeSection !== "catalog" && activeSection !== "dashboard" && activeSection !== "imports" && activeSection !== "orders" && activeSection !== "create-order" && activeSection !== "products" && activeSection !== "promotions") {
+    if (activeSection !== "inventory" && activeSection !== "catalog" && activeSection !== "dashboard" && activeSection !== "imports" && activeSection !== "orders" && activeSection !== "create-order" && activeSection !== "direct-invoice" && activeSection !== "products" && activeSection !== "promotions") {
       return;
     }
 
@@ -7639,12 +7666,12 @@ export default function App() {
   }, [staffOrderRoutes, isStaffOrderComposerActive]);
 
   useEffect(() => {
-    if ((!isDirectInvoiceModalOpen && activeSection !== "create-order") || !canCreateStaffOrders(sessionUser?.role)) {
+    if (!isStaffOrderComposerActive || !canCreateStaffOrders(sessionUser?.role)) {
       return;
     }
 
     void loadStaffOrderComposerRoutes();
-  }, [activeSection, isDirectInvoiceModalOpen, sessionUser?.role]);
+  }, [activeSection, sessionUser?.role]);
 
   useEffect(() => {
     if (!selectedSellerRoute) {
@@ -7964,6 +7991,7 @@ export default function App() {
       setSellerAssignedStore(data.store);
       setSellerClientProducts(data.products.map((product) => ({
         ...product,
+        description: typeof product.description === "string" ? product.description : "",
         imageUrl: typeof product.imageUrl === "string" ? product.imageUrl : "",
         salePrice: Number(product.salePrice ?? 0),
         warehouseStock: Number(product.warehouseStock ?? 0),
@@ -8213,16 +8241,21 @@ export default function App() {
   }
 
   function renderSellerAssignedProductRow(product: SellerClientProduct, storeId: string, showOrderFields: boolean) {
-    const draft = sellerOrderDraft[product.productId] ?? { stockCurrent: "", quantity: "", notes: "" };
+    const draft = getSellerOrderDraftForProduct(product);
     const quantityValue = Number(draft.quantity || 0);
+    const draftSalePrice = Number(draft.salePriceAwg);
+    const unitPrice = Number.isFinite(draftSalePrice) && draft.salePriceAwg.trim() !== ""
+      ? draftSalePrice
+      : Number(product.promotion?.promotionSalePrice ?? product.salePrice ?? 0);
     const lineTotal = Number.isFinite(quantityValue) && quantityValue > 0
-      ? roundCurrencyValue(Number(product.promotion?.promotionSalePrice ?? product.salePrice ?? 0) * quantityValue)
+      ? roundCurrencyValue(unitPrice * quantityValue)
       : 0;
     const catalogMatch = [...sellerProductCatalog.expiringSoon, ...sellerProductCatalog.products]
       .find((entry) => entry.productId === product.productId);
     const warehouseStock = Number(product.warehouseStock ?? catalogMatch?.warehouseStock ?? 0);
 
     const isRemoving = removingSellerProductId === product.productId;
+    const canEditLinePricing = isDirectInvoiceComposer && showOrderFields;
 
     return (
       <article className="seller-product-catalog-row seller-product-catalog-row-assigned" key={`seller-assigned-${product.productId}`}>
@@ -8250,13 +8283,27 @@ export default function App() {
           </div>
         </div>
         <div className="seller-product-catalog-meta">
-          {renderPromotionPrice(product)}
+          {canEditLinePricing ? null : renderPromotionPrice(product)}
           <strong>Stock bodega: {warehouseStock} uds.</strong>
           {formatProductDisplayInfo(product) ? (
             <small>{formatProductDisplayInfo(product)}</small>
           ) : null}
         </div>
         <div className="seller-product-catalog-order-fields">
+          {canEditLinePricing ? (
+            <label className="seller-product-catalog-field seller-product-catalog-field-price">
+              <span>Precio (AWG)</span>
+              <input
+                className="catalog-price-input seller-order-input"
+                type="number"
+                min="0"
+                step="any"
+                value={draft.salePriceAwg}
+                placeholder="0.00"
+                onChange={(event) => handleSellerOrderDraftChange(product.productId, "salePriceAwg", event.target.value)}
+              />
+            </label>
+          ) : null}
           <label className="seller-product-catalog-field seller-product-catalog-field-quantity">
             <span>Cantidad (displays)</span>
             <div className="seller-quantity-stepper">
@@ -8303,6 +8350,18 @@ export default function App() {
                 value={draft.notes}
                 placeholder="Observación para bodega"
                 onChange={(event) => handleSellerOrderDraftChange(product.productId, "notes", event.target.value)}
+              />
+            </label>
+          ) : null}
+          {canEditLinePricing ? (
+            <label className="seller-product-catalog-field seller-product-catalog-field-description">
+              <span>Descripcion factura</span>
+              <input
+                className="seller-order-note-input"
+                type="text"
+                value={draft.description}
+                placeholder="Texto que aparece en la factura"
+                onChange={(event) => handleSellerOrderDraftChange(product.productId, "description", event.target.value)}
               />
             </label>
           ) : null}
@@ -8415,10 +8474,10 @@ export default function App() {
 
         <div className="seller-order-footer seller-order-footer-inline">
           <label className="field seller-order-delivery-date">
-            <span>Fecha de entrega</span>
+            <span>{isDirectInvoiceComposer ? "Fecha de factura" : "Fecha de entrega"}</span>
             <input
               type="date"
-              min={getBusinessDateKey()}
+              min={isDirectInvoiceComposer ? undefined : getBusinessDateKey()}
               value={sellerDeliveryDateDraft}
               onChange={(event) => setSellerDeliveryDateDraft(event.target.value)}
             />
@@ -8650,46 +8709,31 @@ export default function App() {
     );
   }
 
-  function renderDirectInvoiceOrderModal() {
-    if (!isDirectInvoiceModalOpen) {
-      return null;
-    }
-
+  function renderDirectInvoiceComposerPage() {
     return (
-      <AppModalOverlay
-        onDismiss={() => {
-          if (!isSubmittingSellerOrder) {
-            closeDirectInvoiceModal();
-          }
-        }}
-      >
-        <div
-          className="modal-card modal-card--wide direct-invoice-order-modal"
-          role="dialog"
-          aria-modal="true"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <div className="modal-header">
+      <section className="routes-layout staff-order-composer-page">
+        <article className="creation-selector-block">
+          <div className="creation-header database-header">
             <div>
               <p className="section-label">Facturacion directa</p>
               <h2>Facturar pedido</h2>
               <p className="route-helper-text">
-                Para ventas del camion que no pasan por bodega. Selecciona ruta, cliente y productos; el pedido queda facturado y completado al instante.
+                Para ventas del camion que no pasan por bodega. Puedes ajustar precio, cantidad, notas y descripcion de cada linea; el pedido queda facturado al instante.
               </p>
             </div>
             <button
-              className="modal-close-button"
+              className="ghost-button ghost-button--back"
               type="button"
               disabled={isSubmittingSellerOrder}
-              onClick={closeDirectInvoiceModal}
+              onClick={closeDirectInvoiceComposer}
             >
-              Cerrar
+              Volver a pedidos
             </button>
           </div>
+        </article>
 
-          {renderStaffOrderComposerBody()}
-        </div>
-      </AppModalOverlay>
+        {renderStaffOrderComposerBody()}
+      </section>
     );
   }
 
@@ -14951,13 +14995,19 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
     }));
   }
 
-  function handleSellerOrderDraftChange(productId: string, field: "stockCurrent" | "quantity" | "notes", value: string) {
+  function handleSellerOrderDraftChange(
+    productId: string,
+    field: "stockCurrent" | "quantity" | "notes" | "salePriceAwg" | "description",
+    value: string,
+  ) {
     setSellerOrderDraft((current) => ({
       ...current,
       [productId]: {
         stockCurrent: current[productId]?.stockCurrent ?? "",
         quantity: current[productId]?.quantity ?? "",
         notes: current[productId]?.notes ?? "",
+        salePriceAwg: current[productId]?.salePriceAwg ?? "",
+        description: current[productId]?.description ?? "",
         [field]: value,
       },
     }));
@@ -14965,7 +15015,13 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
   function adjustSellerOrderQuantity(productId: string, delta: number) {
     setSellerOrderDraft((current) => {
-      const existing = current[productId] ?? { stockCurrent: "", quantity: "", notes: "" };
+      const existing = current[productId] ?? {
+        stockCurrent: "",
+        quantity: "",
+        notes: "",
+        salePriceAwg: "",
+        description: "",
+      };
       const currentValue = Number(existing.quantity || 0);
       const nextValue = Math.max(0, currentValue + delta);
 
@@ -15254,6 +15310,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       return;
     }
 
+    if (isDirectInvoiceComposer && !sellerDeliveryDateDraft.trim()) {
+      setSellerOrderStatus({ tone: "error", message: "Selecciona la fecha de factura." });
+      return;
+    }
+
     try {
       setIsSubmittingSellerOrder(true);
       setSellerOrderStatus(null);
@@ -15282,6 +15343,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ...orderPayload,
+            deliveryDate: sellerDeliveryDateDraft.trim(),
+            invoiceDate: sellerDeliveryDateDraft.trim(),
             paymentMethod: directInvoicePaymentMethod,
             requestedByUserId: sessionUser.id,
             requestedByUserName: sessionUser.name,
@@ -15295,7 +15358,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           return;
         }
 
-        closeDirectInvoiceModal();
+        closeDirectInvoiceComposer();
         setWarehouseOrderCompletionStatus({
           tone: "success",
           message: data.message
@@ -16099,6 +16162,25 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       payload.boxWidthCm = Number(formData.get("boxWidthCm") ?? 0);
       payload.boxHeightCm = Number(formData.get("boxHeightCm") ?? 0);
 
+      const productName = String(payload.name ?? "").trim();
+      const arubaCategory = String(payload.arubaCategory ?? "").trim();
+
+      if (payload.shareWithAruba && !arubaCategory) {
+        setCreationStatuses((current) => ({
+          ...current,
+          [config.key]: {
+            tone: "error",
+            message: "Selecciona la categoria Aruba (QuickBooks). El export usa CATEGORIA:NOMBRE.",
+          },
+        }));
+        return;
+      }
+
+      // Same format QuickBooks expects: CATEGORY:PRODUCT NAME
+      payload.quickbooksName = arubaCategory && productName && !productName.includes(":")
+        ? `${arubaCategory}:${productName}`
+        : String(editingRow?.quickbooksName ?? "").trim();
+
       if (productPresentationDraft === "paquete") {
         payload.unitsPerBox = Number(formData.get("unitsPerPackage") ?? 0);
         payload.unitsPerBoxUnit = "unidad";
@@ -16306,6 +16388,10 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
     if (key === "arubaCategory") {
       return String(row.arubaCategory ?? "").trim() || "-";
+    }
+
+    if (key === "quickbooksName") {
+      return String(row.quickbooksName ?? "").trim() || "-";
     }
 
     if (key === "assignedProductIds") {
@@ -19750,6 +19836,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 ? "Recepción de pedidos"
               : activeSection === "create-order"
                 ? "Agregar pedido"
+              : activeSection === "direct-invoice"
+                ? "Facturar pedido"
               : activeSection === "store-performance"
                 ? "Desempeño de tiendas"
               : activeSection === "sales-rep-performance"
@@ -19801,6 +19889,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 ? "Revisa pedidos de vendedores, agrega pedidos manuales y consulta completados con exportacion QuickBooks."
               : activeSection === "create-order"
                 ? "Crea un pedido manualmente seleccionando ruta, cliente y productos como lo haria el vendedor."
+              : activeSection === "direct-invoice"
+                ? "Factura ventas del camion al instante. Ajusta precio, cantidad, notas y descripcion por linea antes de confirmar."
               : activeSection === "store-performance"
                 ? "Analiza ventas por tienda, identifica lideres, detecta bajo desempeno y revisa la operacion de cada cliente."
               : activeSection === "sales-rep-performance"
@@ -27371,6 +27461,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           </section>
         ) : activeSection === "create-order" ? (
           renderStaffOrderComposerPage()
+        ) : activeSection === "direct-invoice" ? (
+          renderDirectInvoiceComposerPage()
         ) : activeSection === "orders" ? (
           <section className="routes-layout">
             <article className="creation-selector-block">
@@ -27976,7 +28068,6 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 </div>
               </AppModalOverlay>
             ) : null}
-            {renderDirectInvoiceOrderModal()}
           </section>
         ) : (
           <section className="dashboard-grid" />

@@ -6,6 +6,7 @@ const orderItemSchema = new Schema({
     stockRowId: { type: Types.ObjectId, ref: "WarehouseStock" },
     salePriceAwg: { type: Number, min: 0 },
     notes: { type: String, trim: true },
+    description: { type: String, trim: true, default: "" },
 }, { _id: false });
 const orderGiftItemSchema = new Schema({
     productId: { type: Types.ObjectId, ref: "Product", required: true },

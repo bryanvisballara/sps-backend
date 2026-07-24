@@ -9,8 +9,11 @@ export function sanitizeQuickBooksCsvText(value: unknown): string {
     .normalize("NFC")
     .replace(/\uFFFD/g, "")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
+    // Spanish keyboards often type acute (´) or curly quotes instead of ASCII apostrophe.
+    .replace(/[\u00B4\u2018\u2019\u2032]/g, "'")
     .replace(/\u00B7/g, "-")
     .replace(/\r\n|\r|\n/g, " ")
+    .replace(/[ \t]+/g, " ")
     .replace(/[^\u0000-\u00FF]/g, "?")
     .trim();
 }
@@ -18,6 +21,9 @@ export function sanitizeQuickBooksCsvText(value: unknown): string {
 /**
  * Quote only when needed. QBO treats quoted dates like `"17/07/2026"` as empty
  * InvoiceDate/DueDate; leave dates and amounts bare, and never emit `""` for blanks.
+ *
+ * Always quote values that contain an apostrophe. Some QBO/locale CSV parsers treat
+ * `'` as a quote delimiter, which breaks customers like `PIZZA BOB'S` into a bad name.
  */
 export function escapeQuickBooksCsvField(value: string | number): string {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -30,7 +36,7 @@ export function escapeQuickBooksCsvField(value: string | number): string {
     return "";
   }
 
-  if (/[",\n\r]/.test(raw)) {
+  if (/["',\n\r]/.test(raw)) {
     return `"${raw.replace(/"/g, "\"\"")}"`;
   }
 

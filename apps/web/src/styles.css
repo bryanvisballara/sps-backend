@@ -4140,6 +4140,15 @@ h1 {
   flex: 1 1 180px;
 }
 
+.seller-product-catalog-field-price {
+  min-width: 110px;
+}
+
+.seller-product-catalog-field-description {
+  min-width: 200px;
+  flex: 1 1 220px;
+}
+
 .seller-product-catalog-field-quantity {
   min-width: auto;
 }
