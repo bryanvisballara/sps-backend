@@ -3154,6 +3154,18 @@ h1 {
   margin: 16px 0;
 }
 
+.completed-orders-search-filter-grid {
+  grid-template-columns: repeat(2, minmax(0, 280px));
+  align-items: end;
+  margin: 12px 0 16px;
+}
+
+@media (max-width: 700px) {
+  .completed-orders-search-filter-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .dispatch-bulk-toolbar {
   display: flex;
   flex-wrap: wrap;

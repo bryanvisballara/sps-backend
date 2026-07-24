@@ -3262,6 +3262,21 @@ function sortOrdersByDeliveryDate(orders: SellerOrderRecord[]) {
   return [...orders].sort(compareOrdersByDeliveryDate);
 }
 
+function sortOrdersByCreatedAtDesc(orders: SellerOrderRecord[]) {
+  return [...orders].sort((left, right) => {
+    const createdCompare = new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+
+    if (createdCompare !== 0) {
+      return createdCompare;
+    }
+
+    const leftInvoice = Number(left.invoiceNumber ?? 0);
+    const rightInvoice = Number(right.invoiceNumber ?? 0);
+
+    return rightInvoice - leftInvoice;
+  });
+}
+
 function groupOrdersByDeliveryDate(orders: SellerOrderRecord[]) {
   const groups = new Map<string, SellerOrderRecord[]>();
 
@@ -3286,6 +3301,8 @@ type WarehouseOrderListProps = {
   emptyMessage: string;
   loadingMessage: string;
   groupByDeliveryDate?: boolean;
+  /** When not grouping by delivery date, how to order rows. Default: delivery date ascending. */
+  flatSort?: "deliveryAsc" | "createdAtDesc";
   onSelectOrder: (order: SellerOrderRecord) => void;
   renderActions?: (order: SellerOrderRecord) => ReactNode;
   hideDefaultViewButton?: boolean;
@@ -3307,6 +3324,7 @@ function WarehouseOrderList({
   emptyMessage,
   loadingMessage,
   groupByDeliveryDate = true,
+  flatSort = "deliveryAsc",
   onSelectOrder,
   renderActions,
   hideDefaultViewButton = false,
@@ -3391,7 +3409,9 @@ function WarehouseOrderList({
         dateKey: "all",
         heading: "",
         subtitle: "",
-        orders: sortOrdersByDeliveryDate(orders),
+        orders: flatSort === "createdAtDesc"
+          ? sortOrdersByCreatedAtDesc(orders)
+          : sortOrdersByDeliveryDate(orders),
       }];
 
   return (
@@ -4913,6 +4933,7 @@ export default function App() {
   const [isDownloadingQuickBooksExport, setIsDownloadingQuickBooksExport] = useState(false);
   const [warehouseIncomingClientFilter, setWarehouseIncomingClientFilter] = useState("");
   const [warehouseCompletedClientFilter, setWarehouseCompletedClientFilter] = useState("");
+  const [warehouseCompletedInvoiceFilter, setWarehouseCompletedInvoiceFilter] = useState("");
   const [dispatchStartDateFilter, setDispatchStartDateFilter] = useState("");
   const [dispatchEndDateFilter, setDispatchEndDateFilter] = useState("");
   const [selectedDispatchOrderIds, setSelectedDispatchOrderIds] = useState<Set<string>>(() => new Set());
@@ -5975,22 +5996,29 @@ export default function App() {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
-  const filteredWarehouseCompletedOrders = warehouseCompletedOrders.filter((order) => {
-    const dateKey = getOrderDeliveryDateKey(order);
-    const startDate = completedOrdersStartDate || "0000-01-01";
-    const endDate = completedOrdersEndDate || "9999-12-31";
-    const matchesDate = dateKey >= startDate && dateKey <= endDate;
-    const invoiceLabel = order.invoiceNumber ? String(order.invoiceNumber) : "";
-    const storeName = String(order.storeName ?? "")
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase();
-    const matchesSearch = !normalizedWarehouseCompletedClientFilter
-      || storeName.includes(normalizedWarehouseCompletedClientFilter)
-      || invoiceLabel.includes(normalizedWarehouseCompletedClientFilter.replace(/^#/, ""));
+  const normalizedWarehouseCompletedInvoiceFilter = warehouseCompletedInvoiceFilter
+    .trim()
+    .replace(/^#/, "")
+    .toLowerCase();
+  const filteredWarehouseCompletedOrders = sortOrdersByCreatedAtDesc(
+    warehouseCompletedOrders.filter((order) => {
+      const dateKey = getOrderDeliveryDateKey(order);
+      const startDate = completedOrdersStartDate || "0000-01-01";
+      const endDate = completedOrdersEndDate || "9999-12-31";
+      const matchesDate = dateKey >= startDate && dateKey <= endDate;
+      const invoiceLabel = order.invoiceNumber ? String(order.invoiceNumber) : "";
+      const storeName = String(order.storeName ?? "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase();
+      const matchesClient = !normalizedWarehouseCompletedClientFilter
+        || storeName.includes(normalizedWarehouseCompletedClientFilter);
+      const matchesInvoice = !normalizedWarehouseCompletedInvoiceFilter
+        || invoiceLabel.toLowerCase().includes(normalizedWarehouseCompletedInvoiceFilter);
 
-    return matchesDate && matchesSearch;
-  });
+      return matchesDate && matchesClient && matchesInvoice;
+    }),
+  );
   const warehouseAllItemsChecked = warehousePricedItems.length > 0
     && warehousePricedItems.every((item) => Boolean(warehouseOrderChecklist[item.productId]));
   const warehouseSomeItemsChecked = warehousePricedItems.some((item) => Boolean(warehouseOrderChecklist[item.productId]));
@@ -13304,30 +13332,14 @@ export default function App() {
           next.salePriceAwg = formatSellerDraftMoney(subtotalValue / quantityValue);
         }
       } else if (field === "quantity") {
-        const previousQuantity = Number(existing.quantity || 0);
+        // Always keep unit price as reference; subtotal follows price × quantity.
         const nextQuantity = Number(value || 0);
         const unitPrice = Number(existing.salePriceAwg);
-        const previousSubtotal = parseDraftMoneyInput(existing.lineSubtotalAwg);
-        const hasPreviousSubtotal = isCompleteDraftMoneyInput(existing.lineSubtotalAwg)
-          && Number.isFinite(previousSubtotal)
-          && previousSubtotal > 0;
         const safeUnitPrice = Number.isFinite(unitPrice) ? Math.max(0, unitPrice) : 0;
-
-        if (
-          hasPreviousSubtotal
-          && Number.isFinite(previousQuantity)
-          && previousQuantity > 0
-          && Number.isFinite(nextQuantity)
-          && nextQuantity > 0
-        ) {
-          next.salePriceAwg = formatSellerDraftMoney(previousSubtotal / nextQuantity);
-          next.lineSubtotalAwg = formatSellerDraftMoney(previousSubtotal);
-        } else {
-          next.salePriceAwg = formatSellerDraftMoney(safeUnitPrice) || existing.salePriceAwg;
-          next.lineSubtotalAwg = formatSellerDraftMoney(
-            Number(next.salePriceAwg || 0) * (Number.isFinite(nextQuantity) ? Math.max(0, nextQuantity) : 0),
-          );
-        }
+        next.salePriceAwg = formatSellerDraftMoney(safeUnitPrice) || existing.salePriceAwg;
+        next.lineSubtotalAwg = formatSellerDraftMoney(
+          Number(next.salePriceAwg || 0) * (Number.isFinite(nextQuantity) ? Math.max(0, nextQuantity) : 0),
+        );
       }
 
       return {
@@ -15382,32 +15394,13 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
         }
       } else if (field === "quantity") {
         if (isDirectInvoiceComposer) {
-          const previousQuantity = Number(existing.quantity || 0);
+          // Always keep unit price as reference; subtotal follows price × quantity.
           const nextQuantity = Number(value || 0);
           const unitPrice = resolveSellerDraftUnitPrice(product, existing);
-          const previousSubtotal = parseDraftMoneyInput(existing.lineSubtotalAwg);
-          const hasPreviousSubtotal = isCompleteDraftMoneyInput(existing.lineSubtotalAwg)
-            && Number.isFinite(previousSubtotal)
-            && previousSubtotal > 0;
-
-          // Quantity changed:
-          // - If there was already a positive subtotal and previous qty > 0, keep subtotal and update price.
-          // - Otherwise keep unit price (avoids wiping catalog price when going 0 → 1) and update subtotal.
-          if (
-            hasPreviousSubtotal
-            && Number.isFinite(previousQuantity)
-            && previousQuantity > 0
-            && Number.isFinite(nextQuantity)
-            && nextQuantity > 0
-          ) {
-            next.salePriceAwg = formatSellerDraftMoney(previousSubtotal / nextQuantity);
-            next.lineSubtotalAwg = formatSellerDraftMoney(previousSubtotal);
-          } else {
-            next.salePriceAwg = formatSellerDraftMoney(unitPrice) || existing.salePriceAwg || getDefaultSellerDraftSalePrice(product);
-            next.lineSubtotalAwg = formatSellerDraftMoney(
-              resolveSellerDraftUnitPrice(product, next) * (Number.isFinite(nextQuantity) ? Math.max(0, nextQuantity) : 0),
-            );
-          }
+          next.salePriceAwg = formatSellerDraftMoney(unitPrice) || existing.salePriceAwg || getDefaultSellerDraftSalePrice(product);
+          next.lineSubtotalAwg = formatSellerDraftMoney(
+            resolveSellerDraftUnitPrice(product, next) * (Number.isFinite(nextQuantity) ? Math.max(0, nextQuantity) : 0),
+          );
         }
       } else if (isDirectInvoiceComposer && !next.salePriceAwg.trim()) {
         next.salePriceAwg = getDefaultSellerDraftSalePrice(product);
@@ -19293,7 +19286,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <div className="management-table-header">
                       <div>
                         <h2>Pedidos completados</h2>
-                        <p>Pedidos ya facturados. Filtra por fecha de entrega para encontrar y editar uno.</p>
+                        <p>Pedidos ya facturados. Los mas recientes aparecen primero. Filtra por fecha, cliente o # de factura.</p>
                       </div>
                       <p className="management-table-meta">{filteredWarehouseCompletedOrders.length} pedidos</p>
                     </div>
@@ -19348,15 +19341,26 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </div>
                     </div>
 
-                    <label className="field warehouse-incoming-client-filter">
-                      <span>Buscar cliente o consecutivo</span>
-                      <input
-                        type="search"
-                        value={warehouseCompletedClientFilter}
-                        placeholder="Ej. CHENGS o 12356"
-                        onChange={(event) => setWarehouseCompletedClientFilter(event.target.value)}
-                      />
-                    </label>
+                    <div className="filter-grid completed-orders-search-filter-grid">
+                      <label className="field">
+                        <span>Nombre de cliente</span>
+                        <input
+                          type="search"
+                          value={warehouseCompletedClientFilter}
+                          placeholder="Ej. CHENGS"
+                          onChange={(event) => setWarehouseCompletedClientFilter(event.target.value)}
+                        />
+                      </label>
+                      <label className="field">
+                        <span># de factura</span>
+                        <input
+                          type="search"
+                          value={warehouseCompletedInvoiceFilter}
+                          placeholder="Ej. 12356"
+                          onChange={(event) => setWarehouseCompletedInvoiceFilter(event.target.value)}
+                        />
+                      </label>
+                    </div>
 
                     <WarehouseOrderList
                       orders={filteredWarehouseCompletedOrders}
@@ -19364,10 +19368,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       emptyMessage={
                         warehouseCompletedOrders.length === 0
                           ? "Todavia no hay pedidos completados."
-                          : "No hay pedidos completados en ese periodo o con ese cliente."
+                          : "No hay pedidos completados con esos filtros."
                       }
                       loadingMessage="Cargando pedidos completados..."
                       groupByDeliveryDate={false}
+                      flatSort="createdAtDesc"
                       showConsecutivo
                       showRoute={false}
                       showInternalNotes
@@ -27973,7 +27978,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               <div className="management-table-header">
                 <div>
                   <h2>Pedidos completados</h2>
-                  <p>Pedidos ya facturados y cerrados. Filtra por fecha de entrega, factura ventas del camion o exporta a QuickBooks.</p>
+                  <p>Pedidos ya facturados y cerrados. Los mas recientes aparecen primero. Filtra por fecha, cliente o # de factura, o exporta a QuickBooks.</p>
                 </div>
                 <div className="management-table-header-actions">
                   <button
@@ -28045,6 +28050,28 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   </button>
                 </div>
               </div>
+
+              <div className="filter-grid completed-orders-search-filter-grid">
+                <label className="field">
+                  <span>Nombre de cliente</span>
+                  <input
+                    type="search"
+                    value={warehouseCompletedClientFilter}
+                    placeholder="Ej. CHENGS"
+                    onChange={(event) => setWarehouseCompletedClientFilter(event.target.value)}
+                  />
+                </label>
+                <label className="field">
+                  <span># de factura</span>
+                  <input
+                    type="search"
+                    value={warehouseCompletedInvoiceFilter}
+                    placeholder="Ej. 12356"
+                    onChange={(event) => setWarehouseCompletedInvoiceFilter(event.target.value)}
+                  />
+                </label>
+              </div>
+
               <p className="management-table-meta">
                 Periodo: {completedOrdersStartDate} a {completedOrdersEndDate}
                 {" · "}
@@ -28059,7 +28086,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <th>Factura</th>
                       <th>Vendedor</th>
                       <th>Cliente</th>
-                      <th>Ruta</th>
+                      <th>Notas internas</th>
                       <th>Productos</th>
                       <th>Acciones</th>
                     </tr>
@@ -28087,7 +28114,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             <td>{formatInvoiceNumberLabel(order)}</td>
                             <td>{order.salesRepName}</td>
                             <td>{order.storeName}</td>
-                            <td>{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
+                            <td className="warehouse-order-notes-cell">{order.internalOrderNotes?.trim() || "-"}</td>
                             <td>{`${order.items.length} producto${order.items.length === 1 ? "" : "s"} / ${totalUnits} und`}</td>
                             <td className="table-actions-cell">
                               {!order.invoiceVoided ? (
@@ -28148,7 +28175,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       })
                     ) : (
                       <tr>
-                        <td colSpan={7} className="empty-table-cell">No hay pedidos completados en el periodo seleccionado.</td>
+                        <td colSpan={7} className="empty-table-cell">No hay pedidos completados con esos filtros.</td>
                       </tr>
                     )}
                   </tbody>
