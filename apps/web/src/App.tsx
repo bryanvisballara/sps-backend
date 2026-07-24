@@ -502,6 +502,11 @@ type ImportExpenseDocument = {
   url: string;
 };
 
+type OrderAttachment = {
+  name: string;
+  url: string;
+};
+
 type ImportExpenseItemFormState = {
   id: string;
   key: "freight" | "customs" | "inlandLogistics" | "taxes" | "other";
@@ -854,6 +859,7 @@ type SellerOrderRecord = {
   invoiceVoidReason?: string;
   orderNotes?: string;
   internalOrderNotes?: string;
+  attachments?: OrderAttachment[];
   createdAt: string;
   updatedAt: string;
   items: Array<{
@@ -2230,8 +2236,8 @@ function buildCreationKpis(
     case "products":
       return [
         { label: "Productos", value: rows.length, tone: "cyan" },
-        { label: "Categorías cubiertas", value: countUniqueRowValues(rows, "category"), tone: "amber" },
-        { label: "Proveedores activos", value: countUniqueRowValues(rows, "supplier"), tone: "slate" },
+        { label: "Activos", value: rows.filter((row) => row.active !== false).length, tone: "amber" },
+        { label: "Deshabilitados", value: rows.filter((row) => row.active === false).length, tone: "slate" },
         { label: "Con imagen", value: countRowsWithValue(rows, "imageUrl"), tone: "cyan" },
       ] satisfies KpiCard[];
     case "suppliers":
@@ -2569,6 +2575,7 @@ function getCollectionConfigs(
         { key: "description", label: "Descripción" },
         { key: "arubaPurchaseCostUsd", label: "Costo (USD)" },
         { key: "salePrice", label: "Venta" },
+        { key: "active", label: "Estado" },
       ],
     },
     {
@@ -4689,6 +4696,7 @@ export default function App() {
   const [productShareWithArubaDraft, setProductShareWithArubaDraft] = useState(true);
   const [isLoadingCreationRows, setIsLoadingCreationRows] = useState(false);
   const [creationRowsError, setCreationRowsError] = useState("");
+  const [togglingProductActiveId, setTogglingProductActiveId] = useState("");
   const [isImportingProductsExcel, setIsImportingProductsExcel] = useState(false);
   const [productImportFileDraft, setProductImportFileDraft] = useState<ProductImportFileDraft>({ file: null, name: "" });
   const [productImportExcelFileName, setProductImportExcelFileName] = useState("");
@@ -5056,6 +5064,9 @@ export default function App() {
   const [sellerGiftDraft, setSellerGiftDraft] = useState({ productId: "", stockRowId: "", quantity: "1" });
   const [sellerOrderNotesDraft, setSellerOrderNotesDraft] = useState("");
   const [sellerInternalOrderNotesDraft, setSellerInternalOrderNotesDraft] = useState("");
+  const [sellerOrderAttachmentsDraft, setSellerOrderAttachmentsDraft] = useState<OrderAttachment[]>([]);
+  const [isUploadingSellerOrderAttachment, setIsUploadingSellerOrderAttachment] = useState(false);
+  const [sellerOrderAttachmentError, setSellerOrderAttachmentError] = useState("");
   const [sellerDeliveryDateDraft, setSellerDeliveryDateDraft] = useState(() => getDefaultOrderDeliveryDateKey());
   const [sellerOrderEditDeliveryDate, setSellerOrderEditDeliveryDate] = useState(() => getBusinessDateKey());
   const [isSubmittingSellerOrder, setIsSubmittingSellerOrder] = useState(false);
@@ -5471,6 +5482,9 @@ export default function App() {
     setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
     setSellerOrderNotesDraft("");
     setSellerInternalOrderNotesDraft("");
+    setSellerOrderAttachmentsDraft([]);
+    setSellerOrderAttachmentError("");
+    setIsUploadingSellerOrderAttachment(false);
     setSellerDeliveryDateDraft(getDefaultOrderDeliveryDateKey());
     setSellerOrderStatus(null);
     setSellerProductOfferStatus(null);
@@ -8650,6 +8664,47 @@ export default function App() {
               />
             </label>
           </div>
+          <div className="seller-order-attachment-field">
+            <label className="field">
+              <span>Archivo adjunto (opcional)</span>
+              <input
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt"
+                disabled={isUploadingSellerOrderAttachment || isSubmittingSellerOrder}
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  void handleSellerOrderAttachmentUpload(file);
+                  event.currentTarget.value = "";
+                }}
+              />
+            </label>
+            {isUploadingSellerOrderAttachment ? (
+              <p className="form-feedback success">Subiendo archivo...</p>
+            ) : null}
+            {sellerOrderAttachmentError ? (
+              <p className="form-feedback error">{sellerOrderAttachmentError}</p>
+            ) : null}
+            {sellerOrderAttachmentsDraft.length > 0 ? (
+              <div className="import-expense-documents">
+                {sellerOrderAttachmentsDraft.map((attachment) => (
+                  <div className="import-expense-document" key={attachment.url}>
+                    <a href={attachment.url} target="_blank" rel="noreferrer">{attachment.name}</a>
+                    <button
+                      className="table-action-icon is-danger"
+                      type="button"
+                      aria-label="Quitar archivo adjunto"
+                      title="Quitar"
+                      onClick={() => removeSellerOrderAttachment()}
+                    >
+                      x
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="route-helper-text">Puedes adjuntar un PDF, imagen o documento para bodega y recepción.</p>
+            )}
+          </div>
           <p>
             {sellerDraftedItems.length > 0
               ? `${sellerDraftedItems.length} producto${sellerDraftedItems.length === 1 ? "" : "s"} listos para registrar.`
@@ -8682,6 +8737,7 @@ export default function App() {
             onClick={() => void handleSellerOrderSubmit()}
             disabled={
               isSubmittingSellerOrder
+              || isUploadingSellerOrderAttachment
               || isLoadingSellerClientProducts
               || sellerDraftedItems.length === 0
               || (isDirectInvoiceComposer && !directInvoicePaymentMethod)
@@ -15019,6 +15075,118 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
     }));
   }
 
+  async function handleSellerOrderAttachmentUpload(file: File | null) {
+    if (!file) {
+      return;
+    }
+
+    setIsUploadingSellerOrderAttachment(true);
+    setSellerOrderAttachmentError("");
+
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      let targetCloudName = cloudinaryCloudName ?? "";
+
+      if (cloudinaryUploadPreset) {
+        body.append("upload_preset", cloudinaryUploadPreset);
+        body.append("folder", "spste/order-attachments");
+      } else {
+        const signatureResponse = await fetch(`${apiBaseUrl}/uploads/cloudinary/signature?purpose=order-attachments`);
+        const signatureData = (await signatureResponse.json()) as {
+          message?: string;
+          cloudName?: string;
+          apiKey?: string;
+          folder?: string;
+          timestamp?: number;
+          signature?: string;
+        };
+
+        if (
+          !signatureResponse.ok
+          || !signatureData.cloudName
+          || !signatureData.apiKey
+          || !signatureData.folder
+          || !signatureData.timestamp
+          || !signatureData.signature
+        ) {
+          throw new Error(signatureData.message ?? "No fue posible preparar el archivo para subirlo.");
+        }
+
+        targetCloudName = signatureData.cloudName;
+        body.append("folder", signatureData.folder);
+        body.append("api_key", signatureData.apiKey);
+        body.append("timestamp", String(signatureData.timestamp));
+        body.append("signature", signatureData.signature);
+      }
+
+      if (!targetCloudName) {
+        throw new Error("Configura Cloudinary para adjuntar archivos al pedido.");
+      }
+
+      const response = await fetch(`https://api.cloudinary.com/v1_1/${targetCloudName}/auto/upload`, {
+        method: "POST",
+        body,
+      });
+      const data = (await response.json()) as {
+        secure_url?: string;
+        original_filename?: string;
+        error?: { message?: string };
+      };
+
+      if (!response.ok || !data.secure_url) {
+        throw new Error(data.error?.message ?? "No fue posible subir el archivo.");
+      }
+
+      setSellerOrderAttachmentsDraft([
+        { name: file.name || data.original_filename || "Adjunto", url: data.secure_url },
+      ]);
+    } catch (error) {
+      setSellerOrderAttachmentError(
+        error instanceof Error ? error.message : "No fue posible subir el archivo.",
+      );
+    } finally {
+      setIsUploadingSellerOrderAttachment(false);
+    }
+  }
+
+  function removeSellerOrderAttachment() {
+    setSellerOrderAttachmentsDraft([]);
+    setSellerOrderAttachmentError("");
+  }
+
+  function renderOrderAttachmentsPanel(attachments: OrderAttachment[] | undefined, options?: { compact?: boolean }) {
+    const files = (attachments ?? []).filter((attachment) => attachment.url && attachment.name);
+
+    if (files.length === 0) {
+      return null;
+    }
+
+    return (
+      <div className={`order-attachments-panel ${options?.compact ? "order-attachments-panel--compact" : ""}`}>
+        <p className="section-label">Archivo adjunto</p>
+        <div className="import-expense-documents">
+          {files.map((attachment) => (
+            <div className="import-expense-document" key={attachment.url}>
+              <a href={attachment.url} target="_blank" rel="noreferrer">
+                {attachment.name}
+              </a>
+              <a
+                className="ghost-button action-secondary-button order-attachment-download"
+                href={attachment.url}
+                target="_blank"
+                rel="noreferrer"
+                download={attachment.name}
+              >
+                Ver / Descargar
+              </a>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   async function saveCurrentImportFormAsTemplate() {
     if (!sessionUser) {
       setAccountingStatuses({
@@ -15265,6 +15433,75 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
         ...current,
         [config.key]: { tone: "error", message: "No fue posible conectar con el backend." },
       }));
+    }
+  }
+
+  async function handleToggleProductActive(row: Record<string, unknown>) {
+    const rowId = typeof row._id === "string" ? row._id : "";
+    const productName = String(row.name ?? row.sku ?? "este producto");
+    const currentlyActive = row.active !== false;
+    const nextActive = !currentlyActive;
+
+    if (!rowId) {
+      setCreationStatuses((current) => ({
+        ...current,
+        products: { tone: "error", message: "No fue posible identificar el producto." },
+      }));
+      return;
+    }
+
+    const confirmMessage = currentlyActive
+      ? `Se deshabilitará "${productName}". Seguirá en el historial, pero no aparecerá al crear pedidos.`
+      : `Se habilitará "${productName}" y volverá a aparecer al crear pedidos.`;
+
+    if (!globalThis.confirm(confirmMessage)) {
+      return;
+    }
+
+    try {
+      setTogglingProductActiveId(rowId);
+      const response = await fetch(`${apiBaseUrl}/management/products/${rowId}/active`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ active: nextActive }),
+      });
+      const data = (await response.json()) as { message?: string; active?: boolean };
+
+      if (!response.ok) {
+        setCreationStatuses((current) => ({
+          ...current,
+          products: {
+            tone: "error",
+            message: data.message ?? (currentlyActive
+              ? "No fue posible deshabilitar el producto."
+              : "No fue posible habilitar el producto."),
+          },
+        }));
+        return;
+      }
+
+      setCreationStatuses((current) => ({
+        ...current,
+        products: {
+          tone: "success",
+          message: data.message ?? (nextActive
+            ? "Producto habilitado correctamente."
+            : "Producto deshabilitado correctamente."),
+        },
+      }));
+
+      await Promise.all([
+        refreshKpis(),
+        refreshCreationRows(selectedCollection, { silent: true }),
+        refreshReferenceOptions(),
+      ]);
+    } catch {
+      setCreationStatuses((current) => ({
+        ...current,
+        products: { tone: "error", message: "No fue posible conectar con el backend." },
+      }));
+    } finally {
+      setTogglingProductActiveId("");
     }
   }
 
@@ -15742,6 +15979,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       return;
     }
 
+    if (isUploadingSellerOrderAttachment) {
+      setSellerOrderStatus({ tone: "error", message: "Espera a que termine de subirse el archivo adjunto." });
+      return;
+    }
+
     try {
       setIsSubmittingSellerOrder(true);
       setSellerOrderStatus(null);
@@ -15755,6 +15997,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
         deliveryDate: sellerDeliveryDateDraft,
         orderNotes: sellerOrderNotesDraft.trim(),
         internalOrderNotes: sellerInternalOrderNotesDraft.trim(),
+        attachments: sellerOrderAttachmentsDraft,
         items: sellerDraftedItems,
         giftItems: sellerGiftDraftItems.map((item) => ({
           productId: item.productId,
@@ -15823,6 +16066,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
       setSellerOrderNotesDraft("");
       setSellerInternalOrderNotesDraft("");
+      setSellerOrderAttachmentsDraft([]);
+      setSellerOrderAttachmentError("");
       setSellerDeliveryDateDraft(getDefaultOrderDeliveryDateKey());
       setSelectedSellerStoreId("");
       setSellerOrderStatus({ tone: "success", message: data.message ?? "Pedido enviado a bodega correctamente." });
@@ -16804,6 +17049,10 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
   }
 
   function formatCreationCellValue(row: Record<string, unknown>, key: string) {
+    if (key === "active") {
+      return row.active === false ? "Deshabilitado" : "Activo";
+    }
+
     if (key === "defaultPaymentMethod") {
       const defaultPaymentMethod = typeof row.defaultPaymentMethod === "string" ? row.defaultPaymentMethod : "";
       return formatPaymentMethodLabel(normalizeClientPaymentTerms(defaultPaymentMethod));
@@ -18160,6 +18409,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <button className="modal-close-button" type="button" onClick={() => setSelectedSellerOrderDetail(null)}>Cerrar</button>
                     </div>
 
+                    {renderOrderAttachmentsPanel(selectedSellerOrderDetail.attachments, { compact: true })}
+
                     <div className="table-wrap table-wrap--cards">
                       <table className="data-table data-table--order-items">
                         <thead>
@@ -18685,6 +18936,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             </div>
                           ) : null}
                         </>
+                      ) : null}
+
+                      {(selectedWarehouseOrderDetail.attachments?.length ?? 0) > 0 ? (
+                        <div className="warehouse-order-summary-card warehouse-order-summary-card--notes">
+                          {renderOrderAttachmentsPanel(selectedWarehouseOrderDetail.attachments)}
+                        </div>
                       ) : null}
 
                       <div className="warehouse-order-summary-card">
@@ -20742,10 +20999,26 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         </td>
                       </tr>
                     ) : filteredCreationRows.length > 0 ? (
-                      filteredCreationRows.map((row, index) => (
-                        <tr key={String(row._id ?? `${selectedCollection.key}-${index}`)}>
+                      filteredCreationRows.map((row, index) => {
+                        const rowId = String(row._id ?? `${selectedCollection.key}-${index}`);
+                        const isProductInactive = selectedCollection.key === "products" && row.active === false;
+                        const isTogglingActive = togglingProductActiveId === String(row._id ?? "");
+
+                        return (
+                        <tr
+                          key={rowId}
+                          className={isProductInactive ? "is-inactive-product" : undefined}
+                        >
                           {selectedCollection.tableColumns.map((column) => (
-                            <td key={column.key}>{formatCreationCellValue(row, column.key)}</td>
+                            <td key={column.key}>
+                              {column.key === "active" ? (
+                                <span className={`stores-status-badge ${row.active === false ? "is-inactive" : "is-active"}`}>
+                                  {formatCreationCellValue(row, column.key)}
+                                </span>
+                              ) : (
+                                formatCreationCellValue(row, column.key)
+                              )}
+                            </td>
                           ))}
                           <td>
                             <div className="table-action-group">
@@ -20760,6 +21033,26 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                   <path d="M4 20h4l10-10-4-4L4 16v4zm12.7-12.3 1.6-1.6a1 1 0 0 1 1.4 0l1.2 1.2a1 1 0 0 1 0 1.4L19.3 10l-2.6-2.3z" fill="currentColor" />
                                 </svg>
                               </button>
+                              {selectedCollection.key === "products" ? (
+                                <button
+                                  className={`table-action-icon ${row.active === false ? "is-success" : "is-warning"}`}
+                                  type="button"
+                                  aria-label={row.active === false ? "Habilitar producto" : "Deshabilitar producto"}
+                                  title={row.active === false ? "Habilitar" : "Deshabilitar"}
+                                  disabled={isTogglingActive}
+                                  onClick={() => void handleToggleProductActive(row)}
+                                >
+                                  {row.active === false ? (
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                      <path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z" fill="currentColor" />
+                                    </svg>
+                                  ) : (
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                      <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z" fill="currentColor" />
+                                    </svg>
+                                  )}
+                                </button>
+                              ) : null}
                               <button
                                 className="table-action-icon is-danger"
                                 type="button"
@@ -20772,7 +21065,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             </div>
                           </td>
                         </tr>
-                      ))
+                        );
+                      })
                     ) : (
                       <tr>
                         <td colSpan={selectedCollection.tableColumns.length + 1} className="empty-table-cell">
@@ -28194,6 +28488,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </div>
                     <button className="modal-close-button" type="button" onClick={() => setSelectedWarehouseOrderDetail(null)}>Cerrar</button>
                   </div>
+
+                  {renderOrderAttachmentsPanel(selectedWarehouseOrderDetail.attachments, { compact: true })}
 
                   {canAccountingEditOrderDetail(selectedWarehouseOrderDetail) && hasAccountingDispatchAccess(sessionUser?.role) ? (
                     <div className="warehouse-order-invoice-number-panel">

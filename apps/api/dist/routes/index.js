@@ -44,6 +44,7 @@ export const apiRouter = Router();
 const cloudinaryProductFolder = "spste/products";
 const cloudinaryImportDocumentsFolder = "spste/import-documents";
 const cloudinaryCatalogPdfFolder = "spste/catalog-pdfs";
+const cloudinaryOrderAttachmentsFolder = "spste/order-attachments";
 function buildInternalCode(prefix) {
     return `${prefix}-${Date.now()}`;
 }
@@ -284,7 +285,27 @@ function getCloudinaryFolder(purpose) {
     if (purpose === "catalog-pdfs") {
         return cloudinaryCatalogPdfFolder;
     }
+    if (purpose === "order-attachments") {
+        return cloudinaryOrderAttachmentsFolder;
+    }
     return cloudinaryProductFolder;
+}
+function normalizeOrderAttachments(value) {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return value.flatMap((entry, index) => {
+        if (typeof entry !== "object" || entry === null) {
+            throw new Error(`El archivo adjunto #${index + 1} no es valido.`);
+        }
+        const attachment = entry;
+        const name = typeof attachment.name === "string" ? attachment.name.trim() : "";
+        const url = typeof attachment.url === "string" ? attachment.url.trim() : "";
+        if (!name || !url) {
+            throw new Error(`El archivo adjunto #${index + 1} debe incluir nombre y URL.`);
+        }
+        return [{ name, url }];
+    });
 }
 function normalizeImportExpenseItems(payload) {
     if (Array.isArray(payload.expenseItems)) {
@@ -984,6 +1005,7 @@ function normalizeSalesOrderPayload(body, options) {
     const orderNotes = typeof payload.orderNotes === "string" ? payload.orderNotes.trim() : "";
     const internalOrderNotes = typeof payload.internalOrderNotes === "string" ? payload.internalOrderNotes.trim() : "";
     const giftItems = normalizeOrderGiftItems(payload.giftItems);
+    const attachments = normalizeOrderAttachments(payload.attachments);
     return {
         routeId,
         routeName,
@@ -995,6 +1017,7 @@ function normalizeSalesOrderPayload(body, options) {
         internalOrderNotes,
         items,
         giftItems,
+        attachments,
     };
 }
 async function createSubmittedSalesOrder(payload) {
@@ -1069,6 +1092,7 @@ async function createSubmittedSalesOrder(payload) {
         internalOrderNotes: payload.internalOrderNotes,
         items,
         giftItems: payload.giftItems,
+        attachments: payload.attachments,
     });
 }
 function normalizeWarehouseOrderItems(rawItems, existingItems) {
@@ -1176,6 +1200,12 @@ async function mapWarehouseOrderRecord(order) {
         invoiceVoidReason: String(order.invoiceVoidReason ?? ""),
         orderNotes: typeof order.orderNotes === "string" ? order.orderNotes : "",
         internalOrderNotes: typeof order.internalOrderNotes === "string" ? order.internalOrderNotes : "",
+        attachments: (Array.isArray(order.attachments) ? order.attachments : [])
+            .map((attachment) => ({
+            name: String(attachment?.name ?? "").trim(),
+            url: String(attachment?.url ?? "").trim(),
+        }))
+            .filter((attachment) => attachment.name && attachment.url),
         createdAt: order.createdAt,
         updatedAt: order.updatedAt,
         items: order.items.map((item) => {
@@ -2199,6 +2229,12 @@ apiRouter.get("/sales/orders", async (request, response) => {
             status: order.status,
             orderNotes: typeof order.orderNotes === "string" ? order.orderNotes : "",
             internalOrderNotes: typeof order.internalOrderNotes === "string" ? order.internalOrderNotes : "",
+            attachments: (Array.isArray(order.attachments) ? order.attachments : [])
+                .map((attachment) => ({
+                name: String(attachment?.name ?? "").trim(),
+                url: String(attachment?.url ?? "").trim(),
+            }))
+                .filter((attachment) => attachment.name && attachment.url),
             createdAt: order.createdAt,
             updatedAt: order.updatedAt,
             items: order.items.map((item) => {
@@ -6845,6 +6881,25 @@ apiRouter.put("/management/products/:id", async (request, response) => {
             return;
         }
         response.json(product);
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
+});
+apiRouter.patch("/management/products/:id/active", async (request, response) => {
+    try {
+        const active = request.body?.active !== false;
+        const product = await Product.findByIdAndUpdate(request.params.id, { active }, { new: true, runValidators: true }).lean();
+        if (!product) {
+            response.status(404).json({ message: "El producto no existe." });
+            return;
+        }
+        response.json({
+            ...product,
+            message: active
+                ? "Producto habilitado. Volverá a aparecer al crear pedidos."
+                : "Producto deshabilitado. Ya no aparecerá al crear pedidos.",
+        });
     }
     catch (error) {
         sendCreationError(response, error);

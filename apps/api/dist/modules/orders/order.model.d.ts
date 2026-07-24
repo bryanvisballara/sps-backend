@@ -148,6 +148,16 @@ export declare const Order: import("mongoose").Model<{
             isValid?: {} | null | undefined;
         } | null | undefined;
     }>;
+    attachments: Types.DocumentArray<{
+        name: string;
+        url: string;
+    }, Types.Subdocument<import("bson").ObjectId, any, {
+        name: string;
+        url: string;
+    }> & {
+        name: string;
+        url: string;
+    }>;
     invoiceVoided: boolean;
     invoiceVoidedByUserId: string;
     invoiceVoidedByUserName: string;
@@ -305,6 +315,16 @@ export declare const Order: import("mongoose").Model<{
             createFromBase64?: {} | null | undefined;
             isValid?: {} | null | undefined;
         } | null | undefined;
+    }>;
+    attachments: Types.DocumentArray<{
+        name: string;
+        url: string;
+    }, Types.Subdocument<import("bson").ObjectId, any, {
+        name: string;
+        url: string;
+    }> & {
+        name: string;
+        url: string;
     }>;
     invoiceVoided: boolean;
     invoiceVoidedByUserId: string;
@@ -465,6 +485,16 @@ export declare const Order: import("mongoose").Model<{
             createFromBase64?: {} | null | undefined;
             isValid?: {} | null | undefined;
         } | null | undefined;
+    }>;
+    attachments: Types.DocumentArray<{
+        name: string;
+        url: string;
+    }, Types.Subdocument<import("bson").ObjectId, any, {
+        name: string;
+        url: string;
+    }> & {
+        name: string;
+        url: string;
     }>;
     invoiceVoided: boolean;
     invoiceVoidedByUserId: string;
@@ -630,6 +660,16 @@ export declare const Order: import("mongoose").Model<{
             isValid?: {} | null | undefined;
         } | null | undefined;
     }>;
+    attachments: Types.DocumentArray<{
+        name: string;
+        url: string;
+    }, Types.Subdocument<import("bson").ObjectId, any, {
+        name: string;
+        url: string;
+    }> & {
+        name: string;
+        url: string;
+    }>;
     invoiceVoided: boolean;
     invoiceVoidedByUserId: string;
     invoiceVoidedByUserName: string;
@@ -787,6 +827,16 @@ export declare const Order: import("mongoose").Model<{
             createFromBase64?: {} | null | undefined;
             isValid?: {} | null | undefined;
         } | null | undefined;
+    }>;
+    attachments: Types.DocumentArray<{
+        name: string;
+        url: string;
+    }, Types.Subdocument<import("bson").ObjectId, any, {
+        name: string;
+        url: string;
+    }> & {
+        name: string;
+        url: string;
     }>;
     invoiceVoided: boolean;
     invoiceVoidedByUserId: string;
@@ -947,6 +997,16 @@ export declare const Order: import("mongoose").Model<{
             createFromBase64?: {} | null | undefined;
             isValid?: {} | null | undefined;
         } | null | undefined;
+    }>;
+    attachments: Types.DocumentArray<{
+        name: string;
+        url: string;
+    }, Types.Subdocument<import("bson").ObjectId, any, {
+        name: string;
+        url: string;
+    }> & {
+        name: string;
+        url: string;
     }>;
     invoiceVoided: boolean;
     invoiceVoidedByUserId: string;

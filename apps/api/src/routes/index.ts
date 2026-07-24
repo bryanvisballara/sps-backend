@@ -61,6 +61,7 @@ export const apiRouter = Router();
 const cloudinaryProductFolder = "spste/products";
 const cloudinaryImportDocumentsFolder = "spste/import-documents";
 const cloudinaryCatalogPdfFolder = "spste/catalog-pdfs";
+const cloudinaryOrderAttachmentsFolder = "spste/order-attachments";
 
 function buildInternalCode(prefix: string) {
   return `${prefix}-${Date.now()}`;
@@ -393,7 +394,33 @@ function getCloudinaryFolder(purpose: string) {
     return cloudinaryCatalogPdfFolder;
   }
 
+  if (purpose === "order-attachments") {
+    return cloudinaryOrderAttachmentsFolder;
+  }
+
   return cloudinaryProductFolder;
+}
+
+function normalizeOrderAttachments(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as Array<{ name: string; url: string }>;
+  }
+
+  return value.flatMap((entry, index) => {
+    if (typeof entry !== "object" || entry === null) {
+      throw new Error(`El archivo adjunto #${index + 1} no es valido.`);
+    }
+
+    const attachment = entry as { name?: unknown; url?: unknown };
+    const name = typeof attachment.name === "string" ? attachment.name.trim() : "";
+    const url = typeof attachment.url === "string" ? attachment.url.trim() : "";
+
+    if (!name || !url) {
+      throw new Error(`El archivo adjunto #${index + 1} debe incluir nombre y URL.`);
+    }
+
+    return [{ name, url }];
+  });
 }
 
 function normalizeImportExpenseItems(payload: Record<string, unknown>) {
@@ -1264,6 +1291,7 @@ function normalizeSalesOrderPayload(body: unknown, options?: { allowPastDelivery
     internalOrderNotes?: unknown;
     items?: unknown;
     giftItems?: unknown;
+    attachments?: unknown;
   };
 
   const routeId = typeof payload.routeId === "string" ? payload.routeId.trim() : "";
@@ -1335,6 +1363,7 @@ function normalizeSalesOrderPayload(body: unknown, options?: { allowPastDelivery
   const orderNotes = typeof payload.orderNotes === "string" ? payload.orderNotes.trim() : "";
   const internalOrderNotes = typeof payload.internalOrderNotes === "string" ? payload.internalOrderNotes.trim() : "";
   const giftItems = normalizeOrderGiftItems(payload.giftItems);
+  const attachments = normalizeOrderAttachments(payload.attachments);
 
   return {
     routeId,
@@ -1347,6 +1376,7 @@ function normalizeSalesOrderPayload(body: unknown, options?: { allowPastDelivery
     internalOrderNotes,
     items,
     giftItems,
+    attachments,
   };
 }
 
@@ -1436,6 +1466,7 @@ async function createSubmittedSalesOrder(payload: ReturnType<typeof normalizeSal
     internalOrderNotes: payload.internalOrderNotes,
     items,
     giftItems: payload.giftItems,
+    attachments: payload.attachments,
   });
 }
 
@@ -1559,6 +1590,7 @@ async function mapWarehouseOrderRecord(order: {
   invoiceVoidReason?: unknown;
   orderNotes?: string;
   internalOrderNotes?: string;
+  attachments?: Array<{ name?: unknown; url?: unknown }>;
   createdAt: Date;
   updatedAt: Date;
   items: Array<{ productId: unknown; stockCurrent?: unknown; quantity?: unknown; notes?: unknown; description?: unknown; salePriceAwg?: unknown; stockRowId?: unknown }>;
@@ -1598,6 +1630,12 @@ async function mapWarehouseOrderRecord(order: {
     invoiceVoidReason: String(order.invoiceVoidReason ?? ""),
     orderNotes: typeof order.orderNotes === "string" ? order.orderNotes : "",
     internalOrderNotes: typeof order.internalOrderNotes === "string" ? order.internalOrderNotes : "",
+    attachments: (Array.isArray(order.attachments) ? order.attachments : [])
+      .map((attachment) => ({
+        name: String(attachment?.name ?? "").trim(),
+        url: String(attachment?.url ?? "").trim(),
+      }))
+      .filter((attachment) => attachment.name && attachment.url),
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
     items: order.items.map((item) => {
@@ -2952,6 +2990,12 @@ apiRouter.get("/sales/orders", async (request, response) => {
         status: order.status,
         orderNotes: typeof order.orderNotes === "string" ? order.orderNotes : "",
         internalOrderNotes: typeof order.internalOrderNotes === "string" ? order.internalOrderNotes : "",
+        attachments: (Array.isArray(order.attachments) ? order.attachments : [])
+          .map((attachment) => ({
+            name: String(attachment?.name ?? "").trim(),
+            url: String(attachment?.url ?? "").trim(),
+          }))
+          .filter((attachment) => attachment.name && attachment.url),
         createdAt: order.createdAt,
         updatedAt: order.updatedAt,
         items: order.items.map((item) => {
@@ -8889,6 +8933,31 @@ apiRouter.put("/management/products/:id", async (request, response) => {
     }
 
     response.json(product);
+  } catch (error) {
+    sendCreationError(response, error);
+  }
+});
+
+apiRouter.patch("/management/products/:id/active", async (request, response) => {
+  try {
+    const active = request.body?.active !== false;
+    const product = await Product.findByIdAndUpdate(
+      request.params.id,
+      { active },
+      { new: true, runValidators: true },
+    ).lean();
+
+    if (!product) {
+      response.status(404).json({ message: "El producto no existe." });
+      return;
+    }
+
+    response.json({
+      ...product,
+      message: active
+        ? "Producto habilitado. Volverá a aparecer al crear pedidos."
+        : "Producto deshabilitado. Ya no aparecerá al crear pedidos.",
+    });
   } catch (error) {
     sendCreationError(response, error);
   }

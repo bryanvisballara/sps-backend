@@ -1306,6 +1306,26 @@ h1 {
   font-weight: 600;
 }
 
+.seller-order-attachment-field {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.order-attachments-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.order-attachments-panel--compact {
+  margin: 0 0 16px;
+}
+
+.order-attachment-download {
+  flex-shrink: 0;
+  text-decoration: none;
+}
+
 /* Gastos registrados */
 .import-saved-expenses {
   margin-top: 24px;
@@ -3869,9 +3889,25 @@ h1 {
   font-weight: 700;
 }
 
+.table-action-icon.is-warning {
+  color: #b45309;
+  border-color: rgba(180, 83, 9, 0.28);
+  background: rgba(251, 191, 36, 0.16);
+}
+
+.table-action-icon.is-success {
+  color: #047857;
+  border-color: rgba(4, 120, 87, 0.28);
+  background: rgba(16, 185, 129, 0.14);
+}
+
 .table-action-icon:disabled {
   opacity: 0.42;
   cursor: not-allowed;
+}
+
+.data-table tr.is-inactive-product td {
+  opacity: 0.72;
 }
 
 .creation-header p {

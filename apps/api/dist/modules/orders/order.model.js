@@ -14,6 +14,10 @@ const orderGiftItemSchema = new Schema({
     stockRowId: { type: Types.ObjectId, ref: "WarehouseStock" },
     notes: { type: String, trim: true, default: "" },
 }, { _id: false });
+const orderAttachmentSchema = new Schema({
+    name: { type: String, trim: true, required: true },
+    url: { type: String, trim: true, required: true },
+}, { _id: false });
 const orderSchema = new Schema({
     routeId: { type: String, required: true, trim: true },
     routeName: { type: String, required: true, trim: true },
@@ -32,6 +36,7 @@ const orderSchema = new Schema({
     },
     items: { type: [orderItemSchema], default: [] },
     giftItems: { type: [orderGiftItemSchema], default: [] },
+    attachments: { type: [orderAttachmentSchema], default: [] },
     invoiceNumber: { type: Number, min: 1 },
     invoiceVoided: { type: Boolean, default: false, index: true },
     invoiceVoidedAt: { type: Date },
