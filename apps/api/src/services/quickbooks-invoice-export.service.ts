@@ -246,8 +246,11 @@ export async function buildQuickBooksInvoiceExportCsv(params: {
     const paymentMethod = String(carteraEntry?.paymentMethod ?? "credito");
     const invoiceNumber = Number(carteraEntry?.invoiceNumber ?? order.invoiceNumber ?? 0) || orderId.slice(-6);
     const store = storesById.get(String(order.storeId ?? ""));
-    // Prefer current store name (exact QBO Display Name). Apostrophes are quoted in CSV escape.
-    const customerName = String(store?.name ?? order.storeName ?? "Cliente").trim() || "Cliente";
+    // Prefer current store name. Strip apostrophes — QBO CSV matching fails on `'` / curly quotes.
+    const customerName = String(store?.name ?? order.storeName ?? "Cliente")
+      .replace(/['\u00B4\u2018\u2019\u2032`]/g, "")
+      .replace(/[ \t]+/g, " ")
+      .trim() || "Cliente";
     const terms = resolvePaymentTerms({
       storePaymentTerm: store?.defaultPaymentMethod,
       paymentMethod,
