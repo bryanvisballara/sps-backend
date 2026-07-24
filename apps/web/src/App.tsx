@@ -8688,7 +8688,7 @@ export default function App() {
               <div className="import-expense-documents">
                 {sellerOrderAttachmentsDraft.map((attachment) => (
                   <div className="import-expense-document" key={attachment.url}>
-                    <a href={attachment.url} target="_blank" rel="noreferrer">{attachment.name}</a>
+                    <a href={resolveOrderAttachmentDownloadUrl(attachment)} target="_blank" rel="noreferrer">{attachment.name}</a>
                     <button
                       className="table-action-icon is-danger"
                       type="button"
@@ -15155,6 +15155,14 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
     setSellerOrderAttachmentError("");
   }
 
+  function resolveOrderAttachmentDownloadUrl(attachment: OrderAttachment) {
+    const params = new URLSearchParams({
+      url: attachment.url,
+      filename: attachment.name || "adjunto",
+    });
+    return `${apiBaseUrl}/uploads/cloudinary/file?${params.toString()}`;
+  }
+
   function renderOrderAttachmentsPanel(attachments: OrderAttachment[] | undefined, options?: { compact?: boolean }) {
     const files = (attachments ?? []).filter((attachment) => attachment.url && attachment.name);
 
@@ -15166,22 +15174,25 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       <div className={`order-attachments-panel ${options?.compact ? "order-attachments-panel--compact" : ""}`}>
         <p className="section-label">Archivo adjunto</p>
         <div className="import-expense-documents">
-          {files.map((attachment) => (
-            <div className="import-expense-document" key={attachment.url}>
-              <a href={attachment.url} target="_blank" rel="noreferrer">
-                {attachment.name}
-              </a>
-              <a
-                className="ghost-button action-secondary-button order-attachment-download"
-                href={attachment.url}
-                target="_blank"
-                rel="noreferrer"
-                download={attachment.name}
-              >
-                Ver / Descargar
-              </a>
-            </div>
-          ))}
+          {files.map((attachment) => {
+            const downloadUrl = resolveOrderAttachmentDownloadUrl(attachment);
+
+            return (
+              <div className="import-expense-document" key={attachment.url}>
+                <a href={downloadUrl} target="_blank" rel="noreferrer">
+                  {attachment.name}
+                </a>
+                <a
+                  className="ghost-button action-secondary-button order-attachment-download"
+                  href={downloadUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Ver / Descargar
+                </a>
+              </div>
+            );
+          })}
         </div>
       </div>
     );
@@ -21953,7 +21964,13 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             <div className="import-expense-documents">
                               {expense.documents.map((document) => (
                                 <div className="import-expense-document" key={document.url}>
-                                  <a href={document.url} target="_blank" rel="noreferrer">{document.name}</a>
+                                  <a
+                                    href={resolveOrderAttachmentDownloadUrl(document)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    {document.name}
+                                  </a>
                                   <button
                                     className="table-action-icon is-danger"
                                     type="button"
@@ -21991,7 +22008,13 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             {expense.documents.length > 0 && (
                               <span className="import-saved-expense-docs">
                                 {expense.documents.map((doc) => (
-                                  <a key={doc.url} href={doc.url} target="_blank" rel="noreferrer" className="import-saved-expense-doc-link">
+                                  <a
+                                    key={doc.url}
+                                    href={resolveOrderAttachmentDownloadUrl(doc)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="import-saved-expense-doc-link"
+                                  >
                                     {doc.name}
                                   </a>
                                 ))}

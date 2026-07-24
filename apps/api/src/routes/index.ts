@@ -249,6 +249,84 @@ function buildCloudinarySignature(params: Record<string, string | number>, apiSe
   return createHash("sha1").update(`${serializedParams}${apiSecret}`).digest("hex");
 }
 
+function parseCloudinaryDeliveryUrl(value: string) {
+  const trimmed = String(value ?? "").trim();
+  const match = trimmed.match(
+    /^https?:\/\/res\.cloudinary\.com\/([^/]+)\/(image|raw|video|auto)\/(upload|authenticated|private)\/(?:v\d+\/)?(.+)$/i,
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  const cloudName = match[1];
+  const resourceType = match[2].toLowerCase();
+  const deliveryType = match[3].toLowerCase();
+  const rest = match[4].replace(/\/+$/, "");
+  const formatMatch = rest.match(/\.([a-z0-9]+)$/i);
+  const format = formatMatch ? formatMatch[1].toLowerCase() : "";
+  const publicId = formatMatch ? rest.slice(0, -(format.length + 1)) : rest;
+
+  if (!cloudName || !publicId) {
+    return null;
+  }
+
+  return {
+    cloudName,
+    resourceType: resourceType === "auto" ? "image" : resourceType,
+    deliveryType,
+    publicId,
+    format,
+  };
+}
+
+function buildCloudinaryPrivateDownloadUrl(params: {
+  cloudName: string;
+  apiKey: string;
+  apiSecret: string;
+  resourceType: string;
+  publicId: string;
+  format?: string;
+  deliveryType?: string;
+  attachment?: boolean;
+  targetFilename?: string;
+}) {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const deliveryType = params.deliveryType || "upload";
+  const signatureParams: Record<string, string | number> = {
+    public_id: params.publicId,
+    timestamp,
+    type: deliveryType,
+  };
+
+  if (params.format) {
+    signatureParams.format = params.format;
+  }
+
+  if (params.attachment) {
+    signatureParams.attachment = params.targetFilename?.trim() || "1";
+  }
+
+  const signature = buildCloudinarySignature(signatureParams, params.apiSecret);
+  const query = new URLSearchParams({
+    api_key: params.apiKey,
+    public_id: params.publicId,
+    timestamp: String(timestamp),
+    signature,
+    type: deliveryType,
+  });
+
+  if (params.format) {
+    query.set("format", params.format);
+  }
+
+  if (params.attachment) {
+    query.set("attachment", params.targetFilename?.trim() || "1");
+  }
+
+  return `https://api.cloudinary.com/v1_1/${params.cloudName}/${params.resourceType}/download?${query.toString()}`;
+}
+
 function buildWeekLabel(weekStart: Date) {
   return `Semana del ${weekStart.toISOString().slice(0, 10)}`;
 }
@@ -2595,6 +2673,69 @@ apiRouter.get("/uploads/cloudinary/signature", (request, response) => {
     timestamp,
     signature,
   });
+});
+
+/**
+ * Proxies Cloudinary file downloads via the signed Admin/download API.
+ * Needed because public PDF/ZIP delivery is often blocked (HTTP 401) on free/restricted Cloudinary accounts.
+ */
+apiRouter.get("/uploads/cloudinary/file", async (request, response) => {
+  try {
+    if (!env.CLOUDINARY_CLOUD_NAME || !env.CLOUDINARY_API_KEY || !env.CLOUDINARY_API_SECRET) {
+      response.status(500).json({ message: "Cloudinary no esta configurado en el backend." });
+      return;
+    }
+
+    const sourceUrl = typeof request.query.url === "string" ? request.query.url.trim() : "";
+    const filename = typeof request.query.filename === "string" ? request.query.filename.trim() : "";
+    const parsed = parseCloudinaryDeliveryUrl(sourceUrl);
+
+    if (!parsed || parsed.cloudName !== env.CLOUDINARY_CLOUD_NAME) {
+      response.status(400).json({ message: "La URL del archivo adjunto no es valida." });
+      return;
+    }
+
+    const downloadUrl = buildCloudinaryPrivateDownloadUrl({
+      cloudName: env.CLOUDINARY_CLOUD_NAME,
+      apiKey: env.CLOUDINARY_API_KEY,
+      apiSecret: env.CLOUDINARY_API_SECRET,
+      resourceType: parsed.resourceType,
+      publicId: parsed.publicId,
+      format: parsed.format || undefined,
+      deliveryType: parsed.deliveryType,
+      attachment: true,
+      targetFilename: filename || undefined,
+    });
+
+    const upstream = await fetch(downloadUrl);
+
+    if (!upstream.ok) {
+      const errorText = await upstream.text().catch(() => "");
+      response.status(upstream.status === 401 || upstream.status === 404 ? upstream.status : 502).json({
+        message: errorText.slice(0, 300) || "No fue posible descargar el archivo desde Cloudinary.",
+      });
+      return;
+    }
+
+    const contentType = upstream.headers.get("content-type") || "application/octet-stream";
+    const safeName = (filename || `${parsed.publicId.split("/").pop() || "adjunto"}${parsed.format ? `.${parsed.format}` : ""}`)
+      .replace(/[\r\n"]/g, "")
+      .trim() || "adjunto";
+
+    response.setHeader("Content-Type", contentType);
+    response.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+    response.setHeader("Cache-Control", "private, max-age=60");
+
+    const contentLength = upstream.headers.get("content-length");
+    if (contentLength) {
+      response.setHeader("Content-Length", contentLength);
+    }
+
+    const buffer = Buffer.from(await upstream.arrayBuffer());
+    response.status(200).send(buffer);
+  } catch (error) {
+    sendCreationError(response, error);
+  }
 });
 
 apiRouter.get("/bootstrap", (_request, response) => {
