@@ -5553,6 +5553,22 @@ export default function App() {
     return String(roundCurrencyValue(Math.max(0, value)));
   }
 
+  function isCompleteDraftMoneyInput(value: string) {
+    const trimmed = String(value ?? "").trim().replace(",", ".");
+
+    if (!trimmed || trimmed === "." || trimmed.endsWith(".")) {
+      return false;
+    }
+
+    return Number.isFinite(Number(trimmed));
+  }
+
+  function parseDraftMoneyInput(value: string) {
+    const trimmed = String(value ?? "").trim().replace(",", ".");
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : NaN;
+  }
+
   function buildSellerOrderDraftEntry(
     product: Pick<SellerClientProduct, "productId" | "salePrice" | "description" | "promotion">,
     existing?: SellerOrderDraft[string],
@@ -5575,8 +5591,10 @@ export default function App() {
       notes: existing?.notes ?? "",
       salePriceAwg,
       description: existing?.description ?? (isDirectInvoiceComposer ? defaultDescription : ""),
-      // Always derive from price × qty so quantity/price edits never leave a stale total.
-      lineSubtotalAwg: isDirectInvoiceComposer ? derivedSubtotal : String(existing?.lineSubtotalAwg ?? ""),
+      // Keep the typed subtotal while editing. Only seed from price × qty when absent.
+      lineSubtotalAwg: existing
+        ? String(existing.lineSubtotalAwg ?? "")
+        : (isDirectInvoiceComposer ? derivedSubtotal : ""),
     };
   }
 
@@ -8384,12 +8402,12 @@ export default function App() {
               <span>Precio (AWG)</span>
               <input
                 className="catalog-price-input seller-order-input"
-                type="number"
-                min="0"
-                step="any"
+                type="text"
+                inputMode="decimal"
                 value={draft.salePriceAwg}
                 placeholder="0.00"
                 onChange={(event) => handleSellerOrderDraftChange(product, "salePriceAwg", event.target.value)}
+                onBlur={() => commitSellerOrderLineMoneyField(product, "salePriceAwg")}
               />
             </label>
           ) : null}
@@ -8429,12 +8447,12 @@ export default function App() {
               <span>Subtotal (AWG)</span>
               <input
                 className="catalog-price-input seller-order-input"
-                type="number"
-                min="0"
-                step="any"
+                type="text"
+                inputMode="decimal"
                 value={lineTotalDisplay}
                 placeholder="0.00"
                 onChange={(event) => handleSellerOrderDraftChange(product, "lineSubtotalAwg", event.target.value)}
+                onBlur={() => commitSellerOrderLineMoneyField(product, "lineSubtotalAwg")}
               />
             </label>
           ) : showOrderFields ? (
@@ -13273,18 +13291,24 @@ export default function App() {
           * (Number.isFinite(quantityValue) ? Math.max(0, quantityValue) : 0),
         );
       } else if (field === "lineSubtotalAwg") {
+        next.lineSubtotalAwg = value;
         const quantityValue = Number(next.quantity || 0);
-        const subtotalValue = Number(value);
+        const subtotalValue = parseDraftMoneyInput(value);
 
-        if (Number.isFinite(quantityValue) && quantityValue > 0 && Number.isFinite(subtotalValue) && value.trim() !== "") {
+        if (
+          Number.isFinite(quantityValue)
+          && quantityValue > 0
+          && isCompleteDraftMoneyInput(value)
+          && Number.isFinite(subtotalValue)
+        ) {
           next.salePriceAwg = formatSellerDraftMoney(subtotalValue / quantityValue);
         }
       } else if (field === "quantity") {
         const previousQuantity = Number(existing.quantity || 0);
         const nextQuantity = Number(value || 0);
         const unitPrice = Number(existing.salePriceAwg);
-        const previousSubtotal = Number(existing.lineSubtotalAwg);
-        const hasPreviousSubtotal = String(existing.lineSubtotalAwg ?? "").trim() !== ""
+        const previousSubtotal = parseDraftMoneyInput(existing.lineSubtotalAwg);
+        const hasPreviousSubtotal = isCompleteDraftMoneyInput(existing.lineSubtotalAwg)
           && Number.isFinite(previousSubtotal)
           && previousSubtotal > 0;
         const safeUnitPrice = Number.isFinite(unitPrice) ? Math.max(0, unitPrice) : 0;
@@ -13312,6 +13336,52 @@ export default function App() {
       };
     });
     setInvoiceChangeStatus(null);
+  }
+
+  function commitInvoiceChangeLineMoneyField(
+    productId: string,
+    field: "salePriceAwg" | "lineSubtotalAwg",
+  ) {
+    setInvoiceChangeItemDraft((current) => {
+      const existing = current[productId];
+
+      if (!existing) {
+        return current;
+      }
+
+      const quantityValue = Number(existing.quantity || 0);
+      const next = { ...existing };
+
+      if (field === "lineSubtotalAwg") {
+        const raw = String(existing.lineSubtotalAwg ?? "").trim();
+        const subtotalValue = parseDraftMoneyInput(raw);
+
+        if (!raw || !Number.isFinite(subtotalValue)) {
+          const unitPrice = Number(existing.salePriceAwg);
+          next.lineSubtotalAwg = formatSellerDraftMoney(
+            (Number.isFinite(unitPrice) ? Math.max(0, unitPrice) : 0)
+            * (Number.isFinite(quantityValue) ? Math.max(0, quantityValue) : 0),
+          );
+        } else if (Number.isFinite(quantityValue) && quantityValue > 0) {
+          next.salePriceAwg = formatSellerDraftMoney(subtotalValue / quantityValue);
+          next.lineSubtotalAwg = formatSellerDraftMoney(subtotalValue);
+        } else {
+          next.lineSubtotalAwg = formatSellerDraftMoney(subtotalValue);
+        }
+      } else {
+        const unitPrice = Number(existing.salePriceAwg);
+        const safeUnitPrice = Number.isFinite(unitPrice) ? Math.max(0, unitPrice) : 0;
+        next.salePriceAwg = formatSellerDraftMoney(safeUnitPrice) || existing.salePriceAwg;
+        next.lineSubtotalAwg = formatSellerDraftMoney(
+          safeUnitPrice * (Number.isFinite(quantityValue) ? Math.max(0, quantityValue) : 0),
+        );
+      }
+
+      return {
+        ...current,
+        [productId]: next,
+      };
+    });
   }
 
   function removeInvoiceChangeItem(productId: string) {
@@ -15296,11 +15366,18 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
         const unitPrice = resolveSellerDraftUnitPrice(product, next);
         next.lineSubtotalAwg = formatSellerDraftMoney(unitPrice * (Number.isFinite(quantityValue) ? Math.max(0, quantityValue) : 0));
       } else if (field === "lineSubtotalAwg") {
-        // Subtotal changed → keep quantity, recalculate unit price.
+        // Keep the raw typed value; only update unit price when the number is complete.
+        // Re-deriving subtotal here caused values like 0.99 to snap back while editing.
+        next.lineSubtotalAwg = value;
         const quantityValue = Number(next.quantity || 0);
-        const subtotalValue = Number(value);
+        const subtotalValue = parseDraftMoneyInput(value);
 
-        if (Number.isFinite(quantityValue) && quantityValue > 0 && Number.isFinite(subtotalValue) && value.trim() !== "") {
+        if (
+          Number.isFinite(quantityValue)
+          && quantityValue > 0
+          && isCompleteDraftMoneyInput(value)
+          && Number.isFinite(subtotalValue)
+        ) {
           next.salePriceAwg = formatSellerDraftMoney(subtotalValue / quantityValue);
         }
       } else if (field === "quantity") {
@@ -15308,8 +15385,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           const previousQuantity = Number(existing.quantity || 0);
           const nextQuantity = Number(value || 0);
           const unitPrice = resolveSellerDraftUnitPrice(product, existing);
-          const previousSubtotal = Number(existing.lineSubtotalAwg);
-          const hasPreviousSubtotal = String(existing.lineSubtotalAwg ?? "").trim() !== ""
+          const previousSubtotal = parseDraftMoneyInput(existing.lineSubtotalAwg);
+          const hasPreviousSubtotal = isCompleteDraftMoneyInput(existing.lineSubtotalAwg)
             && Number.isFinite(previousSubtotal)
             && previousSubtotal > 0;
 
@@ -15334,6 +15411,45 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
         }
       } else if (isDirectInvoiceComposer && !next.salePriceAwg.trim()) {
         next.salePriceAwg = getDefaultSellerDraftSalePrice(product);
+      }
+
+      return {
+        ...current,
+        [product.productId]: next,
+      };
+    });
+  }
+
+  function commitSellerOrderLineMoneyField(
+    product: Pick<SellerClientProduct, "productId" | "salePrice" | "description" | "promotion">,
+    field: "salePriceAwg" | "lineSubtotalAwg",
+  ) {
+    setSellerOrderDraft((current) => {
+      const existing = buildSellerOrderDraftEntry(product, current[product.productId]);
+      const quantityValue = Number(existing.quantity || 0);
+      const next = { ...existing };
+
+      if (field === "lineSubtotalAwg") {
+        const raw = String(existing.lineSubtotalAwg ?? "").trim();
+        const subtotalValue = parseDraftMoneyInput(raw);
+
+        if (!raw || !Number.isFinite(subtotalValue)) {
+          const unitPrice = resolveSellerDraftUnitPrice(product, existing);
+          next.lineSubtotalAwg = formatSellerDraftMoney(
+            unitPrice * (Number.isFinite(quantityValue) ? Math.max(0, quantityValue) : 0),
+          );
+        } else if (Number.isFinite(quantityValue) && quantityValue > 0) {
+          next.salePriceAwg = formatSellerDraftMoney(subtotalValue / quantityValue);
+          next.lineSubtotalAwg = formatSellerDraftMoney(subtotalValue);
+        } else {
+          next.lineSubtotalAwg = formatSellerDraftMoney(subtotalValue);
+        }
+      } else {
+        const unitPrice = resolveSellerDraftUnitPrice(product, existing);
+        next.salePriceAwg = formatSellerDraftMoney(unitPrice) || existing.salePriceAwg;
+        next.lineSubtotalAwg = formatSellerDraftMoney(
+          unitPrice * (Number.isFinite(quantityValue) ? Math.max(0, quantityValue) : 0),
+        );
       }
 
       return {
@@ -28480,21 +28596,21 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           <td>
                             <input
                               className="warehouse-order-qty-input"
-                              type="number"
-                              min="0"
-                              step="any"
+                              type="text"
+                              inputMode="decimal"
                               value={draft?.salePriceAwg ?? String(item.resolvedSalePrice)}
                               onChange={(event) => handleInvoiceChangeLineField(item.productId, "salePriceAwg", event.target.value)}
+                              onBlur={() => commitInvoiceChangeLineMoneyField(item.productId, "salePriceAwg")}
                             />
                           </td>
                           <td>
                             <input
                               className="warehouse-order-qty-input"
-                              type="number"
-                              min="0"
-                              step="any"
+                              type="text"
+                              inputMode="decimal"
                               value={draft?.lineSubtotalAwg ?? String(item.lineTotal)}
                               onChange={(event) => handleInvoiceChangeLineField(item.productId, "lineSubtotalAwg", event.target.value)}
+                              onBlur={() => commitInvoiceChangeLineMoneyField(item.productId, "lineSubtotalAwg")}
                             />
                           </td>
                           <td>
