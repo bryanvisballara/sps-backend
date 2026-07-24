@@ -8314,71 +8314,44 @@ apiRouter.put("/management/inventory-entries/:groupId", async (request, response
       return;
     }
 
-    // Reverse previous stock impact (same rules as delete).
-    const warehouseCache = new Map<string, { code?: string; name?: string } | null>();
-    const removals = new Map<string, {
-      productId: string;
-      warehouseCode: string;
-      quantity: number;
-    }>();
+    const aggregateQuantitiesByProduct = (entries: Array<{ productId: string; quantity: number }>) => {
+      const totals = new Map<string, number>();
 
-    for (const adjustment of existingAdjustments) {
-      const productId = String(adjustment.productId ?? "").trim();
-      const quantity = Number(adjustment.quantity ?? 0);
-      const previousWarehouseId = String(adjustment.entryWarehouseId ?? "").trim();
-      const previousWarehouseName = String(adjustment.entryWarehouseName ?? "").trim();
-      const warehouseCacheKey = previousWarehouseId || `name:${previousWarehouseName.toLowerCase()}`;
+      for (const entry of entries) {
+        const productId = String(entry.productId ?? "").trim();
+        const quantity = Number(entry.quantity ?? 0);
 
-      if (!productId || !(quantity > 0)) {
-        continue;
+        if (!productId || !(quantity > 0)) {
+          continue;
+        }
+
+        totals.set(productId, (totals.get(productId) ?? 0) + quantity);
       }
 
-      if (!warehouseCache.has(warehouseCacheKey)) {
-        const previousWarehouse = previousWarehouseId
-          ? await Warehouse.findById(previousWarehouseId).lean()
-          : previousWarehouseName
-            ? await Warehouse.findOne({ name: previousWarehouseName }).lean()
-            : null;
-        warehouseCache.set(warehouseCacheKey, previousWarehouse);
-      }
+      return totals;
+    };
 
-      const previousWarehouse = warehouseCache.get(warehouseCacheKey);
-
-      if (!previousWarehouse?.code) {
-        response.status(400).json({
-          message: "No fue posible revertir el inventario anterior porque la bodega original no es identificable.",
-        });
+    const deductWarehouseStock = async (productId: string, warehouseCode: string, quantityToRemove: number) => {
+      if (!(quantityToRemove > 0)) {
         return;
       }
 
-      const removalKey = `${productId}::${String(previousWarehouse.code)}`;
-      const currentRemoval = removals.get(removalKey) ?? {
-        productId,
-        warehouseCode: String(previousWarehouse.code),
-        quantity: 0,
-      };
-      currentRemoval.quantity += quantity;
-      removals.set(removalKey, currentRemoval);
-    }
-
-    for (const [removalKey, removal] of removals.entries()) {
-      const stockRows = await WarehouseStock.find({
-        productId: removal.productId,
-        warehouseCode: removal.warehouseCode,
-      }).lean();
+      const stockRows = await WarehouseStock.find({ productId, warehouseCode }).lean();
       const totalAvailable = stockRows.reduce(
         (sum, stockRow) => sum + Number(stockRow.availableUnits ?? 0),
         0,
       );
 
-      if (totalAvailable < removal.quantity) {
-        response.status(400).json({
-          message: `No se puede editar: faltan ${removal.quantity - totalAvailable} unidad${removal.quantity - totalAvailable === 1 ? "" : "es"} en inventario (ya consumidas).`,
-        });
-        return;
+      if (totalAvailable < quantityToRemove) {
+        throw Object.assign(
+          new Error(
+            `No se puede reducir el inventario: faltan ${quantityToRemove - totalAvailable} unidad${quantityToRemove - totalAvailable === 1 ? "" : "es"} (ya consumidas). Puedes guardar la nota u observaciones sin bajar cantidades.`,
+          ),
+          { statusCode: 400 },
+        );
       }
 
-      let remaining = removal.quantity;
+      let remaining = quantityToRemove;
 
       for (const stockRow of [...stockRows].sort(compareWarehouseStockLotsByConsumptionPriority).reverse()) {
         if (remaining <= 0) {
@@ -8404,55 +8377,53 @@ apiRouter.put("/management/inventory-entries/:groupId", async (request, response
           { runValidators: true },
         );
       }
-    }
+    };
 
-    await InventoryAdjustment.deleteMany({
-      _id: { $in: existingAdjustments.map((adjustment) => adjustment._id) },
-    });
-
-    const uniqueProductIds = Array.from(new Set(items.map((item) => item.productId)));
-    const products = await Product.find({ _id: { $in: uniqueProductIds }, active: { $ne: false } }).lean();
-    const productsById = new Map(products.map((product) => [String(product._id), product]));
-
-    for (const item of items) {
-      const product = productsById.get(item.productId);
-
-      if (!product) {
-        response.status(404).json({ message: `El producto ${item.productId} no existe o esta inactivo.` });
+    const creditWarehouseStock = async (params: {
+      product: { _id: unknown; inventoryAlert?: number };
+      warehouseCode: string;
+      quantity: number;
+      costUsd: number;
+      salePriceAwg: number;
+      expirationDateValue: string;
+      lotName: string;
+      usdToAwgRate: number;
+    }) => {
+      if (!(params.quantity > 0)) {
         return;
       }
 
-      const normalizedExpirationDate = normalizeOptionalDateValue(item.expirationDateValue);
-      const lotName = item.lotName || buildDefaultLotName(normalizedExpirationDate);
-      const unitCostUsd = item.costUsd;
+      const normalizedExpirationDate = normalizeOptionalDateValue(params.expirationDateValue);
+      const lotName = params.lotName || buildDefaultLotName(normalizedExpirationDate);
+      const unitCostUsd = params.costUsd;
       const existingStockRow = await WarehouseStock.findOne({
-        productId: product._id,
-        warehouseCode: warehouse.code,
+        productId: params.product._id,
+        warehouseCode: params.warehouseCode,
         expirationDate: normalizedExpirationDate,
         unitCostUsd: roundLotPriceValue(unitCostUsd),
-        salePriceAwg: roundLotPriceValue(item.salePriceAwg),
+        salePriceAwg: roundLotPriceValue(params.salePriceAwg),
       }).lean();
 
       const currentAvailableUnits = Number(existingStockRow?.availableUnits ?? 0);
-      const nextAvailableUnits = currentAvailableUnits + item.quantity;
-      const minUnits = Number(existingStockRow?.minUnits ?? product.inventoryAlert ?? 0);
+      const nextAvailableUnits = currentAvailableUnits + params.quantity;
+      const minUnits = Number(existingStockRow?.minUnits ?? params.product.inventoryAlert ?? 0);
 
       await WarehouseStock.findOneAndUpdate(
         {
-          productId: product._id,
-          warehouseCode: warehouse.code,
+          productId: params.product._id,
+          warehouseCode: params.warehouseCode,
           expirationDate: normalizedExpirationDate,
           unitCostUsd: roundLotPriceValue(unitCostUsd),
-          salePriceAwg: roundLotPriceValue(item.salePriceAwg),
+          salePriceAwg: roundLotPriceValue(params.salePriceAwg),
         },
         {
-          productId: product._id,
-          warehouseCode: warehouse.code,
+          productId: params.product._id,
+          warehouseCode: params.warehouseCode,
           expirationDate: normalizedExpirationDate,
           lotName,
           unitCostUsd: roundLotPriceValue(unitCostUsd),
-          usdToAwgRate,
-          salePriceAwg: roundLotPriceValue(item.salePriceAwg),
+          usdToAwgRate: params.usdToAwgRate,
+          salePriceAwg: roundLotPriceValue(params.salePriceAwg),
           availableUnits: nextAvailableUnits,
           minUnits,
           status: resolveWarehouseStockStatus(nextAvailableUnits, minUnits),
@@ -8464,9 +8435,139 @@ apiRouter.put("/management/inventory-entries/:groupId", async (request, response
           runValidators: true,
         },
       );
+    };
+
+    const previousWarehouseId = String(existingAdjustments[0]?.entryWarehouseId ?? "").trim();
+    const previousWarehouseName = String(existingAdjustments[0]?.entryWarehouseName ?? "").trim();
+    const previousWarehouse = previousWarehouseId
+      ? await Warehouse.findById(previousWarehouseId).lean()
+      : previousWarehouseName
+        ? await Warehouse.findOne({ name: previousWarehouseName }).lean()
+        : null;
+
+    if (!previousWarehouse?.code) {
+      response.status(400).json({
+        message: "No fue posible identificar la bodega original de esta entrada.",
+      });
+      return;
+    }
+
+    const oldQtyByProduct = aggregateQuantitiesByProduct(
+      existingAdjustments.map((adjustment) => ({
+        productId: String(adjustment.productId ?? ""),
+        quantity: Number(adjustment.quantity ?? 0),
+      })),
+    );
+    const newQtyByProduct = aggregateQuantitiesByProduct(items);
+    const warehouseChanged = String(previousWarehouse._id) !== String(warehouse._id);
+    const uniqueProductIds = Array.from(new Set([
+      ...oldQtyByProduct.keys(),
+      ...items.map((item) => item.productId),
+    ]));
+    const products = await Product.find({ _id: { $in: uniqueProductIds }, active: { $ne: false } }).lean();
+    const productsById = new Map(products.map((product) => [String(product._id), product]));
+
+    for (const productId of newQtyByProduct.keys()) {
+      if (!productsById.has(productId)) {
+        response.status(404).json({ message: `El producto ${productId} no existe o esta inactivo.` });
+        return;
+      }
+    }
+
+    try {
+      if (warehouseChanged) {
+        // Moving warehouses requires reversing the full original entry from the old bodega.
+        for (const [productId, quantity] of oldQtyByProduct.entries()) {
+          await deductWarehouseStock(productId, String(previousWarehouse.code), quantity);
+        }
+
+        for (const item of items) {
+          const product = productsById.get(item.productId);
+
+          if (!product) {
+            continue;
+          }
+
+          await creditWarehouseStock({
+            product,
+            warehouseCode: String(warehouse.code),
+            quantity: item.quantity,
+            costUsd: item.costUsd,
+            salePriceAwg: item.salePriceAwg,
+            expirationDateValue: item.expirationDateValue,
+            lotName: item.lotName,
+            usdToAwgRate,
+          });
+        }
+      } else {
+        // Same warehouse: only apply quantity deltas so notes/metadata edits work
+        // even when some units from this entry were already sold.
+        const allProductIds = new Set([...oldQtyByProduct.keys(), ...newQtyByProduct.keys()]);
+
+        for (const productId of allProductIds) {
+          const delta = (newQtyByProduct.get(productId) ?? 0) - (oldQtyByProduct.get(productId) ?? 0);
+
+          if (delta < 0) {
+            await deductWarehouseStock(productId, String(warehouse.code), -delta);
+          }
+        }
+
+        for (const productId of allProductIds) {
+          const delta = (newQtyByProduct.get(productId) ?? 0) - (oldQtyByProduct.get(productId) ?? 0);
+
+          if (delta <= 0) {
+            continue;
+          }
+
+          const templateItem = items.find((item) => item.productId === productId);
+          const product = productsById.get(productId);
+
+          if (!templateItem || !product) {
+            continue;
+          }
+
+          await creditWarehouseStock({
+            product,
+            warehouseCode: String(warehouse.code),
+            quantity: delta,
+            costUsd: templateItem.costUsd,
+            salePriceAwg: templateItem.salePriceAwg,
+            expirationDateValue: templateItem.expirationDateValue,
+            lotName: templateItem.lotName,
+            usdToAwgRate,
+          });
+        }
+      }
+    } catch (stockError) {
+      if (
+        typeof stockError === "object"
+        && stockError !== null
+        && "statusCode" in stockError
+        && typeof (stockError as { statusCode?: unknown }).statusCode === "number"
+      ) {
+        response.status((stockError as { statusCode: number }).statusCode).json({
+          message: stockError instanceof Error ? stockError.message : "No fue posible actualizar el inventario.",
+        });
+        return;
+      }
+
+      throw stockError;
+    }
+
+    await InventoryAdjustment.deleteMany({
+      _id: { $in: existingAdjustments.map((adjustment) => adjustment._id) },
+    });
+
+    for (const item of items) {
+      const product = productsById.get(item.productId);
+
+      if (!product) {
+        response.status(404).json({ message: `El producto ${item.productId} no existe o esta inactivo.` });
+        return;
+      }
 
       await Product.findByIdAndUpdate(product._id, {
-        arubaPurchaseCostUsd: unitCostUsd,
+        arubaPurchaseCostUsd: item.costUsd,
         arubaUsdToAwgRate: usdToAwgRate,
         salePrice: item.salePriceAwg,
         productWeightKg: item.productWeightKg,
@@ -8484,7 +8585,7 @@ apiRouter.put("/management/inventory-entries/:groupId", async (request, response
         entryWarehouseId: String(warehouse._id),
         entryWarehouseName: String(warehouse.name ?? ""),
         entryUsdToAwgRate: usdToAwgRate,
-        entryCostUsd: unitCostUsd,
+        entryCostUsd: item.costUsd,
         source: "inventory-entry",
         createdAt: entryDate,
         updatedAt: entryDate,

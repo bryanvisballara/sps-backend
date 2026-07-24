@@ -10121,6 +10121,15 @@ export default function App() {
         productWeightKg: String(product?.productWeightKg ?? ""),
       };
     }));
+    setInventoryEntryItemDraft({
+      productId: "",
+      quantity: "",
+      costUsd: "",
+      salePriceAwg: "",
+      expirationDate: "",
+      lotName: "",
+      productWeightKg: "",
+    });
     setInventoryEntryStatus(null);
     setInventoryEntryGroupsFeedback(null);
     setIsInventoryEntryEditModalOpen(true);
@@ -13091,6 +13100,86 @@ export default function App() {
                       onChange={(event) => setInventoryEntryNotes(event.target.value)}
                     />
                   </label>
+                </div>
+
+                <div className="inventory-entry-warehouse-add">
+                  <label className="field field-full">
+                    <span>Agregar producto</span>
+                    <SearchableProductSelect
+                      products={productOptions}
+                      value={inventoryEntryItemDraft.productId}
+                      onChange={(productId) => {
+                        const selectedProduct = productOptions.find((product) => product.value === productId);
+                        setInventoryEntryItemDraft((current) => ({
+                          ...current,
+                          productId,
+                          costUsd: selectedProduct ? String(selectedProduct.arubaPurchaseCostUsd) : "",
+                          salePriceAwg: selectedProduct ? String(selectedProduct.salePrice) : "",
+                        }));
+                      }}
+                      disabled={productOptions.length === 0 || isSavingInventoryEntryEdit}
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Cantidad</span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={inventoryEntryItemDraft.quantity}
+                      placeholder="0"
+                      disabled={isSavingInventoryEntryEdit}
+                      onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, quantity: event.target.value }))}
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Costo unitario (USD)</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={inventoryEntryItemDraft.costUsd}
+                      placeholder="0.00"
+                      disabled={isSavingInventoryEntryEdit}
+                      onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, costUsd: event.target.value }))}
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Costo unitario (AWG)</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={getInventoryEntryCostAwg(inventoryEntryItemDraft.costUsd)}
+                      placeholder="0.00"
+                      readOnly
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Precio de venta (AWG)</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={inventoryEntryItemDraft.salePriceAwg}
+                      placeholder="0.00"
+                      disabled={isSavingInventoryEntryEdit}
+                      onChange={(event) => setInventoryEntryItemDraft((current) => ({ ...current, salePriceAwg: event.target.value }))}
+                    />
+                  </label>
+
+                  <button
+                    className="small-add-button"
+                    type="button"
+                    disabled={isSavingInventoryEntryEdit}
+                    onClick={addWarehouseInventoryEntryItem}
+                  >
+                    + Agregar a la tabla
+                  </button>
                 </div>
 
                 <div className="inventory-entry-table-panel">

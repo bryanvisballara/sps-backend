@@ -8,8 +8,7 @@ export declare function sanitizeQuickBooksCsvText(value: unknown): string;
  * Quote only when needed. QBO treats quoted dates like `"17/07/2026"` as empty
  * InvoiceDate/DueDate; leave dates and amounts bare, and never emit `""` for blanks.
  *
- * Do not emit ASCII apostrophes — sanitize replaces them with CP1252 0x92 so the
- * CSV parser never treats `'` as a field delimiter (customers like JOHNSON'S).
+ * Quote values that contain an apostrophe so the CSV parser does not split names.
  */
 export declare function escapeQuickBooksCsvField(value: string | number): string;
 export declare function formatQuickBooksCsvRow(values: Array<string | number>): string;

@@ -3,12 +3,6 @@
  * single-byte ANSI code page. UTF-8 multi-byte accents (ó, ñ) are misread
  * and fail Terms / Item name matching. Export Windows-1252-compatible bytes.
  */
-/**
- * Windows-1252 byte 0x92 (RIGHT SINGLE QUOTATION MARK). Written via latin1 so
- * the file byte is 0x92; QBO/Windows then display it as a curly apostrophe.
- * ASCII `'` (U+0027) breaks QBO CSV parsing and customer matching.
- */
-const WINDOWS1252_APOSTROPHE = "\x92";
 /** Map Unicode punctuation that is missing from ISO-8859-1 but present in CP1252. */
 const WINDOWS1252_EXTRA = {
     0x20ac: 0x80, // €
@@ -44,9 +38,8 @@ export function sanitizeQuickBooksCsvText(value) {
         .normalize("NFC")
         .replace(/\uFFFD/g, "")
         .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
-        // QBO rejects ASCII apostrophe (U+0027) on CSV import; use CP1252 curly form.
-        // Also normalize Spanish acute (´) and Unicode quotes to that same byte.
-        .replace(/['\u00B4\u2018\u2019\u2032]/g, WINDOWS1252_APOSTROPHE)
+        // Normalize curly/acute apostrophes to ASCII. Prefer customer names without `'`.
+        .replace(/[\u00B4\u2018\u2019\u2032]/g, "'")
         .replace(/\u00B7/g, "-")
         .replace(/\r\n|\r|\n/g, " ")
         .replace(/[ \t]+/g, " ")
@@ -57,8 +50,7 @@ export function sanitizeQuickBooksCsvText(value) {
  * Quote only when needed. QBO treats quoted dates like `"17/07/2026"` as empty
  * InvoiceDate/DueDate; leave dates and amounts bare, and never emit `""` for blanks.
  *
- * Do not emit ASCII apostrophes — sanitize replaces them with CP1252 0x92 so the
- * CSV parser never treats `'` as a field delimiter (customers like JOHNSON'S).
+ * Quote values that contain an apostrophe so the CSV parser does not split names.
  */
 export function escapeQuickBooksCsvField(value) {
     if (typeof value === "number" && Number.isFinite(value)) {
@@ -68,7 +60,7 @@ export function escapeQuickBooksCsvField(value) {
     if (!raw) {
         return "";
     }
-    if (/[",\n\r]/.test(raw)) {
+    if (/["',\n\r]/.test(raw)) {
         return `"${raw.replace(/"/g, "\"\"")}"`;
     }
     return raw;
