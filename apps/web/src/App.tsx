@@ -5013,6 +5013,7 @@ export default function App() {
   const [invoiceChangeOriginalItems, setInvoiceChangeOriginalItems] = useState<SellerOrderRecord["items"]>([]);
   const [invoiceChangeAddProductId, setInvoiceChangeAddProductId] = useState("");
   const [invoiceChangeNotes, setInvoiceChangeNotes] = useState("");
+  const [invoiceChangeOriginalInternalNotes, setInvoiceChangeOriginalInternalNotes] = useState("");
   const [invoiceChangeNumberDraft, setInvoiceChangeNumberDraft] = useState("");
   const [invoiceChangeOriginalNumber, setInvoiceChangeOriginalNumber] = useState<number | null>(null);
   const [invoiceChangeStatus, setInvoiceChangeStatus] = useState<CreationStatus | null>(null);
@@ -5908,6 +5909,7 @@ export default function App() {
         invoiceChangeOriginalNumber === null
         && Number(invoiceChangeNumberDraft.trim() || 0) >= MIN_INVOICE_NUMBER
       )
+      || String(invoiceChangeNotes) !== String(invoiceChangeOriginalInternalNotes)
     ),
   );
   const pendingInvoiceChangeOrderIds = new Set(
@@ -13146,7 +13148,8 @@ export default function App() {
       Object.fromEntries(order.items.map((item) => [item.productId, buildInvoiceChangeLineDraft(item)])),
     );
     setInvoiceChangeAddProductId("");
-    setInvoiceChangeNotes("");
+    setInvoiceChangeNotes(String(order.internalOrderNotes ?? ""));
+    setInvoiceChangeOriginalInternalNotes(String(order.internalOrderNotes ?? ""));
     setInvoiceChangeStatus(null);
 
     const initialNumber = Number(order.invoiceNumber ?? 0) || null;
@@ -13183,6 +13186,7 @@ export default function App() {
     setInvoiceChangeOriginalItems([]);
     setInvoiceChangeAddProductId("");
     setInvoiceChangeNotes("");
+    setInvoiceChangeOriginalInternalNotes("");
     setInvoiceChangeNumberDraft("");
     setInvoiceChangeOriginalNumber(null);
     setInvoiceChangeStatus(null);
@@ -13340,11 +13344,6 @@ export default function App() {
       return;
     }
 
-    if (pendingInvoiceChangeOrderIds.has(String(invoiceChangeOrder._id))) {
-      setInvoiceChangeStatus({ tone: "error", message: "Ya existe una solicitud pendiente para este pedido." });
-      return;
-    }
-
     const nextItems = invoiceChangeOrder.items
       .filter((item) => item.productId in invoiceChangeItemDraft)
       .map((item) => {
@@ -13358,6 +13357,7 @@ export default function App() {
           quantity,
           notes: item.notes,
           description: String(draft?.description ?? item.description ?? "").trim(),
+          ...(item.stockRowId ? { stockRowId: item.stockRowId } : {}),
           ...(Number.isFinite(salePriceAwg) && salePriceAwg >= 0
             ? { salePriceAwg: roundCurrencyValue(salePriceAwg) }
             : {}),
@@ -13371,7 +13371,7 @@ export default function App() {
     }
 
     if (!invoiceChangeItemsDirty) {
-      setInvoiceChangeStatus({ tone: "error", message: "Realiza al menos un cambio antes de solicitar la correccion." });
+      setInvoiceChangeStatus({ tone: "error", message: "Realiza al menos un cambio antes de guardar." });
       return;
     }
 
@@ -13392,34 +13392,55 @@ export default function App() {
       setIsSubmittingInvoiceChangeRequest(true);
       setInvoiceChangeStatus(null);
 
-      const response = await fetch(`${apiBaseUrl}/warehouse/orders/${invoiceChangeOrder._id}/invoice-change-requests`, {
-        method: "POST",
+      const response = await fetch(`${apiBaseUrl}/warehouse/orders/${invoiceChangeOrder._id}`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: nextItems,
-          requestNotes: invoiceChangeNotes,
+          requestedByRole: sessionUser.role,
+          editedByUserId: sessionUser.id,
+          editedByUserName: sessionUser.name,
+          editedByRole: sessionUser.role,
           requestedByUserId: sessionUser.id,
           requestedByUserName: sessionUser.name,
-          requestedByRole: sessionUser.role,
-          proposedInvoiceNumber,
+          items: nextItems,
+          giftItems: (invoiceChangeOrder.giftItems ?? []).map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+            stockRowId: item.stockRowId,
+            notes: item.notes,
+          })),
+          internalOrderNotes: invoiceChangeNotes,
+          ...(proposedInvoiceNumber && proposedInvoiceNumber >= MIN_INVOICE_NUMBER
+            ? { invoiceNumber: proposedInvoiceNumber }
+            : {}),
         }),
       });
-      const data = (await response.json()) as { message?: string };
+      const data = (await response.json()) as { message?: string; order?: SellerOrderRecord };
 
-      if (!response.ok) {
-        throw new Error(data.message ?? "No fue posible enviar la solicitud.");
+      if (!response.ok || !data.order) {
+        throw new Error(data.message ?? "No fue posible guardar la correccion.");
       }
 
+      const updatedOrder = {
+        ...data.order,
+        items: Array.isArray(data.order.items) ? data.order.items : [],
+        giftItems: Array.isArray(data.order.giftItems) ? data.order.giftItems : [],
+      };
+
+      setWarehouseOrders((current) => current.map((order) => (
+        String(order._id) === String(updatedOrder._id) ? updatedOrder : order
+      )));
       closeInvoiceChangeModal();
       setWarehouseOrderCompletionStatus({
         tone: "success",
-        message: data.message ?? "Solicitud enviada a gerencia para aprobacion.",
+        message: data.message ?? "Factura actualizada correctamente.",
       });
-      await refreshInvoiceChangeRequests("all");
+      await refreshInventorySummary();
+      await refreshCarteraData();
     } catch (error) {
       setInvoiceChangeStatus({
         tone: "error",
-        message: error instanceof Error ? error.message : "No fue posible enviar la solicitud.",
+        message: error instanceof Error ? error.message : "No fue posible guardar la correccion.",
       });
     } finally {
       setIsSubmittingInvoiceChangeRequest(false);
@@ -27967,13 +27988,13 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                   </svg>
                                 </button>
                               ) : null}
-                              {(sessionUser.role === "management" || sessionUser.role === "contabilidad") && !order.invoiceVoided ? (
+                              {(sessionUser.role === "management" || sessionUser.role === "contabilidad" || sessionUser.role === "warehouse-aruba") && !order.invoiceVoided ? (
                                 <button
                                   className="table-action-icon"
                                   type="button"
                                   aria-label="Editar factura"
-                                  title={pendingInvoiceChangeOrderIds.has(String(order._id)) ? "Solicitud pendiente" : "Editar factura"}
-                                  disabled={isDeletingOrder || isVoidingOrder || pendingInvoiceChangeOrderIds.has(String(order._id))}
+                                  title="Editar factura"
+                                  disabled={isDeletingOrder || isVoidingOrder}
                                   onClick={() => openInvoiceChangeModal(order)}
                                 >
                                   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -28374,7 +28395,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               </div>
 
               <p className="route-helper-text">
-                Ajusta descripcion, cantidad, precio o total por linea, agrega o quita productos. Los cambios no se aplican de inmediato: se enviaran a gerencia para aprobacion. La descripcion solo afecta esta factura.
+                Ajusta descripcion, cantidad, precio o total por linea, agrega o quita productos. Los cambios se aplican de inmediato sobre la factura, inventario y cartera.
               </p>
 
               {(sessionUser?.role === "management" || sessionUser?.role === "contabilidad") ? (
@@ -28503,18 +28524,21 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   }, 0))}</strong>
                 </div>
                 <div className="import-summary-card">
-                  <p>Total propuesto</p>
+                  <p>Total nuevo</p>
                   <strong>{formatCurrency(invoiceChangeTotal)}</strong>
                 </div>
               </div>
 
               <label className="field">
-                <span>Motivo del cambio (opcional)</span>
+                <span>Notas internas</span>
                 <textarea
                   value={invoiceChangeNotes}
                   rows={3}
-                  placeholder="Ejemplo: el cliente devolvio 2 unidades por error de conteo."
-                  onChange={(event) => setInvoiceChangeNotes(event.target.value)}
+                  placeholder="Notas internas del pedido (solo equipo SPS)."
+                  onChange={(event) => {
+                    setInvoiceChangeNotes(event.target.value);
+                    setInvoiceChangeStatus(null);
+                  }}
                 />
               </label>
 
@@ -28532,7 +28556,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   disabled={isSubmittingInvoiceChangeRequest || !invoiceChangeItemsDirty}
                   onClick={() => void handleSubmitInvoiceChangeRequest()}
                 >
-                  {isSubmittingInvoiceChangeRequest ? "Enviando solicitud..." : "Solicitar cambio"}
+                  {isSubmittingInvoiceChangeRequest ? "Guardando..." : "Guardar cambios"}
                 </button>
               </div>
             </div>

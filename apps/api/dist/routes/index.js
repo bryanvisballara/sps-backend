@@ -2658,7 +2658,28 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
         if (order.status === "delivered") {
             await applyOrderInventoryDelta(String(order._id), [...previousItems, ...previousGiftItems], [...items, ...giftItems]);
         }
-        const updatedOrder = await Order.findByIdAndUpdate(order._id, { items, giftItems }, { new: true, runValidators: true }).lean();
+        const previousInternalNotes = String(order.internalOrderNotes ?? "");
+        const previousInvoiceNumber = Number(order.invoiceNumber ?? 0) || null;
+        const hasInternalNotesField = typeof body.internalOrderNotes === "string";
+        const nextInternalOrderNotes = hasInternalNotesField
+            ? String(body.internalOrderNotes).trim()
+            : previousInternalNotes;
+        let nextInvoiceNumber = previousInvoiceNumber;
+        if (body.invoiceNumber !== undefined && body.invoiceNumber !== null && String(body.invoiceNumber).trim() !== "") {
+            if (!canChangeDeliveredInvoiceNumber(requestedByRole)) {
+                response.status(400).json({ message: "Solo gerencia o contabilidad pueden cambiar el consecutivo de factura." });
+                return;
+            }
+            nextInvoiceNumber = await resolveRequestedInvoiceNumber(body.invoiceNumber, order);
+        }
+        const updatedOrder = await Order.findByIdAndUpdate(order._id, {
+            items,
+            giftItems,
+            ...(hasInternalNotesField ? { internalOrderNotes: nextInternalOrderNotes } : {}),
+            ...(nextInvoiceNumber && nextInvoiceNumber !== previousInvoiceNumber
+                ? { invoiceNumber: nextInvoiceNumber }
+                : {}),
+        }, { new: true, runValidators: true }).lean();
         if (!updatedOrder) {
             response.status(404).json({ message: "El pedido no existe." });
             return;
@@ -2684,6 +2705,23 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
                 ...(await buildOrderItemsEditChanges(previousItems, items, "items")),
                 ...(await buildOrderItemsEditChanges(previousGiftItems, giftItems, "giftItems")),
             ];
+            if (hasInternalNotesField && previousInternalNotes !== nextInternalOrderNotes) {
+                changes.push({
+                    field: "internalOrderNotes",
+                    summary: "Actualizo notas internas",
+                    before: previousInternalNotes,
+                    after: nextInternalOrderNotes,
+                });
+            }
+            const afterInvoiceNumber = Number(updatedOrder.invoiceNumber ?? 0) || null;
+            if (previousInvoiceNumber !== afterInvoiceNumber) {
+                changes.push({
+                    field: "invoiceNumber",
+                    summary: `Cambio consecutivo de ${previousInvoiceNumber ? `#${previousInvoiceNumber}` : "sin numero"} a ${afterInvoiceNumber ? `#${afterInvoiceNumber}` : "sin numero"}`,
+                    before: previousInvoiceNumber ? String(previousInvoiceNumber) : "",
+                    after: afterInvoiceNumber ? String(afterInvoiceNumber) : "",
+                });
+            }
             await recordOrderEditLog({
                 orderId: String(updatedOrder._id),
                 storeName: String(updatedOrder.storeName ?? ""),
