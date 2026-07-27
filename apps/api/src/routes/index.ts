@@ -7828,12 +7828,28 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
     const warehouseId = typeof request.body?.warehouseId === "string" ? request.body.warehouseId.trim() : "";
     const usdToAwgRate = Number(request.body?.usdToAwgRate ?? 0);
     const entryNotes = typeof request.body?.notes === "string" ? request.body.notes.trim() : "";
+    const entryDateRaw = typeof request.body?.entryDate === "string" ? request.body.entryDate.trim() : "";
     const rawItems: unknown[] = Array.isArray(request.body?.items) ? request.body.items : [];
     const rawAdditionalExpenses: unknown[] = Array.isArray(request.body?.additionalExpenses) ? request.body.additionalExpenses : [];
 
     if (!Number.isFinite(usdToAwgRate) || usdToAwgRate <= 0) {
       response.status(400).json({ message: "Ingresa una tasa valida en USD@AWG mayor a cero." });
       return;
+    }
+
+    let entryDate = new Date();
+
+    if (entryDateRaw) {
+      const parsedEntryDate = /^\d{4}-\d{2}-\d{2}$/.test(entryDateRaw)
+        ? new Date(`${entryDateRaw}T12:00:00.000Z`)
+        : new Date(entryDateRaw);
+
+      if (Number.isNaN(parsedEntryDate.getTime())) {
+        response.status(400).json({ message: "La fecha de ingreso no es valida." });
+        return;
+      }
+
+      entryDate = parsedEntryDate;
     }
 
     if (rawItems.length === 0) {
@@ -8026,6 +8042,8 @@ apiRouter.post("/management/inventory-entries", async (request, response) => {
         entryUsdToAwgRate: usdToAwgRate,
         entryCostUsd: totalUnitCostUsd,
         source: "inventory-entry",
+        createdAt: entryDate,
+        updatedAt: entryDate,
       });
     }
 

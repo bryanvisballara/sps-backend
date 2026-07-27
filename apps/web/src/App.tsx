@@ -4786,6 +4786,7 @@ export default function App() {
   const [isInventoryEntryEditModalOpen, setIsInventoryEntryEditModalOpen] = useState(false);
   const [editingInventoryEntryGroupId, setEditingInventoryEntryGroupId] = useState("");
   const [inventoryEntryEditDate, setInventoryEntryEditDate] = useState("");
+  const [inventoryEntryDate, setInventoryEntryDate] = useState(() => getBusinessDateKey());
   const [isSavingInventoryEntryEdit, setIsSavingInventoryEntryEdit] = useState(false);
   const [inventoryEntryWarehouseId, setInventoryEntryWarehouseId] = useState("");
   const [inventoryUsdToAwgRate, setInventoryUsdToAwgRate] = useState("1.79");
@@ -10067,6 +10068,7 @@ export default function App() {
     }
 
     setInventoryEntryStatus(null);
+    setInventoryEntryDate(getBusinessDateKey());
     setInventoryEntryWarehouseId(selectedWarehouseId || availableWarehouseOptions[0]?.value || "");
     setInventoryUsdToAwgRate("1.79");
     setInventoryEntryNotes("");
@@ -10091,6 +10093,7 @@ export default function App() {
     }
 
     setInventoryEntryStatus(null);
+    setInventoryEntryDate(getBusinessDateKey());
     setInventoryEntryWarehouseId(selectedWarehouseId || availableWarehouseOptions[0]?.value || "");
     setInventoryUsdToAwgRate("1.79");
     setInventoryEntryNotes("");
@@ -10104,6 +10107,7 @@ export default function App() {
     setIsInventoryEntryModalOpen(false);
     setInventoryEntryStatus(null);
     setInventoryEntryNotes("");
+    setInventoryEntryDate(getBusinessDateKey());
   }
 
   function addInventoryEntryRow() {
@@ -11072,6 +11076,13 @@ export default function App() {
       return;
     }
 
+    const entryDate = inventoryEntryDate.trim();
+
+    if (!entryDate || !/^\d{4}-\d{2}-\d{2}$/.test(entryDate)) {
+      setInventoryEntryStatus({ tone: "error", message: "Selecciona la fecha de ingreso del inventario." });
+      return;
+    }
+
     const isWarehouseInventoryEntry = sessionUser?.role === "warehouse-aruba"
       || sessionUser?.role === "contabilidad"
       || sessionUser?.role === "management";
@@ -11227,6 +11238,7 @@ export default function App() {
         body: JSON.stringify({
           warehouseId: inventoryEntryWarehouseId,
           usdToAwgRate,
+          entryDate,
           notes: inventoryEntryNotes.trim(),
           items: normalizedItems,
           additionalExpenses: normalizedExpenses,
@@ -11242,6 +11254,7 @@ export default function App() {
       await refreshInventorySummary();
       setInventoryEntryStatus({ tone: "success", message: data.message ?? "Inventario registrado correctamente." });
       setInventoryEntryNotes("");
+      setInventoryEntryDate(getBusinessDateKey());
       setIsInventoryEntryModalOpen(false);
     } catch (error) {
       setInventoryEntryStatus({
@@ -20172,13 +20185,23 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <div>
                         <p className="section-label">Entrada de inventario</p>
                         <h2>Registrar inventario</h2>
-                        <p>Agrega productos con cantidad, costo, precio de venta y fecha de caducidad. Los valores iniciales salen de la ficha del producto, pero puedes ajustarlos por lote.</p>
+                        <p>Agrega productos con cantidad, costo, precio de venta y fecha de caducidad. Puedes indicar la fecha real de ingreso si el inventario llego otro dia.</p>
                       </div>
                       <button className="modal-close-button" type="button" onClick={closeInventoryEntryModal}>Cerrar</button>
                     </div>
 
                     <form className="inventory-adjustment-form inventory-entry-form--warehouse" onSubmit={handleInventoryEntrySubmit}>
                       <div className="inventory-entry-form-top">
+                        <label className="field">
+                          <span>Fecha de ingreso</span>
+                          <input
+                            type="date"
+                            value={inventoryEntryDate}
+                            onChange={(event) => setInventoryEntryDate(event.target.value)}
+                            required
+                          />
+                        </label>
+
                         <label className="field">
                           <span>Bodega</span>
                           <select
@@ -27079,13 +27102,23 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <div>
                       <p className="section-label">Entrada de inventario</p>
                       <h2>Registrar inventario</h2>
-                      <p>Agrega productos con cantidad, costo, precio de venta y fecha de caducidad. Los valores iniciales salen de la ficha del producto, pero puedes ajustarlos por lote.</p>
+                      <p>Agrega productos con cantidad, costo, precio de venta y fecha de caducidad. Puedes indicar la fecha real de ingreso si el inventario llego otro dia.</p>
                     </div>
                     <button className="modal-close-button" type="button" onClick={closeInventoryEntryModal}>Cerrar</button>
                   </div>
 
                   <form className="inventory-adjustment-form inventory-entry-form--warehouse" onSubmit={handleInventoryEntrySubmit}>
                     <div className="inventory-entry-form-top">
+                        <label className="field">
+                          <span>Fecha de ingreso</span>
+                          <input
+                            type="date"
+                            value={inventoryEntryDate}
+                            onChange={(event) => setInventoryEntryDate(event.target.value)}
+                            required
+                          />
+                        </label>
+
                       <label className="field">
                         <span>Bodega</span>
                         <select
@@ -27606,6 +27639,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
               <form id="inventory-entry-form" className="inventory-adjustment-form" onSubmit={handleInventoryEntrySubmit}>
                 <div className="inventory-entry-top-grid">
+                  <label className="field field-full">
+                    <span>Fecha de ingreso</span>
+                    <input
+                      type="date"
+                      value={inventoryEntryDate}
+                      onChange={(event) => setInventoryEntryDate(event.target.value)}
+                      required
+                    />
+                  </label>
+
                   <label className="field field-full">
                     <span>Bodega</span>
                     <select
