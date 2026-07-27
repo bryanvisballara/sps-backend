@@ -3323,6 +3323,9 @@ type WarehouseOrderListProps = {
   selectable?: boolean;
   selectedOrderIds?: Set<string>;
   onToggleOrderSelection?: (orderId: string, selected: boolean) => void;
+  allSelected?: boolean;
+  onToggleSelectAll?: (selected: boolean) => void;
+  selectAllDisabled?: boolean;
 };
 
 function WarehouseOrderList({
@@ -3345,6 +3348,9 @@ function WarehouseOrderList({
   selectable = false,
   selectedOrderIds = new Set<string>(),
   onToggleOrderSelection,
+  allSelected = false,
+  onToggleSelectAll,
+  selectAllDisabled = false,
 }: WarehouseOrderListProps) {
   const columnCount = 5
     + Number(showRoute)
@@ -3360,7 +3366,19 @@ function WarehouseOrderList({
 
   const renderTableHead = () => (
     <tr>
-      {selectable ? <th aria-label="Seleccionar" /> : null}
+      {selectable ? (
+        <th aria-label="Seleccionar">
+          {onToggleSelectAll ? (
+            <input
+              type="checkbox"
+              aria-label="Seleccionar todos"
+              checked={allSelected}
+              disabled={selectAllDisabled || orders.length === 0}
+              onChange={(event) => onToggleSelectAll(event.target.checked)}
+            />
+          ) : null}
+        </th>
+      ) : null}
       <th>Entrega</th>
       {showConsecutivo ? <th>Consecutivo</th> : null}
       {showSalesRep ? <th className="warehouse-order-col-optional">Vendedor</th> : null}
@@ -3452,6 +3470,7 @@ function WarehouseOrderList({
                             type="checkbox"
                             aria-label={`Seleccionar pedido de ${order.storeName}`}
                             checked={selectedOrderIds.has(String(order._id))}
+                            disabled={Boolean(order.invoiceVoided)}
                             onChange={(event) => onToggleOrderSelection?.(String(order._id), event.target.checked)}
                           />
                         </td>
@@ -3898,8 +3917,19 @@ function openPdfInNewTab(pdf: jsPDF, fileName: string, options?: { previewWindow
   }
 
   if (!openedInTab) {
-    const popup = window.open(url, "_blank", "noopener,noreferrer");
-    openedInTab = Boolean(popup);
+    // Avoid windowFeatures "noopener": it makes window.open() return null even when the
+    // tab opens, which previously triggered a second file download.
+    const popup = window.open(url, "_blank");
+
+    if (popup) {
+      try {
+        popup.opener = null;
+      } catch {
+        // Ignore if the browser blocks clearing opener.
+      }
+
+      openedInTab = true;
+    }
   }
 
   // Only fall back to a file download if the browser blocked the PDF tab.
@@ -4950,6 +4980,8 @@ export default function App() {
   const [selectedIncomingOrderIds, setSelectedIncomingOrderIds] = useState<Set<string>>(() => new Set());
   const [isPrintingSelectedIncomingOrders, setIsPrintingSelectedIncomingOrders] = useState(false);
   const [printingIncomingOrderId, setPrintingIncomingOrderId] = useState("");
+  const [selectedCompletedOrderIds, setSelectedCompletedOrderIds] = useState<Set<string>>(() => new Set());
+  const [isPrintingSelectedCompletedOrders, setIsPrintingSelectedCompletedOrders] = useState(false);
   const [selectedWarehouseOrderDetail, setSelectedWarehouseOrderDetail] = useState<SellerOrderRecord | null>(null);
   const [warehouseOrderEditLogs, setWarehouseOrderEditLogs] = useState<OrderEditLogRecord[]>([]);
   const [isLoadingWarehouseOrderEditLogs, setIsLoadingWarehouseOrderEditLogs] = useState(false);
@@ -6034,6 +6066,12 @@ export default function App() {
       return matchesDate && matchesClient && matchesInvoice;
     }),
   );
+  const printableWarehouseCompletedOrders = filteredWarehouseCompletedOrders.filter((order) => !order.invoiceVoided);
+  const areAllFilteredCompletedOrdersSelected = printableWarehouseCompletedOrders.length > 0
+    && printableWarehouseCompletedOrders.every((order) => selectedCompletedOrderIds.has(String(order._id)));
+  const selectedCompletedOrdersCount = printableWarehouseCompletedOrders.filter((order) => (
+    selectedCompletedOrderIds.has(String(order._id))
+  )).length;
   const warehouseAllItemsChecked = warehousePricedItems.length > 0
     && warehousePricedItems.every((item) => Boolean(warehouseOrderChecklist[item.productId]));
   const warehouseSomeItemsChecked = warehousePricedItems.some((item) => Boolean(warehouseOrderChecklist[item.productId]));
@@ -12405,6 +12443,123 @@ export default function App() {
         tone: "error",
         message: error instanceof Error ? error.message : "No fue posible imprimir la factura.",
       });
+    }
+  }
+
+  function toggleCompletedOrderSelection(orderId: string, selected: boolean) {
+    setSelectedCompletedOrderIds((current) => {
+      const next = new Set(current);
+
+      if (selected) {
+        next.add(orderId);
+      } else {
+        next.delete(orderId);
+      }
+
+      return next;
+    });
+  }
+
+  function toggleAllFilteredCompletedOrders(selected: boolean) {
+    setSelectedCompletedOrderIds((current) => {
+      const next = new Set(current);
+
+      printableWarehouseCompletedOrders.forEach((order) => {
+        const orderId = String(order._id);
+
+        if (selected) {
+          next.add(orderId);
+        } else {
+          next.delete(orderId);
+        }
+      });
+
+      return next;
+    });
+  }
+
+  async function handlePrintSelectedCompletedOrders() {
+    const selectedOrders = printableWarehouseCompletedOrders.filter((order) => (
+      selectedCompletedOrderIds.has(String(order._id))
+    ));
+
+    if (selectedOrders.length === 0) {
+      setWarehouseOrderCompletionStatus({
+        tone: "error",
+        message: "Selecciona al menos una factura para imprimir.",
+      });
+      return;
+    }
+
+    try {
+      setIsPrintingSelectedCompletedOrders(true);
+      setWarehouseOrderCompletionStatus(null);
+
+      const documents = await Promise.all(selectedOrders.map(async (order): Promise<CommercialInvoiceDocumentInput> => {
+        const response = await fetch(`${apiBaseUrl}/warehouse/orders/${order._id}/invoice-document`);
+        const data = (await response.json()) as {
+          message?: string;
+          carteraEntry?: { invoiceNumber?: number | null; invoicedAt?: string } | null;
+          invoiceNumber?: number | null;
+          invoicedAt?: string;
+          items?: Array<{
+            productName: string;
+            productDescription?: string;
+            quantity: number;
+            rate: number;
+            amount: number;
+          }>;
+          totalAmount?: number;
+        };
+
+        if (!response.ok || !Array.isArray(data.items) || data.items.length === 0) {
+          throw new Error(data.message ?? `No fue posible cargar la factura de ${order.storeName}.`);
+        }
+
+        return {
+          documentKind: "invoice",
+          invoiceNumber: data.invoiceNumber ?? data.carteraEntry?.invoiceNumber ?? order.invoiceNumber ?? null,
+          invoiceDate: data.invoicedAt
+            ? new Date(data.invoicedAt)
+            : data.carteraEntry?.invoicedAt
+              ? new Date(data.carteraEntry.invoicedAt)
+              : getOrderInvoiceDate(order),
+          billToName: order.storeName,
+          billToLocation: order.deliveryZone || order.routeName,
+          notes: order.orderNotes ?? "",
+          lineItems: data.items.map((item) => ({
+            productLabel: item.productName,
+            description: item.productDescription || "-",
+            quantity: item.quantity,
+            rate: item.rate,
+            amount: item.amount,
+          })),
+          totalAmount: Number(data.totalAmount ?? 0),
+        };
+      }));
+
+      const { pdf, fileName } = await buildCommercialInvoiceBatchPdf(documents);
+      openPdfInNewTab(pdf, fileName);
+
+      await Promise.all(selectedOrders.map((order) => logWarehouseOrderReprint(String(order._id))));
+      setSelectedCompletedOrderIds(new Set());
+
+      if (selectedWarehouseOrderDetail
+        && selectedOrders.some((order) => String(order._id) === String(selectedWarehouseOrderDetail._id))) {
+        await refreshWarehouseOrderEditLogs(String(selectedWarehouseOrderDetail._id));
+      }
+
+      setWarehouseOrderCompletionStatus({
+        tone: "success",
+        message: `Se genero un PDF con ${selectedOrders.length} factura${selectedOrders.length === 1 ? "" : "s"}.`,
+      });
+    } catch (error) {
+      setWarehouseOrderCompletionStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible imprimir las facturas seleccionadas.",
+      });
+    } finally {
+      setIsPrintingSelectedCompletedOrders(false);
     }
   }
 
@@ -19720,6 +19875,28 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </label>
                     </div>
 
+                    <div className="dispatch-bulk-toolbar">
+                      <label className="dispatch-select-all">
+                        <input
+                          type="checkbox"
+                          checked={areAllFilteredCompletedOrdersSelected}
+                          disabled={printableWarehouseCompletedOrders.length === 0 || isPrintingSelectedCompletedOrders}
+                          onChange={(event) => toggleAllFilteredCompletedOrders(event.target.checked)}
+                        />
+                        <span>Seleccionar todos los visibles</span>
+                      </label>
+                      <button
+                        className="primary-action-button"
+                        type="button"
+                        disabled={selectedCompletedOrdersCount === 0 || isPrintingSelectedCompletedOrders}
+                        onClick={() => void handlePrintSelectedCompletedOrders()}
+                      >
+                        {isPrintingSelectedCompletedOrders
+                          ? "Generando PDF..."
+                          : `Imprimir seleccionadas (${selectedCompletedOrdersCount})`}
+                      </button>
+                    </div>
+
                     <WarehouseOrderList
                       orders={filteredWarehouseCompletedOrders}
                       isLoading={isLoadingWarehouseOrders}
@@ -19734,6 +19911,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       showConsecutivo
                       showRoute={false}
                       showInternalNotes
+                      selectable
+                      selectedOrderIds={selectedCompletedOrderIds}
+                      onToggleOrderSelection={toggleCompletedOrderSelection}
+                      allSelected={areAllFilteredCompletedOrdersSelected}
+                      onToggleSelectAll={toggleAllFilteredCompletedOrders}
+                      selectAllDisabled={printableWarehouseCompletedOrders.length === 0 || isPrintingSelectedCompletedOrders}
                       onSelectOrder={setSelectedWarehouseOrderDetail}
                       hideDefaultViewButton
                       renderActions={(order) => {
@@ -19761,7 +19944,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               type="button"
                               aria-label="Reimprimir factura"
                               title="Reimprimir factura"
-                              disabled={isVoidingOrder}
+                              disabled={isVoidingOrder || isPrintingSelectedCompletedOrders}
                               onClick={() => void handlePrintCompletedOrderSummary(order)}
                             >
                               <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
