@@ -3807,6 +3807,33 @@ function matchesSellerCatalogSearch(product: SellerCatalogProduct, query: string
   );
 }
 
+function normalizeCatalogSearchText(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function matchesCatalogDirectProductSearch(
+  product: Pick<ProductOption, "label" | "sku" | "category" | "arubaCategory" | "description">,
+  query: string,
+) {
+  const normalizedQuery = normalizeCatalogSearchText(query);
+
+  if (!normalizedQuery) {
+    return true;
+  }
+
+  return (
+    normalizeCatalogSearchText(product.label).includes(normalizedQuery)
+    || normalizeCatalogSearchText(product.sku).includes(normalizedQuery)
+    || normalizeCatalogSearchText(product.category).includes(normalizedQuery)
+    || normalizeCatalogSearchText(getProductArubaCategory(product)).includes(normalizedQuery)
+    || normalizeCatalogSearchText(product.description).includes(normalizedQuery)
+  );
+}
+
 function formatAwgCurrency2(value: number) {
   return new Intl.NumberFormat("es-CO", {
     style: "decimal",
@@ -4660,9 +4687,20 @@ function getRoleLabel(role: string) {
 
 function normalizeUppercaseInputTarget(target: EventTarget | null) {
   if (
-    (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) &&
-    target.closest(".filter-grid")
+    (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement)
+    && (
+      target.closest(".filter-grid")
+      || target.closest(".catalog-direct-product-filter")
+      || target.closest(".container-product-filter-field")
+      || target.closest(".seller-product-catalog-filters")
+      || target.closest("[data-skip-uppercase='true']")
+    )
   ) {
+    return;
+  }
+
+  if (target instanceof HTMLInputElement && target.type === "search") {
+    // Search boxes must stay controlled by React; mutating value here desyncs filters.
     return;
   }
 
@@ -5766,42 +5804,37 @@ export default function App() {
       })))
     .sort((left, right) => left.label.localeCompare(right.label, "es"));
   const productOptionsById = new Map(productOptions.map((product) => [product.value, product]));
-  const normalizedCatalogDirectProductFilter = catalogDirectProductFilter.trim().toLowerCase();
+  const normalizedCatalogDirectProductFilter = normalizeCatalogSearchText(catalogDirectProductFilter);
   const selectedCatalogProductCount = countSelectedCatalogProducts(catalogForm, productOptions, productOptionsById);
   const catalogDirectPanelProducts = (() => {
-    let baseProducts = catalogForm.categoryNames.length > 0
-      ? (() => {
-        const fromCategories = productOptions.filter((product) => (
-          product.shareWithAruba !== false
-          && (
+    const arubaProducts = productOptions.filter((product) => product.shareWithAruba !== false);
+
+    // While searching, look across all Aruba products so milks in ALQUERIA/LACTEOS/DULCERIA all appear.
+    // Without a query, keep the category-scoped picker (plus already-selected direct extras).
+    let baseProducts = normalizedCatalogDirectProductFilter.length > 0
+      ? arubaProducts.filter((product) => matchesCatalogDirectProductSearch(product, catalogDirectProductFilter))
+      : catalogForm.categoryNames.length > 0
+        ? (() => {
+          const fromCategories = arubaProducts.filter((product) => (
             catalogForm.categoryNames.includes(getProductArubaCategory(product))
             || catalogForm.categoryNames.includes(product.category)
-          )
-        ));
-        const directExtras = productOptions.filter((product) => (
-          product.shareWithAruba !== false
-          && catalogForm.productIds.includes(product.value)
-          && !(
-            catalogForm.categoryNames.includes(getProductArubaCategory(product))
-            || catalogForm.categoryNames.includes(product.category)
-          )
-        ));
-        const combinedProducts = new Map<string, ProductOption>();
+          ));
+          const directExtras = arubaProducts.filter((product) => (
+            catalogForm.productIds.includes(product.value)
+            && !(
+              catalogForm.categoryNames.includes(getProductArubaCategory(product))
+              || catalogForm.categoryNames.includes(product.category)
+            )
+          ));
+          const combinedProducts = new Map<string, ProductOption>();
 
-        [...fromCategories, ...directExtras].forEach((product) => {
-          combinedProducts.set(product.value, product);
-        });
+          [...fromCategories, ...directExtras].forEach((product) => {
+            combinedProducts.set(product.value, product);
+          });
 
-        return Array.from(combinedProducts.values());
-      })()
-      : productOptions.filter((product) => product.shareWithAruba !== false);
-
-    if (normalizedCatalogDirectProductFilter.length > 0) {
-      baseProducts = baseProducts.filter((product) => (
-        product.label.toLowerCase().includes(normalizedCatalogDirectProductFilter)
-        || product.sku.toLowerCase().includes(normalizedCatalogDirectProductFilter)
-      ));
-    }
+          return Array.from(combinedProducts.values());
+        })()
+        : arubaProducts;
 
     return baseProducts.sort((left, right) => left.label.localeCompare(right.label, "es"));
   })();
@@ -21671,7 +21704,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <article className="route-day-card">
                     <div className="route-day-header">
                       <h3>Productos directos</h3>
-                      <span>{selectedCatalogProductCount} seleccionados</span>
+                      <span>
+                        {normalizedCatalogDirectProductFilter.length > 0
+                          ? `${catalogDirectPanelProducts.length} encontrados`
+                          : `${selectedCatalogProductCount} seleccionados`}
+                      </span>
                     </div>
 
                     <label className="field catalog-direct-product-filter">
@@ -21679,8 +21716,14 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <input
                         type="search"
                         value={catalogDirectProductFilter}
-                        placeholder="Nombre o SKU"
+                        placeholder="Nombre, SKU o categoría"
+                        data-skip-uppercase="true"
                         onChange={(event) => setCatalogDirectProductFilter(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                          }
+                        }}
                       />
                     </label>
 
