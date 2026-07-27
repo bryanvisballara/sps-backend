@@ -11468,7 +11468,7 @@ export default function App() {
         const productOption = productOptionsById.get(item.productId);
 
         return {
-          productLabel: `${item.productName} (Obsequio)`,
+          productLabel: item.productName,
           description: resolveProductInvoiceDescription({
             description: productOption?.description,
             name: item.productName,
@@ -11655,6 +11655,30 @@ export default function App() {
       giftItems: (selectedWarehouseOrderDetail.giftItems ?? []).filter((item) => (
         buildOrderGiftItemKey(item.productId, item.stockRowId) !== giftKey
       )),
+    });
+    setWarehouseOrderEditStatus(null);
+  }
+
+  function updateWarehouseGiftQuantity(giftKey: string, quantityValue: string) {
+    if (!selectedWarehouseOrderDetail || (selectedWarehouseOrderDetail.status === "delivered" && !canEditCompletedWarehouseOrders)) {
+      return;
+    }
+
+    const quantity = Number(quantityValue);
+
+    if (!Number.isFinite(quantity) || quantity < 0) {
+      return;
+    }
+
+    setSelectedWarehouseOrderDetail({
+      ...selectedWarehouseOrderDetail,
+      giftItems: (selectedWarehouseOrderDetail.giftItems ?? [])
+        .map((item) => (
+          buildOrderGiftItemKey(item.productId, item.stockRowId) === giftKey
+            ? { ...item, quantity }
+            : item
+        ))
+        .filter((item) => item.quantity > 0),
     });
     setWarehouseOrderEditStatus(null);
   }
@@ -19600,45 +19624,90 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </div>
                     </div>
 
-                    {(selectedWarehouseOrderDetail.giftItems ?? []).length > 0 ? (
+                    {(selectedWarehouseOrderDetail.giftItems ?? []).length > 0 || canMutateSelectedWarehouseOrder ? (
                       <div className="warehouse-gifts-panel">
                         <div className="management-table-header">
                           <div>
                             <p className="section-label">Obsequios</p>
                             <h3>Productos de regalo</h3>
-                            <p>Se muestran en la factura a precio 0. Solo lectura en bodega.</p>
+                            <p>
+                              {canMutateSelectedWarehouseOrder
+                                ? "Se facturan a precio 0. Puedes corregir cantidad o quitarlos; guarda los cambios y reimprime."
+                                : "Se muestran en la factura a precio 0."}
+                            </p>
                           </div>
+                          {canMutateSelectedWarehouseOrder ? (
+                            <button
+                              className="warehouse-action-button warehouse-action-button--add"
+                              type="button"
+                              disabled={isSavingWarehouseOrderEdit || isCompletingWarehouseOrder || isDispatchingWarehouseOrder}
+                              onClick={openWarehouseAddGiftModal}
+                            >
+                              Añadir obsequio
+                            </button>
+                          ) : null}
                         </div>
 
-                        <div className="table-wrap table-wrap--warehouse-items">
-                          <table className="data-table data-table--warehouse-order-items">
-                            <thead>
-                              <tr>
-                                <th>SKU</th>
-                                <th>Producto</th>
-                                <th>Lote</th>
-                                <th>Cant.</th>
-                                <th>Precio</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(selectedWarehouseOrderDetail.giftItems ?? []).map((gift) => {
-                                const lot = (inventoryLotsByProductId.get(gift.productId) ?? []).find((entry) => entry.stockRowId === gift.stockRowId);
-                                const giftKey = buildOrderGiftItemKey(gift.productId, gift.stockRowId);
+                        {(selectedWarehouseOrderDetail.giftItems ?? []).length > 0 ? (
+                          <div className="table-wrap table-wrap--warehouse-items">
+                            <table className="data-table data-table--warehouse-order-items">
+                              <thead>
+                                <tr>
+                                  <th>SKU</th>
+                                  <th>Producto</th>
+                                  <th>Lote</th>
+                                  <th>Cant.</th>
+                                  <th>Precio</th>
+                                  {canMutateSelectedWarehouseOrder ? <th>Quitar</th> : null}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {(selectedWarehouseOrderDetail.giftItems ?? []).map((gift) => {
+                                  const lot = (inventoryLotsByProductId.get(gift.productId) ?? []).find((entry) => entry.stockRowId === gift.stockRowId);
+                                  const giftKey = buildOrderGiftItemKey(gift.productId, gift.stockRowId);
 
-                                return (
-                                  <tr key={giftKey}>
-                                    <td>{gift.productSku}</td>
-                                    <td>{gift.productName}</td>
-                                    <td>{lot ? formatWarehouseLotOptionLabel(lot, 0) : (gift.stockRowId ? "Lote seleccionado" : "-")}</td>
-                                    <td>{gift.quantity}</td>
-                                    <td>0 AWG</td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
+                                  return (
+                                    <tr key={giftKey}>
+                                      <td>{gift.productSku}</td>
+                                      <td>{gift.productName}</td>
+                                      <td>{lot ? formatWarehouseLotOptionLabel(lot, 0) : (gift.stockRowId ? "Lote seleccionado" : "-")}</td>
+                                      <td>
+                                        {canMutateSelectedWarehouseOrder ? (
+                                          <input
+                                            className="warehouse-order-qty-input"
+                                            type="number"
+                                            min="0"
+                                            step="1"
+                                            value={gift.quantity}
+                                            disabled={isSavingWarehouseOrderEdit || isCompletingWarehouseOrder || isDispatchingWarehouseOrder}
+                                            onChange={(event) => updateWarehouseGiftQuantity(giftKey, event.target.value)}
+                                          />
+                                        ) : (
+                                          gift.quantity
+                                        )}
+                                      </td>
+                                      <td>0 AWG</td>
+                                      {canMutateSelectedWarehouseOrder ? (
+                                        <td>
+                                          <button
+                                            className="ghost-button warehouse-order-remove-item"
+                                            type="button"
+                                            disabled={isSavingWarehouseOrderEdit || isCompletingWarehouseOrder || isDispatchingWarehouseOrder}
+                                            onClick={() => removeWarehouseGiftItem(giftKey)}
+                                          >
+                                            Quitar
+                                          </button>
+                                        </td>
+                                      ) : null}
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : (
+                          <p className="route-helper-text">No hay obsequios en este pedido.</p>
+                        )}
                       </div>
                     ) : null}
 

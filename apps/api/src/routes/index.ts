@@ -4665,7 +4665,7 @@ async function buildWarehouseInvoiceDocumentLines(order: {
       productId: String(item.productId ?? ""),
       productName: String(product?.name ?? "Producto"),
       productSku: String(product?.sku ?? "-"),
-      productDescription: `Obsequio · ${String(product?.description ?? "").trim() || String(product?.name ?? "Producto")}`,
+      productDescription: String(product?.description ?? "").trim() || String(product?.name ?? "Producto"),
       quantity,
       rate: 0,
       amount: 0,
@@ -4892,9 +4892,11 @@ apiRouter.get("/warehouse/orders/:id/invoice-document", async (request, response
     // LogisticsInvoice can keep a stale snapshot after products are removed.
     const sourceItems = await buildWarehouseInvoiceDocumentLines(order);
     const items = sourceItems.map((item) => ({
-      productName: String(item.productName ?? "Producto"),
+      productName: String(item.productName ?? "Producto").replace(/\s*\(Obsequio\)\s*$/i, "").trim() || "Producto",
       productSku: String(item.productSku ?? "-"),
-      productDescription: String(item.productDescription ?? "").trim() || String(item.productName ?? "Producto"),
+      productDescription: String(item.productDescription ?? "")
+        .replace(/^Obsequio\s*[·•\-–—:]?\s*/i, "")
+        .trim() || String(item.productName ?? "Producto"),
       quantity: Number(item.quantity ?? 0),
       rate: Number(item.rate ?? 0),
       amount: Number(item.amount ?? 0),
