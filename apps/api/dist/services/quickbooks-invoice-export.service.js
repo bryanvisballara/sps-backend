@@ -185,6 +185,7 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
             String(order.routeName ?? "").trim(),
             String(order.salesRepName ?? "").trim(),
             String(order.orderNotes ?? "").trim(),
+            String(order.internalOrderNotes ?? "").trim(),
         ].filter(Boolean);
         const memo = memoParts.join(" - ");
         const resolveProduct = (productId, productSku) => (productsById.get(String(productId ?? ""))
