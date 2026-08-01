@@ -3103,7 +3103,7 @@ apiRouter.get("/sales/orders", async (request, response) => {
     await ensureOrderDeliveryDates();
     await syncOverdueDeliveryDates();
     const orders = await Order.find({ salesRepId })
-      .sort({ deliveryDate: 1, createdAt: 1 })
+      .sort({ createdAt: -1 })
       .lean();
 
     const productIds = Array.from(new Set(orders.flatMap((order) => [
@@ -3291,16 +3291,25 @@ apiRouter.put("/sales/orders/:id", async (request, response) => {
       return;
     }
 
-    const validAssignedProductIds = new Set(
-      Array.isArray(store.assignedProductIds)
-        ? store.assignedProductIds.map((entry) => String(entry)).filter(Boolean)
-        : [],
-    );
     const availableProductIds = new Set(products.map((product) => String(product._id)));
-    const invalidItem = payload.items.find((item) => !validAssignedProductIds.has(item.productId) || !availableProductIds.has(item.productId));
+    const invalidItem = payload.items.find((item) => !availableProductIds.has(item.productId));
 
     if (invalidItem) {
-      throw new Error("Uno o varios productos del pedido ya no estan asignados a este cliente.");
+      throw new Error("Uno o varios productos del pedido no estan disponibles.");
+    }
+
+    const assignedProductIds = Array.isArray(store.assignedProductIds)
+      ? store.assignedProductIds.map((entry) => String(entry)).filter(Boolean)
+      : [];
+    const assignedProductIdSet = new Set(assignedProductIds);
+    const productIdsToAssign = payload.items
+      .map((item) => item.productId)
+      .filter((productId, index, list) => list.indexOf(productId) === index && !assignedProductIdSet.has(productId));
+
+    if (productIdsToAssign.length > 0) {
+      await Store.findByIdAndUpdate(payload.storeId, {
+        $addToSet: { assignedProductIds: { $each: productIdsToAssign } },
+      });
     }
 
     const previousItems = Array.isArray(order.items)

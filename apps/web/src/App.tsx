@@ -897,7 +897,17 @@ type OrderEditLogRecord = {
   createdAt: string;
 };
 
-type SellerOrderEditDraft = Record<string, string>;
+type SellerOrderEditItemDraft = {
+  productId: string;
+  productSku: string;
+  productName: string;
+  stockCurrent: string;
+  quantity: string;
+  notes: string;
+  salePriceAwg?: number;
+  stockRowId?: string;
+  description?: string;
+};
 
 type WarehouseActiveSection = "inventory" | "orders" | "dispatch";
 
@@ -2681,6 +2691,435 @@ function formatRouteDayLabel(day: RouteDayKey) {
   return routeDayOptions.find((option) => option.key === day)?.label ?? day;
 }
 
+function getUserInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    return "U";
+  }
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+  return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
+}
+
+function SellerIcon({ name }: { name: "routes" | "clients" | "orders" | "performance" | "search" | "bell" | "chevron" | "calendar" | "map" | "filter" | "help" | "gift" | "send" | "box" | "clock" | "logout" | "check" }) {
+  const common = {
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.8,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true as const,
+  };
+
+  switch (name) {
+    case "routes":
+      return (
+        <svg {...common}>
+          <circle cx="6" cy="6" r="2.2" />
+          <circle cx="18" cy="10" r="2.2" />
+          <circle cx="8" cy="18" r="2.2" />
+          <path d="M8 7.5c2.5 1 5.5 1.2 8 1.8M8.8 16.2c1.6-2.4 4.4-4.4 7-5.4" />
+        </svg>
+      );
+    case "clients":
+      return (
+        <svg {...common}>
+          <path d="M16 20v-1.2A3.8 3.8 0 0 0 12.2 15H7.8A3.8 3.8 0 0 0 4 18.8V20" />
+          <circle cx="10" cy="8" r="3" />
+          <path d="M20 20v-1a3.2 3.2 0 0 0-2.4-3.1M16.4 5.2a3 3 0 0 1 0 5.6" />
+        </svg>
+      );
+    case "orders":
+      return (
+        <svg {...common}>
+          <path d="M6.5 8h11l-1 11H7.5L6.5 8Z" />
+          <path d="M9 8V6.5A3 3 0 0 1 15 6.5V8" />
+        </svg>
+      );
+    case "performance":
+      return (
+        <svg {...common}>
+          <path d="M4 19h16" />
+          <path d="M7 16V10" />
+          <path d="M12 16V6" />
+          <path d="M17 16v-4" />
+        </svg>
+      );
+    case "search":
+      return (
+        <svg {...common}>
+          <circle cx="11" cy="11" r="6.5" />
+          <path d="M16.5 16.5 20 20" />
+        </svg>
+      );
+    case "bell":
+      return (
+        <svg {...common}>
+          <path d="M6.5 16.5h11l-1.2-1.8a6.2 6.2 0 0 1-1-3.4V9.8a4.3 4.3 0 1 0-8.6 0v1.5a6.2 6.2 0 0 1-1 3.4L6.5 16.5Z" />
+          <path d="M10.2 18.2a1.8 1.8 0 0 0 3.6 0" />
+        </svg>
+      );
+    case "chevron":
+      return (
+        <svg {...common}>
+          <path d="m9 6 6 6-6 6" />
+        </svg>
+      );
+    case "calendar":
+      return (
+        <svg {...common}>
+          <rect x="4" y="5.5" width="16" height="14" rx="2.5" />
+          <path d="M8 3.5v4M16 3.5v4M4 10h16" />
+        </svg>
+      );
+    case "map":
+      return (
+        <svg {...common}>
+          <path d="M9 19.5 4.5 17V5.5L9 8l6-3.5L20.5 7v11.5L15 16l-6 3.5Z" />
+          <path d="M9 8v11.5M15 4.5V16" />
+        </svg>
+      );
+    case "filter":
+      return (
+        <svg {...common}>
+          <path d="M4 6h16M7 12h10M10 18h4" />
+        </svg>
+      );
+    case "help":
+      return (
+        <svg {...common}>
+          <path d="M5 14.5v-3a7 7 0 1 1 14 0v3" />
+          <path d="M5 14.5h2.2A1.8 1.8 0 0 1 9 16.3v1.4A1.8 1.8 0 0 1 7.2 19.5H6A1 1 0 0 1 5 18.5v-4Z" />
+          <path d="M19 14.5h-2.2A1.8 1.8 0 0 0 15 16.3v1.4a1.8 1.8 0 0 0 1.8 1.8H18a1 1 0 0 0 1-1v-4Z" />
+        </svg>
+      );
+    case "gift":
+      return (
+        <svg {...common}>
+          <rect x="4" y="10" width="16" height="10" rx="2" />
+          <path d="M4 13.5h16M12 10v10M12 10c-1.8-3.2-5.2-3.2-5.2-1.2S9.8 11.2 12 10Zm0 0c1.8-3.2 5.2-3.2 5.2-1.2S14.2 11.2 12 10Z" />
+        </svg>
+      );
+    case "send":
+      return (
+        <svg {...common}>
+          <path d="M4.5 11.5 19.5 4.5 12.5 19.5l-2-6.5-6-1.5Z" />
+        </svg>
+      );
+    case "box":
+      return (
+        <svg {...common}>
+          <path d="M12 3.5 20 8v8l-8 4.5L4 16V8l8-4.5Z" />
+          <path d="M12 12v8.5M12 12 20 8M12 12 4 8" />
+        </svg>
+      );
+    case "clock":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="8" />
+          <path d="M12 8v4.5l3 1.5" />
+        </svg>
+      );
+    case "logout":
+      return (
+        <svg {...common}>
+          <path d="M10 6H6.5A2.5 2.5 0 0 0 4 8.5v7A2.5 2.5 0 0 0 6.5 18H10" />
+          <path d="M14 12H9M14 12l-2.2-2.2M14 12l-2.2 2.2" />
+          <path d="M14 6h3.5A2.5 2.5 0 0 1 20 8.5v7A2.5 2.5 0 0 1 17.5 18H14" />
+        </svg>
+      );
+    case "check":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="8" />
+          <path d="m8.5 12.2 2.3 2.3 4.7-5" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
+
+function MgmtIcon({
+  name,
+}: {
+  name:
+    | "dashboard"
+    | "inventory"
+    | "routes"
+    | "stores"
+    | "reps"
+    | "products"
+    | "planner"
+    | "warehouse"
+    | "accounting"
+    | "orders"
+    | "catalog"
+    | "cartera"
+    | "reports"
+    | "promotions"
+    | "requests"
+    | "history"
+    | "clients"
+    | "imports"
+    | "billing"
+    | "categories"
+    | "suppliers"
+    | "users"
+    | "search"
+    | "bell"
+    | "help"
+    | "menu"
+    | "chevron"
+    | "logout"
+    | "box";
+}) {
+  const common = {
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.8,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true as const,
+  };
+
+  switch (name) {
+    case "dashboard":
+      return (
+        <svg {...common}>
+          <rect x="4" y="4" width="7" height="7" rx="1.5" />
+          <rect x="13" y="4" width="7" height="4.5" rx="1.5" />
+          <rect x="13" y="10.5" width="7" height="9.5" rx="1.5" />
+          <rect x="4" y="13" width="7" height="7" rx="1.5" />
+        </svg>
+      );
+    case "inventory":
+    case "box":
+      return (
+        <svg {...common}>
+          <path d="M12 3.5 20 8v8l-8 4.5L4 16V8l8-4.5Z" />
+          <path d="M12 12v8.5M12 12 20 8M12 12 4 8" />
+        </svg>
+      );
+    case "routes":
+      return (
+        <svg {...common}>
+          <circle cx="6" cy="6" r="2.2" />
+          <circle cx="18" cy="10" r="2.2" />
+          <circle cx="8" cy="18" r="2.2" />
+          <path d="M8 7.5c2.5 1 5.5 1.2 8 1.8M8.8 16.2c1.6-2.4 4.4-4.4 7-5.4" />
+        </svg>
+      );
+    case "stores":
+      return (
+        <svg {...common}>
+          <path d="M4 10h16l-1.2 10H5.2L4 10Z" />
+          <path d="M5 10 7 5h10l2 5" />
+          <path d="M10 20v-5h4v5" />
+        </svg>
+      );
+    case "reps":
+    case "users":
+    case "clients":
+      return (
+        <svg {...common}>
+          <path d="M16 20v-1.2A3.8 3.8 0 0 0 12.2 15H7.8A3.8 3.8 0 0 0 4 18.8V20" />
+          <circle cx="10" cy="8" r="3" />
+          <path d="M20 20v-1a3.2 3.2 0 0 0-2.4-3.1M16.4 5.2a3 3 0 0 1 0 5.6" />
+        </svg>
+      );
+    case "products":
+    case "catalog":
+      return (
+        <svg {...common}>
+          <path d="M6.5 8h11l-1 11H7.5L6.5 8Z" />
+          <path d="M9 8V6.5A3 3 0 0 1 15 6.5V8" />
+        </svg>
+      );
+    case "planner":
+      return (
+        <svg {...common}>
+          <rect x="4" y="5.5" width="16" height="14" rx="2.5" />
+          <path d="M8 3.5v4M16 3.5v4M4 10h16" />
+        </svg>
+      );
+    case "warehouse":
+      return (
+        <svg {...common}>
+          <path d="M3.5 10.5 12 4l8.5 6.5V20H3.5v-9.5Z" />
+          <path d="M9.5 20v-6h5v6" />
+        </svg>
+      );
+    case "accounting":
+    case "cartera":
+    case "billing":
+    case "reports":
+      return (
+        <svg {...common}>
+          <rect x="4" y="5" width="16" height="14" rx="2" />
+          <path d="M8 10h8M8 14h5" />
+        </svg>
+      );
+    case "orders":
+      return (
+        <svg {...common}>
+          <path d="M7 4h10l1.5 4H5.5L7 4Z" />
+          <path d="M6 8h12v11a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 19V8Z" />
+        </svg>
+      );
+    case "promotions":
+      return (
+        <svg {...common}>
+          <path d="M12 4 14.5 9.5 20.5 10.2 16 14.3 17.3 20 12 17 6.7 20 8 14.3 3.5 10.2 9.5 9.5 12 4Z" />
+        </svg>
+      );
+    case "requests":
+    case "history":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="8" />
+          <path d="M12 8v4.5l3 1.5" />
+        </svg>
+      );
+    case "imports":
+      return (
+        <svg {...common}>
+          <path d="M12 4v10M8.5 10.5 12 14l3.5-3.5" />
+          <path d="M5 18h14" />
+        </svg>
+      );
+    case "categories":
+    case "suppliers":
+      return (
+        <svg {...common}>
+          <path d="M4 7h16M4 12h16M4 17h10" />
+        </svg>
+      );
+    case "search":
+      return (
+        <svg {...common}>
+          <circle cx="11" cy="11" r="6.5" />
+          <path d="M16.5 16.5 20 20" />
+        </svg>
+      );
+    case "bell":
+      return (
+        <svg {...common}>
+          <path d="M6.5 16.5h11l-1.2-1.8a6.2 6.2 0 0 1-1-3.4V9.8a4.3 4.3 0 1 0-8.6 0v1.5a6.2 6.2 0 0 1-1 3.4L6.5 16.5Z" />
+          <path d="M10.2 18.2a1.8 1.8 0 0 0 3.6 0" />
+        </svg>
+      );
+    case "help":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="8" />
+          <path d="M9.8 9.5a2.3 2.3 0 1 1 3.5 2c-.7.5-1.3 1-1.3 2M12 16.5h.01" />
+        </svg>
+      );
+    case "menu":
+      return (
+        <svg {...common}>
+          <path d="M5 7h14M5 12h14M5 17h14" />
+        </svg>
+      );
+    case "chevron":
+      return (
+        <svg {...common}>
+          <path d="m9 6 6 6-6 6" />
+        </svg>
+      );
+    case "logout":
+      return (
+        <svg {...common}>
+          <path d="M10 6H6.5A2.5 2.5 0 0 0 4 8.5v7A2.5 2.5 0 0 0 6.5 18H10" />
+          <path d="M14 12H9M14 12l-2.2-2.2M14 12l-2.2 2.2" />
+          <path d="M14 6h3.5A2.5 2.5 0 0 1 20 8.5v7A2.5 2.5 0 0 1 17.5 18H14" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
+
+function getDashboardCardIcon(label: string): Parameters<typeof MgmtIcon>[0]["name"] {
+  const normalized = label.toLowerCase();
+  if (normalized.includes("ruta")) return "routes";
+  if (normalized.includes("cliente")) return "clients";
+  if (normalized.includes("stock") || normalized.includes("inventario") || normalized.includes("producto")) return "inventory";
+  if (normalized.includes("venta") || normalized.includes("factur")) return "reports";
+  if (normalized.includes("recaudo") || normalized.includes("cartera") || normalized.includes("utilidad")) return "cartera";
+  if (normalized.includes("export")) return "imports";
+  return "dashboard";
+}
+
+function getDashboardPanelIcon(title: string): Parameters<typeof MgmtIcon>[0]["name"] {
+  const normalized = title.toLowerCase();
+  if (normalized.includes("producto") && normalized.includes("vencer")) return "history";
+  if (normalized.includes("producto")) return "products";
+  if (normalized.includes("cliente")) return "clients";
+  if (normalized.includes("export")) return "imports";
+  return "dashboard";
+}
+
+function getMgmtNavIcon(sectionKey: string): Parameters<typeof MgmtIcon>[0]["name"] {
+  switch (sectionKey) {
+    case "dashboard":
+      return "dashboard";
+    case "inventory":
+      return "inventory";
+    case "routes":
+      return "routes";
+    case "store-performance":
+      return "stores";
+    case "sales-rep-performance":
+      return "reps";
+    case "product-performance":
+    case "products":
+      return "products";
+    case "order-planner":
+      return "planner";
+    case "warehouse-dispatch":
+    case "warehouses":
+      return "warehouse";
+    case "logistics-accounting":
+    case "accounting":
+      return "accounting";
+    case "orders":
+      return "orders";
+    case "catalog":
+      return "catalog";
+    case "cartera":
+      return "cartera";
+    case "financial-reports":
+      return "reports";
+    case "promotions":
+      return "promotions";
+    case "invoice-change-requests":
+    case "order-delete-requests":
+      return "requests";
+    case "order-edit-history":
+      return "history";
+    case "ops-clients":
+    case "clients":
+      return "clients";
+    case "imports":
+      return "imports";
+    case "import-billing":
+      return "billing";
+    case "categories":
+      return "categories";
+    case "suppliers":
+      return "suppliers";
+    case "users":
+      return "users";
+    default:
+      return "box";
+  }
+}
+
 type InventorySummaryTableProps = {
   rows: InventorySummaryRow[];
   isLoading: boolean;
@@ -3792,21 +4231,6 @@ function formatOrderPlannerTrend(trend: OrderPlannerProductRow["trend"], trendPe
   return `${prefix} ${Math.abs(trendPercent).toFixed(0)}%`;
 }
 
-function matchesSellerCatalogSearch(product: SellerCatalogProduct, query: string) {
-  const normalizedQuery = query.trim().toLowerCase();
-
-  if (!normalizedQuery) {
-    return true;
-  }
-
-  return (
-    product.name.toLowerCase().includes(normalizedQuery) ||
-    product.sku.toLowerCase().includes(normalizedQuery) ||
-    product.category.toLowerCase().includes(normalizedQuery) ||
-    getProductArubaCategory(product).toLowerCase().includes(normalizedQuery)
-  );
-}
-
 function normalizeCatalogSearchText(value: unknown) {
   return String(value ?? "")
     .trim()
@@ -3815,22 +4239,54 @@ function normalizeCatalogSearchText(value: unknown) {
     .toLowerCase();
 }
 
+function matchesSearchKeywords(haystack: string, query: string) {
+  const tokens = normalizeCatalogSearchText(query).split(/\s+/).filter(Boolean);
+
+  if (tokens.length === 0) {
+    return true;
+  }
+
+  const normalizedHaystack = normalizeCatalogSearchText(haystack);
+  return tokens.every((token) => normalizedHaystack.includes(token));
+}
+
+function matchesSellerCatalogSearch(product: SellerCatalogProduct, query: string) {
+  return matchesSearchKeywords(
+    [
+      product.name,
+      product.sku,
+      product.category,
+      getProductArubaCategory(product),
+    ].join(" "),
+    query,
+  );
+}
+
+function matchesSellerClientProductSearch(product: SellerClientProduct, query: string) {
+  return matchesSearchKeywords(
+    [
+      product.name,
+      product.sku,
+      product.category,
+      getProductArubaCategory(product),
+    ].join(" "),
+    query,
+  );
+}
+
 function matchesCatalogDirectProductSearch(
   product: Pick<ProductOption, "label" | "sku" | "category" | "arubaCategory" | "description">,
   query: string,
 ) {
-  const normalizedQuery = normalizeCatalogSearchText(query);
-
-  if (!normalizedQuery) {
-    return true;
-  }
-
-  return (
-    normalizeCatalogSearchText(product.label).includes(normalizedQuery)
-    || normalizeCatalogSearchText(product.sku).includes(normalizedQuery)
-    || normalizeCatalogSearchText(product.category).includes(normalizedQuery)
-    || normalizeCatalogSearchText(getProductArubaCategory(product)).includes(normalizedQuery)
-    || normalizeCatalogSearchText(product.description).includes(normalizedQuery)
+  return matchesSearchKeywords(
+    [
+      product.label,
+      product.sku,
+      product.category,
+      getProductArubaCategory(product),
+      product.description,
+    ].join(" "),
+    query,
   );
 }
 
@@ -4163,10 +4619,7 @@ function SearchableProductSelect({
 
   const normalizedQuery = query.trim().toLowerCase();
   const filteredProducts = normalizedQuery
-    ? products.filter((product) => (
-      product.label.toLowerCase().includes(normalizedQuery)
-      || product.sku.toLowerCase().includes(normalizedQuery)
-    )).slice(0, 50)
+    ? products.filter((product) => matchesSearchKeywords(`${product.label} ${product.sku}`, query)).slice(0, 50)
     : products.slice(0, 50);
 
   return (
@@ -4743,8 +5196,22 @@ function normalizeUppercaseInputTarget(target: EventTarget | null) {
 
 export default function App() {
   const tablePaginationStateRef = useRef<Record<string, number>>({});
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(() => {
+    try {
+      return localStorage.getItem("spste.login.email") ?? "";
+    } catch {
+      return "";
+    }
+  });
   const [password, setPassword] = useState("");
+  const [rememberLoginEmail, setRememberLoginEmail] = useState(() => {
+    try {
+      return Boolean(localStorage.getItem("spste.login.email"));
+    } catch {
+      return false;
+    }
+  });
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [pushNotificationStatus, setPushNotificationStatus] = useState<PushRegistrationResult | null>(null);
@@ -4752,6 +5219,9 @@ export default function App() {
   const [pushNotificationDismissed, setPushNotificationDismissed] = useState(false);
   const [activeSection, setActiveSection] = useState<ActiveSection>("inventory");
   const [sellerActiveSection, setSellerActiveSection] = useState<SellerActiveSection>("routes");
+  const [isSellerTopbarMenuOpen, setIsSellerTopbarMenuOpen] = useState(false);
+  const [isMgmtTopbarMenuOpen, setIsMgmtTopbarMenuOpen] = useState(false);
+  const [isMgmtSidebarCollapsed, setIsMgmtSidebarCollapsed] = useState(false);
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(() => readPersistedSessionUser());
   const [kpis, setKpis] = useState<KpiCard[]>([]);
   const [isLoadingKpis, setIsLoadingKpis] = useState(false);
@@ -4990,15 +5460,20 @@ export default function App() {
   const [removingSellerProductId, setRemovingSellerProductId] = useState("");
   const [sellerProductOfferStatus, setSellerProductOfferStatus] = useState<CreationStatus | null>(null);
   const [sellerCatalogSearchQuery, setSellerCatalogSearchQuery] = useState("");
+  const [sellerAssignedProductsSearchQuery, setSellerAssignedProductsSearchQuery] = useState("");
   const [sellerCatalogPage, setSellerCatalogPage] = useState(1);
   const [sellerOrders, setSellerOrders] = useState<SellerOrderRecord[]>([]);
   const [selectedSellerOrderDetail, setSelectedSellerOrderDetail] = useState<SellerOrderRecord | null>(null);
   const [selectedSellerOrderEdit, setSelectedSellerOrderEdit] = useState<SellerOrderRecord | null>(null);
   const [sellerOrderExpiredNotice, setSellerOrderExpiredNotice] = useState<SellerOrderRecord | null>(null);
+  const [sellerOrderSuccessNotice, setSellerOrderSuccessNotice] = useState<string | null>(null);
   const [sellerOrdersError, setSellerOrdersError] = useState("");
   const [sellerOrderTableStatus, setSellerOrderTableStatus] = useState<CreationStatus | null>(null);
   const [isLoadingSellerOrders, setIsLoadingSellerOrders] = useState(false);
-  const [sellerOrderEditDraft, setSellerOrderEditDraft] = useState<SellerOrderEditDraft>({});
+  const [sellerOrderEditItems, setSellerOrderEditItems] = useState<SellerOrderEditItemDraft[]>([]);
+  const [sellerOrderEditNotes, setSellerOrderEditNotes] = useState("");
+  const [sellerOrderEditInternalNotes, setSellerOrderEditInternalNotes] = useState("");
+  const [sellerOrderEditAddProductId, setSellerOrderEditAddProductId] = useState("");
   const [sellerOrderEditStatus, setSellerOrderEditStatus] = useState<CreationStatus | null>(null);
   const [isSavingSellerOrderEdit, setIsSavingSellerOrderEdit] = useState(false);
   const [deletingSellerOrderId, setDeletingSellerOrderId] = useState("");
@@ -5132,6 +5607,7 @@ export default function App() {
   const [invoiceChangeReviewNotesDraft, setInvoiceChangeReviewNotesDraft] = useState<Record<string, string>>({});
   const [orderDeleteReviewNotesDraft, setOrderDeleteReviewNotesDraft] = useState<Record<string, string>>({});
   const [sellerOrderDraft, setSellerOrderDraft] = useState<SellerOrderDraft>({});
+  const [sellerOrderCartProductIds, setSellerOrderCartProductIds] = useState<string[]>([]);
   const [sellerGiftDraftItems, setSellerGiftDraftItems] = useState<SellerGiftDraftItem[]>([]);
   const [sellerGiftDraft, setSellerGiftDraft] = useState({ productId: "", stockRowId: "", quantity: "1" });
   const [sellerOrderNotesDraft, setSellerOrderNotesDraft] = useState("");
@@ -5550,6 +6026,7 @@ export default function App() {
     setSelectedSellerStoreId("");
     setSellerRouteStoreSearch("");
     setSellerOrderDraft({});
+    setSellerOrderCartProductIds([]);
     setSellerGiftDraftItems([]);
     setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
     setSellerOrderNotesDraft("");
@@ -5709,7 +6186,9 @@ export default function App() {
     return buildSellerOrderDraftEntry(product, sellerOrderDraft[product.productId]);
   }
 
-  const sellerDraftedItems = sellerClientProducts
+  const sellerOrderCartIdSet = new Set(sellerOrderCartProductIds);
+  const sellerOrderCartProducts = sellerClientProducts.filter((product) => sellerOrderCartIdSet.has(product.productId));
+  const sellerDraftedItems = sellerOrderCartProducts
     .map((product) => {
       const draft = getSellerOrderDraftForProduct(product);
       const hasStockCurrent = draft.stockCurrent.trim().length > 0;
@@ -7234,6 +7713,30 @@ export default function App() {
   }, [sessionUser, sellerActiveSection]);
 
   useEffect(() => {
+    if (!isSellerTopbarMenuOpen && !isMgmtTopbarMenuOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+
+      if (isSellerTopbarMenuOpen && !target.closest(".seller-topbar-user-menu")) {
+        setIsSellerTopbarMenuOpen(false);
+      }
+
+      if (isMgmtTopbarMenuOpen && !target.closest(".mgmt-topbar-user-menu")) {
+        setIsMgmtTopbarMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [isSellerTopbarMenuOpen, isMgmtTopbarMenuOpen]);
+
+  useEffect(() => {
     const canAccessAccounting = sessionUser?.role === "management" || sessionUser?.role === "colombia-ops";
 
     if (!canAccessAccounting || (activeSection !== "accounting" && activeSection !== "imports" && activeSection !== "import-billing" && activeSection !== "dashboard")) {
@@ -7920,11 +8423,17 @@ export default function App() {
       return;
     }
 
-    setSelectedSellerStoreId((current) => (
-      selectedSellerStores.some((store) => store.storeId === current)
+    // Keep an empty selection after submit / until the user picks a store.
+    // Only clear when the current store is no longer on this day.
+    setSelectedSellerStoreId((current) => {
+      if (!current) {
+        return "";
+      }
+
+      return selectedSellerStores.some((store) => store.storeId === current)
         ? current
-        : selectedSellerStores[0]?.storeId ?? ""
-    ));
+        : "";
+    });
   }, [selectedSellerStores]);
 
   useEffect(() => {
@@ -7934,6 +8443,7 @@ export default function App() {
       setSellerClientProducts([]);
       setSellerClientProductsError("");
       setSellerOrderDraft({});
+      setSellerOrderCartProductIds([]);
         setSellerGiftDraftItems([]);
         setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
       }
@@ -7949,12 +8459,14 @@ export default function App() {
       setSellerClientProducts([]);
       setSellerClientProductsError("");
       setSellerOrderDraft({});
+      setSellerOrderCartProductIds([]);
       setSellerGiftDraftItems([]);
       setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
       return;
     }
 
     setSellerOrderDraft({});
+    setSellerOrderCartProductIds([]);
     setSellerGiftDraftItems([]);
     setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
     void refreshSellerClientProducts(activeStoreId);
@@ -7984,6 +8496,10 @@ export default function App() {
   useEffect(() => {
     setSellerCatalogPage(1);
   }, [sellerCatalogSearchQuery, selectedSellerStoreId, selectedSellerClientId, sellerActiveSection]);
+
+  useEffect(() => {
+    setSellerAssignedProductsSearchQuery("");
+  }, [selectedSellerStoreId, selectedSellerClientId, sellerActiveSection]);
 
   async function refreshKpis() {
     const response = await fetch(`${apiBaseUrl}/management/kpis`);
@@ -8024,11 +8540,15 @@ export default function App() {
       }
 
       setSellerOrders(
-        data.map((order) => ({
-          ...order,
-          items: Array.isArray(order.items) ? order.items : [],
-          giftItems: Array.isArray(order.giftItems) ? order.giftItems : [],
-        })),
+        data
+          .map((order) => ({
+            ...order,
+            items: Array.isArray(order.items) ? order.items : [],
+            giftItems: Array.isArray(order.giftItems) ? order.giftItems : [],
+          }))
+          .sort((left, right) => (
+            new Date(String(right.createdAt ?? "")).getTime() - new Date(String(left.createdAt ?? "")).getTime()
+          )),
       );
     } catch {
       setSellerOrdersError("No fue posible conectar con el backend.");
@@ -8274,6 +8794,37 @@ export default function App() {
     }
   }
 
+  function shouldUseSellerOrderCart() {
+    if (sessionUser?.role === "sales-rep-aruba") {
+      return sellerActiveSection === "routes";
+    }
+
+    return activeSection === "create-order" || activeSection === "direct-invoice";
+  }
+
+  function addProductToSellerOrderCart(productId: string) {
+    if (!productId) {
+      return;
+    }
+
+    setSellerOrderCartProductIds((current) => (
+      current.includes(productId) ? current : [...current, productId]
+    ));
+  }
+
+  function removeProductFromSellerOrderCart(productId: string) {
+    setSellerOrderCartProductIds((current) => current.filter((entry) => entry !== productId));
+    setSellerOrderDraft((current) => {
+      if (!(productId in current)) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[productId];
+      return next;
+    });
+  }
+
   async function handleAddProductToSellerClient(storeId: string, productId: string) {
     if (!sessionUser || !isSellerOrderFlowActive) {
       return;
@@ -8322,7 +8873,15 @@ export default function App() {
         products: current.products.filter((product) => product.productId !== productId),
       }));
 
-      setSellerProductOfferStatus({ tone: "success", message: data.message ?? "Producto agregado al cliente." });
+      setSellerProductOfferStatus({
+        tone: "success",
+        message: data.message ?? (shouldUseSellerOrderCart()
+          ? "Producto agregado al cliente y al pedido."
+          : "Producto agregado al cliente."),
+      });
+      if (shouldUseSellerOrderCart()) {
+        addProductToSellerOrderCart(productId);
+      }
       void refreshSellerClientProducts(storeId);
     } catch {
       setSellerProductOfferStatus({ tone: "error", message: "No fue posible conectar con el backend." });
@@ -8371,9 +8930,6 @@ export default function App() {
         <div className="seller-product-catalog-meta">
           {renderPromotionPrice(product)}
           <strong>Stock: {product.warehouseStock} uds.</strong>
-          {formatProductDisplayInfo(product) ? (
-            <small>{formatProductDisplayInfo(product)}</small>
-          ) : null}
           <small className="seller-product-catalog-expiration">
             {product.nearestExpirationDate
               ? `Vence: ${formatSellerOrderDate(product.nearestExpirationDate)}`
@@ -8386,7 +8942,13 @@ export default function App() {
           disabled={product.isAssigned || isAdding || !storeId}
           onClick={() => void handleAddProductToSellerClient(storeId, product.productId)}
         >
-          {product.isAssigned ? "Asignado" : isAdding ? "Agregando..." : "Agregar al cliente"}
+          {product.isAssigned
+            ? "Asignado"
+            : isAdding
+              ? "Agregando..."
+              : shouldUseSellerOrderCart()
+                ? "+ Agregar al pedido"
+                : "+ Agregar al cliente"}
         </button>
       </article>
     );
@@ -8445,6 +9007,7 @@ export default function App() {
       )));
 
       setSellerClientProducts((current) => current.filter((product) => product.productId !== productId));
+      setSellerOrderCartProductIds((current) => current.filter((entry) => entry !== productId));
       setSellerOrderDraft((current) => {
         if (!(productId in current)) {
           return current;
@@ -8464,7 +9027,12 @@ export default function App() {
     }
   }
 
-  function renderSellerAssignedProductRow(product: SellerClientProduct, storeId: string, showOrderFields: boolean) {
+  function renderSellerAssignedProductRow(
+    product: SellerClientProduct,
+    storeId: string,
+    options: { mode: "cart" | "picker" | "manage" },
+  ) {
+    const { mode } = options;
     const draft = getSellerOrderDraftForProduct(product);
     const quantityValue = Number(draft.quantity || 0);
     const unitPrice = resolveSellerDraftUnitPrice(product, draft);
@@ -8475,12 +9043,15 @@ export default function App() {
     const catalogMatch = [...sellerProductCatalog.expiringSoon, ...sellerProductCatalog.products]
       .find((entry) => entry.productId === product.productId);
     const warehouseStock = Number(product.warehouseStock ?? catalogMatch?.warehouseStock ?? 0);
-
     const isRemoving = removingSellerProductId === product.productId;
-    const canEditLinePricing = isDirectInvoiceComposer && showOrderFields;
+    const canEditLinePricing = isDirectInvoiceComposer && mode === "cart";
+    const isInCart = sellerOrderCartIdSet.has(product.productId);
 
     return (
-      <article className="seller-product-catalog-row seller-product-catalog-row-assigned" key={`seller-assigned-${product.productId}`}>
+      <article
+        className={`seller-product-catalog-row seller-product-catalog-row-assigned ${mode === "picker" ? "is-picker" : ""} ${isInCart && mode === "picker" ? "is-in-cart" : ""}`}
+        key={`seller-assigned-${mode}-${product.productId}`}
+      >
         <div className="seller-product-catalog-product">
           {product.imageUrl ? (
             <img className="seller-product-thumb" src={product.imageUrl} alt={product.name} />
@@ -8490,16 +9061,29 @@ export default function App() {
           <div className="seller-product-catalog-product-copy">
             <div className="seller-product-catalog-product-title">
               <strong>{product.name}</strong>
-              <button
-                className="seller-assigned-product-remove"
-                type="button"
-                aria-label={`Quitar ${product.name}`}
-                title="Quitar producto del cliente"
-                disabled={isRemoving}
-                onClick={() => void handleRemoveProductFromSellerClient(storeId, product.productId)}
-              >
-                {isRemoving ? "..." : "×"}
-              </button>
+              {mode === "manage" ? (
+                <button
+                  className="seller-assigned-product-remove"
+                  type="button"
+                  aria-label={`Quitar ${product.name}`}
+                  title="Quitar producto del cliente"
+                  disabled={isRemoving}
+                  onClick={() => void handleRemoveProductFromSellerClient(storeId, product.productId)}
+                >
+                  {isRemoving ? "..." : "×"}
+                </button>
+              ) : null}
+              {mode === "cart" ? (
+                <button
+                  className="seller-assigned-product-remove"
+                  type="button"
+                  aria-label={`Quitar ${product.name} del pedido`}
+                  title="Quitar del pedido (sigue asignado al cliente)"
+                  onClick={() => removeProductFromSellerOrderCart(product.productId)}
+                >
+                  ×
+                </button>
+              ) : null}
             </div>
             <small>SKU {product.sku}{getProductArubaCategory(product) ? ` · ${getProductArubaCategory(product)}` : ""}</small>
           </div>
@@ -8507,76 +9091,83 @@ export default function App() {
         <div className="seller-product-catalog-meta">
           {canEditLinePricing ? null : renderPromotionPrice(product)}
           <strong>Stock bodega: {warehouseStock} uds.</strong>
-          {formatProductDisplayInfo(product) ? (
-            <small>{formatProductDisplayInfo(product)}</small>
-          ) : null}
         </div>
-        <div className="seller-product-catalog-order-fields">
-          {canEditLinePricing ? (
-            <label className="seller-product-catalog-field seller-product-catalog-field-price">
-              <span>Precio (AWG)</span>
-              <input
-                className="catalog-price-input seller-order-input"
-                type="text"
-                inputMode="decimal"
-                value={draft.salePriceAwg}
-                placeholder="0.00"
-                onChange={(event) => handleSellerOrderDraftChange(product, "salePriceAwg", event.target.value)}
-                onBlur={() => commitSellerOrderLineMoneyField(product, "salePriceAwg")}
-              />
+        {mode === "picker" ? (
+          <button
+            className={`ghost-button ghost-button--accent ${isInCart ? "is-muted" : ""}`}
+            type="button"
+            disabled={isInCart}
+            onClick={() => addProductToSellerOrderCart(product.productId)}
+          >
+            {isInCart ? "En el pedido" : "+ Agregar al pedido"}
+          </button>
+        ) : null}
+        {mode === "cart" ? (
+          <div className="seller-product-catalog-order-fields">
+            {canEditLinePricing ? (
+              <label className="seller-product-catalog-field seller-product-catalog-field-price">
+                <span>Precio (AWG)</span>
+                <input
+                  className="catalog-price-input seller-order-input"
+                  type="text"
+                  inputMode="decimal"
+                  value={draft.salePriceAwg}
+                  placeholder="0.00"
+                  onChange={(event) => handleSellerOrderDraftChange(product, "salePriceAwg", event.target.value)}
+                  onBlur={() => commitSellerOrderLineMoneyField(product, "salePriceAwg")}
+                />
+              </label>
+            ) : null}
+            <label className="seller-product-catalog-field seller-product-catalog-field-quantity">
+              <span>Cantidad (displays)</span>
+              <div className="seller-quantity-stepper">
+                <button
+                  className="seller-quantity-stepper-btn"
+                  type="button"
+                  aria-label="Disminuir cantidad"
+                  disabled={!Number.isFinite(quantityValue) || quantityValue <= 0}
+                  onClick={() => adjustSellerOrderQuantity(product, -1)}
+                >
+                  −
+                </button>
+                <input
+                  className="catalog-price-input seller-order-input"
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={draft.quantity}
+                  placeholder="0"
+                  onChange={(event) => handleSellerOrderDraftChange(product, "quantity", event.target.value)}
+                />
+                <button
+                  className="seller-quantity-stepper-btn"
+                  type="button"
+                  aria-label="Aumentar cantidad"
+                  onClick={() => adjustSellerOrderQuantity(product, 1)}
+                >
+                  +
+                </button>
+              </div>
             </label>
-          ) : null}
-          <label className="seller-product-catalog-field seller-product-catalog-field-quantity">
-            <span>Cantidad (displays)</span>
-            <div className="seller-quantity-stepper">
-              <button
-                className="seller-quantity-stepper-btn"
-                type="button"
-                aria-label="Disminuir cantidad"
-                disabled={!Number.isFinite(quantityValue) || quantityValue <= 0}
-                onClick={() => adjustSellerOrderQuantity(product, -1)}
-              >
-                −
-              </button>
-            <input
-              className="catalog-price-input seller-order-input"
-              type="number"
-              min="0"
-              step="any"
-              value={draft.quantity}
-              placeholder="0"
-              onChange={(event) => handleSellerOrderDraftChange(product, "quantity", event.target.value)}
-            />
-              <button
-                className="seller-quantity-stepper-btn"
-                type="button"
-                aria-label="Aumentar cantidad"
-                onClick={() => adjustSellerOrderQuantity(product, 1)}
-              >
-                +
-              </button>
-            </div>
-          </label>
-          {canEditLinePricing ? (
-            <label className="seller-product-catalog-field seller-product-catalog-field-total">
-              <span>Subtotal (AWG)</span>
-              <input
-                className="catalog-price-input seller-order-input"
-                type="text"
-                inputMode="decimal"
-                value={lineTotalDisplay}
-                placeholder="0.00"
-                onChange={(event) => handleSellerOrderDraftChange(product, "lineSubtotalAwg", event.target.value)}
-                onBlur={() => commitSellerOrderLineMoneyField(product, "lineSubtotalAwg")}
-              />
-            </label>
-          ) : showOrderFields ? (
-            <div className="seller-product-catalog-field seller-product-catalog-field-total">
-              <span>Subtotal</span>
-              <strong>{formatAwgCurrency(derivedLineTotal)} AWG</strong>
-            </div>
-          ) : null}
-          {showOrderFields ? (
+            {canEditLinePricing ? (
+              <label className="seller-product-catalog-field seller-product-catalog-field-total">
+                <span>Subtotal (AWG)</span>
+                <input
+                  className="catalog-price-input seller-order-input"
+                  type="text"
+                  inputMode="decimal"
+                  value={lineTotalDisplay}
+                  placeholder="0.00"
+                  onChange={(event) => handleSellerOrderDraftChange(product, "lineSubtotalAwg", event.target.value)}
+                  onBlur={() => commitSellerOrderLineMoneyField(product, "lineSubtotalAwg")}
+                />
+              </label>
+            ) : (
+              <div className="seller-product-catalog-field seller-product-catalog-field-total">
+                <span>Subtotal</span>
+                <strong>{formatAwgCurrency(derivedLineTotal)} AWG</strong>
+              </div>
+            )}
             <label className="seller-product-catalog-field seller-product-catalog-field-notes">
               <span>Notas</span>
               <input
@@ -8587,34 +9178,41 @@ export default function App() {
                 onChange={(event) => handleSellerOrderDraftChange(product, "notes", event.target.value)}
               />
             </label>
-          ) : null}
-          {canEditLinePricing ? (
-            <label className="seller-product-catalog-field seller-product-catalog-field-description">
-              <span>Descripcion factura</span>
-              <input
-                className="seller-order-note-input"
-                type="text"
-                value={draft.description}
-                placeholder="Texto que aparece en la factura"
-                onChange={(event) => handleSellerOrderDraftChange(product, "description", event.target.value)}
-              />
-            </label>
-          ) : null}
-        </div>
+            {canEditLinePricing ? (
+              <label className="seller-product-catalog-field seller-product-catalog-field-description">
+                <span>Descripcion factura</span>
+                <input
+                  className="seller-order-note-input"
+                  type="text"
+                  value={draft.description}
+                  placeholder="Texto que aparece en la factura"
+                  onChange={(event) => handleSellerOrderDraftChange(product, "description", event.target.value)}
+                />
+              </label>
+            ) : null}
+          </div>
+        ) : null}
       </article>
     );
   }
 
   function renderSellerRouteOrderExtras() {
+    const giftQuantityValue = Number(sellerGiftDraft.quantity || 0);
+
     return (
       <>
         <section className="seller-product-catalog-section seller-gifts-section">
           <div className="seller-product-catalog-section-header">
-            <p className="section-label">Obsequios</p>
-            <h4>Productos de regalo</h4>
-            <p className="seller-product-catalog-count">
-              Aparecen en la factura a precio 0 y se descuentan del inventario al facturar.
-            </p>
+            <div className="seller-panel-icon is-orange">
+              <SellerIcon name="gift" />
+            </div>
+            <div>
+              <p className="section-label">Obsequios</p>
+              <h4>Productos de regalo</h4>
+              <p className="seller-product-catalog-count">
+                Aparecen en la factura a precio 0 y se descuentan del inventario al facturar.
+              </p>
+            </div>
           </div>
 
           <div className="seller-gifts-form">
@@ -8657,18 +9255,43 @@ export default function App() {
 
             <label className="field">
               <span>Cantidad</span>
-              <input
-                className="catalog-price-input seller-order-input"
-                type="number"
-                min="0"
-                step="any"
-                value={sellerGiftDraft.quantity}
-                onChange={(event) => setSellerGiftDraft((current) => ({ ...current, quantity: event.target.value }))}
-              />
+              <div className="seller-quantity-stepper seller-gift-qty">
+                <button
+                  className="seller-quantity-stepper-btn"
+                  type="button"
+                  aria-label="Disminuir cantidad de obsequio"
+                  disabled={!Number.isFinite(giftQuantityValue) || giftQuantityValue <= 0}
+                  onClick={() => setSellerGiftDraft((current) => ({
+                    ...current,
+                    quantity: String(Math.max(0, Number(current.quantity || 0) - 1)),
+                  }))}
+                >
+                  −
+                </button>
+                <input
+                  className="catalog-price-input seller-order-input"
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={sellerGiftDraft.quantity}
+                  onChange={(event) => setSellerGiftDraft((current) => ({ ...current, quantity: event.target.value }))}
+                />
+                <button
+                  className="seller-quantity-stepper-btn"
+                  type="button"
+                  aria-label="Aumentar cantidad de obsequio"
+                  onClick={() => setSellerGiftDraft((current) => ({
+                    ...current,
+                    quantity: String(Math.max(0, Number(current.quantity || 0) + 1)),
+                  }))}
+                >
+                  +
+                </button>
+              </div>
             </label>
 
-            <button className="ghost-button ghost-button--accent" type="button" onClick={addSellerGiftDraftItem}>
-              Agregar obsequio
+            <button className="ghost-button seller-gift-add-btn" type="button" onClick={addSellerGiftDraftItem}>
+              + Agregar obsequio
             </button>
           </div>
 
@@ -8708,118 +9331,125 @@ export default function App() {
         </section>
 
         <div className="seller-order-footer seller-order-footer-inline">
-          <label className="field seller-order-delivery-date">
-            <span>{isDirectInvoiceComposer ? "Fecha de factura" : "Fecha de entrega"}</span>
-            <input
-              type="date"
-              min={isDirectInvoiceComposer ? undefined : getBusinessDateKey()}
-              value={sellerDeliveryDateDraft}
-              onChange={(event) => setSellerDeliveryDateDraft(event.target.value)}
-            />
-          </label>
-          <div className="seller-order-notes-grid">
-            <label className="field seller-order-notes-field">
-              <span>Nota u observación del pedido en factura</span>
-              <textarea
-                rows={3}
-                value={sellerOrderNotesDraft}
-                placeholder="Ejemplo: cliente pidió media paca de sal, entregar antes del mediodía..."
-                onChange={(event) => setSellerOrderNotesDraft(event.target.value)}
-              />
-            </label>
-            <label className="field seller-order-notes-field">
-              <span>Nota u observación del pedido interno</span>
-              <textarea
-                rows={3}
-                value={sellerInternalOrderNotesDraft}
-                placeholder="Solo uso interno: instrucciones para bodega, transporte o seguimiento..."
-                onChange={(event) => setSellerInternalOrderNotesDraft(event.target.value)}
-              />
-            </label>
-          </div>
-          <div className="seller-order-attachment-field">
-            <label className="field">
-              <span>Archivo adjunto (opcional)</span>
-              <input
-                type="file"
-                accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt"
-                disabled={isUploadingSellerOrderAttachment || isSubmittingSellerOrder}
-                onChange={(event) => {
-                  const file = event.target.files?.[0] ?? null;
-                  void handleSellerOrderAttachmentUpload(file);
-                  event.currentTarget.value = "";
-                }}
-              />
-            </label>
-            {isUploadingSellerOrderAttachment ? (
-              <p className="form-feedback success">Subiendo archivo...</p>
-            ) : null}
-            {sellerOrderAttachmentError ? (
-              <p className="form-feedback error">{sellerOrderAttachmentError}</p>
-            ) : null}
-            {sellerOrderAttachmentsDraft.length > 0 ? (
-              <div className="import-expense-documents">
-                {sellerOrderAttachmentsDraft.map((attachment) => (
-                  <div className="import-expense-document" key={attachment.url}>
-                    <a href={resolveOrderAttachmentDownloadUrl(attachment)} target="_blank" rel="noreferrer">{attachment.name}</a>
-                    <button
-                      className="table-action-icon is-danger"
-                      type="button"
-                      aria-label="Quitar archivo adjunto"
-                      title="Quitar"
-                      onClick={() => removeSellerOrderAttachment()}
-                    >
-                      x
-                    </button>
-                  </div>
-                ))}
+          <div className="seller-order-footer-main">
+            <div className="seller-order-footer-left">
+              <label className="field seller-order-delivery-date">
+                <span>{isDirectInvoiceComposer ? "Fecha de factura" : "Fecha de entrega"}</span>
+                <input
+                  type="date"
+                  min={isDirectInvoiceComposer ? undefined : getBusinessDateKey()}
+                  value={sellerDeliveryDateDraft}
+                  onChange={(event) => setSellerDeliveryDateDraft(event.target.value)}
+                />
+              </label>
+              <div className="seller-order-notes-grid">
+                <label className="field seller-order-notes-field">
+                  <span>Nota u observación del pedido en factura</span>
+                  <textarea
+                    rows={3}
+                    value={sellerOrderNotesDraft}
+                    placeholder="Ejemplo: cliente pidió media paca de sal, entregar antes del mediodía..."
+                    onChange={(event) => setSellerOrderNotesDraft(event.target.value)}
+                  />
+                </label>
+                <label className="field seller-order-notes-field">
+                  <span>Nota u observación del pedido interno</span>
+                  <textarea
+                    rows={3}
+                    value={sellerInternalOrderNotesDraft}
+                    placeholder="Solo uso interno: instrucciones para bodega, transporte o seguimiento..."
+                    onChange={(event) => setSellerInternalOrderNotesDraft(event.target.value)}
+                  />
+                </label>
               </div>
-            ) : (
-              <p className="route-helper-text">Puedes adjuntar un PDF, imagen o documento para bodega y recepción.</p>
-            )}
+            </div>
+
+            <div className="seller-order-footer-right">
+              <div className="seller-order-attachment-field">
+                <label className="field">
+                  <span>Archivo adjunto (opcional)</span>
+                  <input
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt"
+                    disabled={isUploadingSellerOrderAttachment || isSubmittingSellerOrder}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0] ?? null;
+                      void handleSellerOrderAttachmentUpload(file);
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                </label>
+                {isUploadingSellerOrderAttachment ? (
+                  <p className="form-feedback success">Subiendo archivo...</p>
+                ) : null}
+                {sellerOrderAttachmentError ? (
+                  <p className="form-feedback error">{sellerOrderAttachmentError}</p>
+                ) : null}
+                {sellerOrderAttachmentsDraft.length > 0 ? (
+                  <div className="import-expense-documents">
+                    {sellerOrderAttachmentsDraft.map((attachment) => (
+                      <div className="import-expense-document" key={attachment.url}>
+                        <a href={resolveOrderAttachmentDownloadUrl(attachment)} target="_blank" rel="noreferrer">{attachment.name}</a>
+                        <button
+                          className="table-action-icon is-danger"
+                          type="button"
+                          aria-label="Quitar archivo adjunto"
+                          title="Quitar"
+                          onClick={() => removeSellerOrderAttachment()}
+                        >
+                          x
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="route-helper-text">Puedes adjuntar un PDF, imagen o documento para bodega y recepción.</p>
+                )}
+              </div>
+              {isDirectInvoiceComposer ? (
+                <label className="field seller-order-delivery-date">
+                  <span>Metodo de pago</span>
+                  <select
+                    value={directInvoicePaymentMethod}
+                    onChange={(event) => setDirectInvoicePaymentMethod(event.target.value as CarteraPaymentMethod | "")}
+                  >
+                    <option value="">Selecciona metodo</option>
+                    <option value="credito">Credito</option>
+                    <option value="transferencia">Transferencia</option>
+                    <option value="efectivo">Efectivo</option>
+                  </select>
+                </label>
+              ) : null}
+              <div className="seller-order-actions">
+                <p className="seller-order-hint">
+                  {sellerDraftedItems.length > 0
+                    ? `${sellerDraftedItems.length} producto${sellerDraftedItems.length === 1 ? "" : "s"} listos · Total estimado ${formatAwgCurrency(sellerOrderEstimatedTotal)} AWG`
+                    : isDirectInvoiceComposer
+                      ? "Agrega productos al pedido y pon cantidades antes de facturar."
+                      : "Agrega productos al pedido y pon cantidades antes de enviar a bodega."}
+                </p>
+                <button
+                  className="seller-order-submit"
+                  type="button"
+                  onClick={() => void handleSellerOrderSubmit()}
+                  disabled={
+                    isSubmittingSellerOrder
+                    || isUploadingSellerOrderAttachment
+                    || isLoadingSellerClientProducts
+                    || sellerDraftedItems.length === 0
+                    || (isDirectInvoiceComposer && !directInvoicePaymentMethod)
+                  }
+                >
+                  <SellerIcon name="send" />
+                  <span>
+                    {isSubmittingSellerOrder
+                      ? (isDirectInvoiceComposer ? "Facturando..." : "Enviando...")
+                      : (isDirectInvoiceComposer ? "Facturar pedido" : "Enviar pedido")}
+                  </span>
+                </button>
+              </div>
+            </div>
           </div>
-          <p>
-            {sellerDraftedItems.length > 0
-              ? `${sellerDraftedItems.length} producto${sellerDraftedItems.length === 1 ? "" : "s"} listos para registrar.`
-              : isDirectInvoiceComposer
-                ? "Agrega cantidades en los productos asignados antes de facturar el pedido."
-                : "Agrega cantidades en los productos asignados antes de enviar el pedido a bodega."}
-          </p>
-          {sellerDraftedItems.length > 0 ? (
-            <p className="seller-order-estimated-total">
-              Total estimado: <strong>{formatAwgCurrency(sellerOrderEstimatedTotal)} AWG</strong>
-            </p>
-          ) : null}
-          {isDirectInvoiceComposer ? (
-            <label className="field seller-order-delivery-date">
-              <span>Metodo de pago</span>
-              <select
-                value={directInvoicePaymentMethod}
-                onChange={(event) => setDirectInvoicePaymentMethod(event.target.value as CarteraPaymentMethod | "")}
-              >
-                <option value="">Selecciona metodo</option>
-                <option value="credito">Credito</option>
-                <option value="transferencia">Transferencia</option>
-                <option value="efectivo">Efectivo</option>
-              </select>
-            </label>
-          ) : null}
-          <button
-            className="submit-button seller-order-submit"
-            type="button"
-            onClick={() => void handleSellerOrderSubmit()}
-            disabled={
-              isSubmittingSellerOrder
-              || isUploadingSellerOrderAttachment
-              || isLoadingSellerClientProducts
-              || sellerDraftedItems.length === 0
-              || (isDirectInvoiceComposer && !directInvoicePaymentMethod)
-            }
-          >
-            {isSubmittingSellerOrder
-              ? (isDirectInvoiceComposer ? "Facturando pedido..." : "Enviando pedido a bodega...")
-              : (isDirectInvoiceComposer ? "Facturar pedido ahora" : "Enviar pedido a bodega")}
-          </button>
         </div>
       </>
     );
@@ -8939,16 +9569,10 @@ export default function App() {
                   </div>
 
                   {selectedSellerStore ? (
-                    <p className="warehouse-selected-meta">{selectedSellerStore.storeName} · {selectedSellerStore.address || "Sin dirección"}</p>
-                  ) : null}
-
-                  {selectedSellerStoreId ? (
-                    <div className="seller-route-order-extras">
-                      {sellerOrderStatus ? <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p> : null}
-                      {renderSellerRouteOrderExtras()}
-                    </div>
-                  ) : sellerOrderStatus ? (
-                    <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p>
+                    <p className="seller-selected-store-banner">
+                      {selectedSellerStore.storeName}
+                      <small>{selectedSellerStore.address || "Sin dirección"}</small>
+                    </p>
                   ) : null}
                 </div>
 
@@ -9023,6 +9647,9 @@ export default function App() {
     const assignedCount = storeOption?.assignedProductIds.length ?? 0;
     const showOrderFields = options?.showOrderFields ?? false;
     const assignedProducts = sellerAssignedStore?.id === storeId ? sellerClientProducts : [];
+    const filteredAssignedProducts = assignedProducts.filter((product) => (
+      matchesSellerClientProductSearch(product, sellerAssignedProductsSearchQuery)
+    ));
     const filteredExpiringSoon = sellerProductCatalog.expiringSoon.filter((product) => (
       !product.isAssigned
     ));
@@ -9037,50 +9664,138 @@ export default function App() {
 
     return (
       <article className="seller-product-catalog">
+        {sellerProductOfferStatus ? <p className={`form-feedback ${sellerProductOfferStatus.tone}`}>{sellerProductOfferStatus.message}</p> : null}
+        {sellerProductCatalogError ? <p className="form-feedback error">{sellerProductCatalogError}</p> : null}
+        {sellerClientProductsError ? <p className="form-feedback error">{sellerClientProductsError}</p> : null}
+
+        {showOrderFields ? (
+          <section className="seller-product-catalog-section seller-product-catalog-section-cart">
+            <div className="seller-product-catalog-section-header">
+              <div className="seller-panel-header-main">
+                <div className="seller-panel-icon is-green">
+                  <SellerIcon name="orders" />
+                </div>
+                <div>
+                  <p className="section-label">Pedido de hoy</p>
+                  <h4>Productos de este pedido</h4>
+                  <p className="seller-product-catalog-count">
+                    {sellerOrderCartProducts.length > 0
+                      ? `${sellerOrderCartProducts.length} en el pedido · ${sellerDraftedItems.length} con cantidad lista para enviar.`
+                      : "Agrega productos del cliente o del catálogo. Solo estos se envían a bodega."}
+                  </p>
+                </div>
+              </div>
+            </div>
+            {isLoadingSellerClientProducts ? (
+              <p className="route-empty-state">Cargando productos...</p>
+            ) : sellerOrderCartProducts.length > 0 ? (
+              <>
+                <div className="seller-product-catalog-list">
+                  {sellerOrderCartProducts.map((product) => renderSellerAssignedProductRow(product, storeId, { mode: "cart" }))}
+                </div>
+                <div className="seller-order-cart-total">
+                  <div>
+                    <span>Total del pedido</span>
+                    <small>
+                      {sellerDraftedItems.length > 0
+                        ? `${sellerDraftedItems.length} producto${sellerDraftedItems.length === 1 ? "" : "s"} con cantidad`
+                        : "Agrega cantidades para calcular el total"}
+                    </small>
+                  </div>
+                  <strong>{formatAwgCurrency(sellerOrderEstimatedTotal)} AWG</strong>
+                </div>
+              </>
+            ) : (
+              <div className="seller-empty-state seller-empty-state--compact">
+                <h3>Aún no hay productos en este pedido</h3>
+                <p>Elige abajo un producto del cliente o agrégalo desde el catálogo. No hace falta quitar los que no vendas hoy.</p>
+              </div>
+            )}
+
+            <div className="seller-route-order-extras seller-route-order-extras--in-cart">
+              {sellerOrderStatus ? <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p> : null}
+              {renderSellerRouteOrderExtras()}
+            </div>
+          </section>
+        ) : null}
+
         <div className="client-product-assignment-header">
           <div>
             <p className="section-label">Ofrecer productos</p>
-            <h3>Catalogo de bodega</h3>
-            <p>Agrega productos nuevos al cliente. Prioriza los que estan proximos a vencer.</p>
+            <h3>Catálogo de bodega</h3>
+            <p>Agrega productos nuevos. En rutas, se suman al pedido de hoy sin borrar el historial del cliente.</p>
           </div>
-          <span>{assignedCount} producto{assignedCount === 1 ? "" : "s"} asignados</span>
+          <span>
+            <SellerIcon name="box" />
+            {assignedCount} producto{assignedCount === 1 ? "" : "s"} asignados
+          </span>
         </div>
-
-        {sellerProductOfferStatus ? <p className={`form-feedback ${sellerProductOfferStatus.tone}`}>{sellerProductOfferStatus.message}</p> : null}
-        {sellerProductCatalogError ? <p className="form-feedback error">{sellerProductCatalogError}</p> : null}
-
-        {sellerClientProductsError ? <p className="form-feedback error">{sellerClientProductsError}</p> : null}
-        {showOrderFields && sellerOrderStatus ? <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p> : null}
 
         <section className="seller-product-catalog-section seller-product-catalog-section-assigned">
           <div className="seller-product-catalog-section-header">
             <p className="section-label">Cliente</p>
-            <h4>Productos asignados a este cliente</h4>
+            <h4>{showOrderFields ? "Productos habituales del cliente" : "Productos asignados a este cliente"}</h4>
             <p className="seller-product-catalog-count">
-              {assignedProducts.length > 0
-                ? `${assignedProducts.length} producto${assignedProducts.length === 1 ? "" : "s"} listos para registrar cantidades.`
-                : "Agrega productos desde el catalogo de abajo."}
+              {showOrderFields
+                ? (assignedProducts.length > 0
+                  ? (sellerAssignedProductsSearchQuery.trim()
+                    ? `${filteredAssignedProducts.length} de ${assignedProducts.length} productos`
+                    : `${assignedProducts.length} producto${assignedProducts.length === 1 ? "" : "s"} de referencia. Agrégalos al pedido solo si los vas a vender hoy.`)
+                  : "Agrega productos desde el catálogo de abajo.")
+                : (assignedProducts.length > 0
+                  ? (sellerAssignedProductsSearchQuery.trim()
+                    ? `${filteredAssignedProducts.length} de ${assignedProducts.length} productos`
+                    : `${assignedProducts.length} producto${assignedProducts.length === 1 ? "" : "s"} asignados a este cliente.`)
+                  : "Agrega productos desde el catálogo de abajo.")}
             </p>
           </div>
+          {assignedProducts.length > 0 ? (
+            <div className="seller-product-catalog-filters">
+              <label className="field field-full">
+                <span>Buscar producto</span>
+                <input
+                  type="search"
+                  value={sellerAssignedProductsSearchQuery}
+                  placeholder="NOMBRE, SKU O CATEGORÍA"
+                  onChange={(event) => setSellerAssignedProductsSearchQuery(event.target.value)}
+                />
+              </label>
+            </div>
+          ) : null}
           {isLoadingSellerClientProducts ? (
             <p className="route-empty-state">Cargando productos asignados...</p>
           ) : assignedProducts.length > 0 ? (
+            filteredAssignedProducts.length > 0 ? (
               <div className="seller-product-catalog-list">
-                {assignedProducts.map((product) => renderSellerAssignedProductRow(product, storeId, showOrderFields))}
+                {filteredAssignedProducts.map((product) => renderSellerAssignedProductRow(
+                  product,
+                  storeId,
+                  { mode: showOrderFields ? "picker" : "manage" },
+                ))}
               </div>
+            ) : (
+              <p className="route-empty-state">No hay productos que coincidan con la búsqueda.</p>
+            )
           ) : (
-            <p className="route-empty-state">Este cliente aun no tiene productos asignados.</p>
+            <p className="route-empty-state">Este cliente aún no tiene productos asignados.</p>
           )}
         </section>
 
         {isLoadingSellerProductCatalog ? (
-          <p className="route-empty-state">Cargando catalogo de bodega...</p>
+          <p className="route-empty-state">Cargando catálogo de bodega...</p>
         ) : (
           <>
-            <section className="seller-product-catalog-section">
+            <section className="seller-product-catalog-section seller-catalog-section--expiring">
               <div className="seller-product-catalog-section-header">
-                <p className="section-label">Prioridad</p>
-                <h4>Proximos a vencer</h4>
+                <div className="seller-panel-header-main">
+                  <div className="seller-panel-icon is-orange">
+                    <SellerIcon name="clock" />
+                  </div>
+                  <div>
+                    <p className="section-label">Prioridad</p>
+                    <h4>Próximos a vencer</h4>
+                  </div>
+                </div>
               </div>
               {filteredExpiringSoon.length > 0 ? (
                 <div className="seller-product-catalog-list">
@@ -9088,22 +9803,29 @@ export default function App() {
                 </div>
               ) : (
                 <p className="route-empty-state">
-                  No hay productos proximos a vencer con stock en bodega.
+                  No hay productos próximos a vencer con stock en bodega.
                 </p>
               )}
             </section>
 
-            <section className="seller-product-catalog-section">
+            <section className="seller-product-catalog-section seller-catalog-section--all">
               <div className="seller-product-catalog-section-header">
-                <p className="section-label">Catalogo</p>
-                <h4>Todos los productos</h4>
-                {filteredProducts.length > 0 ? (
-                  <p className="seller-product-catalog-count">
-                    Mostrando {catalogPageStart + 1}-{Math.min(catalogPageStart + sellerCatalogPageSize, filteredProducts.length)} de {filteredProducts.length}
-                  </p>
-                ) : sellerCatalogSearchQuery.trim() ? (
-                  <p className="seller-product-catalog-count">0 productos encontrados</p>
-                ) : null}
+                <div className="seller-panel-header-main">
+                  <div className="seller-panel-icon is-green">
+                    <SellerIcon name="box" />
+                  </div>
+                  <div>
+                    <p className="section-label">Catálogo</p>
+                    <h4>Todos los productos</h4>
+                    {filteredProducts.length > 0 ? (
+                      <p className="seller-product-catalog-count">
+                        Mostrando {catalogPageStart + 1}-{Math.min(catalogPageStart + sellerCatalogPageSize, filteredProducts.length)} de {filteredProducts.length}
+                      </p>
+                    ) : sellerCatalogSearchQuery.trim() ? (
+                      <p className="seller-product-catalog-count">0 productos encontrados</p>
+                    ) : null}
+                  </div>
+                </div>
               </div>
               <div className="seller-product-catalog-filters">
                 <label className="field field-full">
@@ -9111,7 +9833,7 @@ export default function App() {
                   <input
                     type="search"
                     value={sellerCatalogSearchQuery}
-                    placeholder="Nombre, SKU o categoria"
+                    placeholder="NOMBRE, SKU O CATEGORÍA"
                     onChange={(event) => setSellerCatalogSearchQuery(event.target.value)}
                   />
                 </label>
@@ -9129,7 +9851,7 @@ export default function App() {
                         disabled={currentCatalogPage <= 1}
                         onClick={() => setSellerCatalogPage((current) => Math.max(1, current - 1))}
                       >
-                        ‹
+                        Anterior
                       </button>
                       {catalogPageNumbers.map((pageNumber) => (
                         <button
@@ -9147,7 +9869,7 @@ export default function App() {
                         disabled={currentCatalogPage >= totalCatalogPages}
                         onClick={() => setSellerCatalogPage((current) => Math.min(totalCatalogPages, current + 1))}
                       >
-                        ›
+                        Siguiente
                       </button>
                     </div>
                   ) : null}
@@ -9155,8 +9877,8 @@ export default function App() {
               ) : (
                 <p className="route-empty-state">
                   {sellerCatalogSearchQuery.trim()
-                    ? "No hay productos que coincidan con la busqueda."
-                    : "No hay mas productos disponibles fuera de la seccion de vencimiento."}
+                    ? "No hay productos que coincidan con la búsqueda."
+                    : "No hay más productos disponibles fuera de la sección de vencimiento."}
                 </p>
               )}
             </section>
@@ -16078,9 +16800,81 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
     }
 
     setSellerOrderEditStatus(null);
-    setSellerOrderEditDraft(Object.fromEntries(order.items.map((item) => [item.productId, String(item.quantity)])));
+    setSellerOrderEditItems(order.items.map((item) => ({
+      productId: item.productId,
+      productSku: item.productSku,
+      productName: item.productName,
+      stockCurrent: item.stockCurrent === null || item.stockCurrent === undefined ? "" : String(item.stockCurrent),
+      quantity: String(item.quantity ?? ""),
+      notes: item.notes ?? "",
+      salePriceAwg: item.salePriceAwg,
+      stockRowId: item.stockRowId,
+      description: item.description,
+    })));
+    setSellerOrderEditNotes(order.orderNotes ?? "");
+    setSellerOrderEditInternalNotes(order.internalOrderNotes ?? "");
+    setSellerOrderEditAddProductId("");
     setSellerOrderEditDeliveryDate(order.deliveryDate || order.createdAt.slice(0, 10));
     setSelectedSellerOrderEdit(order);
+    if (productOptions.length === 0) {
+      void refreshReferenceOptions();
+    }
+    void refreshSellerClientProducts(order.storeId);
+    void refreshSellerProductCatalog(order.storeId);
+  }
+
+  function updateSellerOrderEditItem(
+    productId: string,
+    patch: Partial<Pick<SellerOrderEditItemDraft, "stockCurrent" | "quantity" | "notes">>,
+  ) {
+    setSellerOrderEditItems((current) => current.map((item) => (
+      item.productId === productId
+        ? { ...item, ...patch }
+        : item
+    )));
+  }
+
+  function removeSellerOrderEditItem(productId: string) {
+    setSellerOrderEditItems((current) => current.filter((item) => item.productId !== productId));
+  }
+
+  function addSellerOrderEditItem(productId: string) {
+    if (!productId) {
+      return;
+    }
+
+    if (sellerOrderEditItems.some((item) => item.productId === productId)) {
+      setSellerOrderEditStatus({ tone: "error", message: "Ese producto ya está en el pedido." });
+      return;
+    }
+
+    const catalogProduct = productOptions.find((entry) => entry.value === productId);
+    const clientProduct = sellerClientProducts.find((entry) => entry.productId === productId);
+    const productName = catalogProduct?.label ?? clientProduct?.name ?? "";
+    const productSku = catalogProduct?.sku ?? clientProduct?.sku ?? "";
+    const salePriceAwg = catalogProduct?.salePrice ?? clientProduct?.salePrice;
+    const description = catalogProduct?.description ?? clientProduct?.description ?? "";
+
+    if (!productName) {
+      setSellerOrderEditStatus({ tone: "error", message: "No fue posible identificar el producto seleccionado." });
+      return;
+    }
+
+    setSellerOrderEditItems((current) => [
+      ...current,
+      {
+        productId,
+        productSku,
+        productName,
+        stockCurrent: "",
+        quantity: "1",
+        notes: "",
+        ...(typeof salePriceAwg === "number" && Number.isFinite(salePriceAwg) ? { salePriceAwg } : {}),
+        ...(description ? { description } : {}),
+      },
+    ]);
+    setSellerOrderEditAddProductId("");
+    setSellerOrderEditStatus(null);
   }
 
   async function handleSellerOrderEditSubmit() {
@@ -16088,14 +16882,54 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       return;
     }
 
-    const nextItems = selectedSellerOrderEdit.items.map((item) => ({
-      ...item,
-      quantity: Number(sellerOrderEditDraft[item.productId] ?? item.quantity),
-    }));
-
-    if (nextItems.some((item) => !Number.isFinite(item.quantity) || item.quantity < 0)) {
-      setSellerOrderEditStatus({ tone: "error", message: "Todas las cantidades del pedido deben ser cero o mayores." });
+    if (sellerOrderEditItems.length === 0) {
+      setSellerOrderEditStatus({ tone: "error", message: "El pedido debe tener al menos un producto." });
       return;
+    }
+
+    const nextItems: Array<{
+      productId: string;
+      stockCurrent: number | null;
+      quantity: number;
+      notes: string;
+      stockRowId?: string;
+      salePriceAwg?: number;
+      description?: string;
+    }> = [];
+
+    for (let index = 0; index < sellerOrderEditItems.length; index += 1) {
+      const item = sellerOrderEditItems[index];
+      const stockCurrentRaw = item.stockCurrent.trim();
+      const hasStockCurrent = stockCurrentRaw !== "";
+      const stockCurrent = hasStockCurrent ? Number(stockCurrentRaw) : null;
+      const quantity = Number(item.quantity);
+
+      if (hasStockCurrent && (!Number.isFinite(stockCurrent) || (stockCurrent ?? 0) < 0)) {
+        setSellerOrderEditStatus({ tone: "error", message: `El stock actual del producto #${index + 1} debe ser cero o mayor.` });
+        return;
+      }
+
+      if (!Number.isFinite(quantity) || quantity < 0) {
+        setSellerOrderEditStatus({ tone: "error", message: `La cantidad del producto #${index + 1} debe ser cero o mayor.` });
+        return;
+      }
+
+      if ((stockCurrent === null || !Number.isFinite(stockCurrent)) && quantity <= 0) {
+        setSellerOrderEditStatus({ tone: "error", message: `El producto #${index + 1} debe incluir stock actual o cantidad solicitada.` });
+        return;
+      }
+
+      nextItems.push({
+        productId: item.productId,
+        stockCurrent,
+        quantity,
+        notes: item.notes.trim(),
+        ...(item.stockRowId ? { stockRowId: item.stockRowId } : {}),
+        ...(typeof item.salePriceAwg === "number" && Number.isFinite(item.salePriceAwg)
+          ? { salePriceAwg: item.salePriceAwg }
+          : {}),
+        ...(item.description ? { description: item.description } : {}),
+      });
     }
 
     try {
@@ -16111,15 +16945,19 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           storeId: selectedSellerOrderEdit.storeId,
           salesRepId: sessionUser.id,
           deliveryDate: sellerOrderEditDeliveryDate,
+          orderNotes: sellerOrderEditNotes.trim(),
+          internalOrderNotes: sellerOrderEditInternalNotes.trim(),
           editedByUserId: sessionUser.id,
           editedByUserName: sessionUser.name,
           editedByRole: sessionUser.role,
-          items: nextItems.map((item) => ({
-            productId: item.productId,
-            stockCurrent: item.stockCurrent,
-            quantity: item.quantity,
-            notes: item.notes,
+          items: nextItems,
+          giftItems: (selectedSellerOrderEdit.giftItems ?? []).map((gift) => ({
+            productId: gift.productId,
+            quantity: gift.quantity,
+            stockRowId: gift.stockRowId,
+            notes: gift.notes,
           })),
+          attachments: selectedSellerOrderEdit.attachments ?? [],
         }),
       });
       const data = (await response.json()) as { message?: string };
@@ -16142,9 +16980,15 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
         await refreshSellerOrderEditLogs(String(selectedSellerOrderEdit._id), sessionUser.id);
       }
       setSelectedSellerOrderEdit(null);
-      setSellerOrderEditDraft({});
-    } catch {
-      setSellerOrderEditStatus({ tone: "error", message: "No fue posible conectar con el backend." });
+      setSellerOrderEditItems([]);
+      setSellerOrderEditNotes("");
+      setSellerOrderEditInternalNotes("");
+      setSellerOrderEditAddProductId("");
+    } catch (error) {
+      setSellerOrderEditStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible conectar con el backend.",
+      });
     } finally {
       setIsSavingSellerOrderEdit(false);
     }
@@ -16388,6 +17232,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       }
 
       setSellerOrderDraft({});
+      setSellerOrderCartProductIds([]);
       setSellerGiftDraftItems([]);
       setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
       setSellerOrderNotesDraft("");
@@ -16395,8 +17240,13 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       setSellerOrderAttachmentsDraft([]);
       setSellerOrderAttachmentError("");
       setSellerDeliveryDateDraft(getDefaultOrderDeliveryDateKey());
+      setSellerCatalogSearchQuery("");
+      setSellerAssignedProductsSearchQuery("");
+      setSellerCatalogPage(1);
+      setSellerProductOfferStatus(null);
+      setSellerOrderStatus(null);
       setSelectedSellerStoreId("");
-      setSellerOrderStatus({ tone: "success", message: data.message ?? "Pedido enviado a bodega correctamente." });
+      setSellerOrderSuccessNotice(data.message ?? "Pedido enviado a bodega correctamente.");
       await refreshSellerOrders(sessionUser.id);
     } catch {
       setSellerOrderStatus({ tone: "error", message: "No fue posible conectar con el backend." });
@@ -17106,6 +17956,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       if (!("role" in data) || !data.role) {
         setLoginError("No fue posible identificar el rol del usuario.");
         return;
+      }
+
+      try {
+        if (rememberLoginEmail) {
+          localStorage.setItem("spste.login.email", email.trim());
+        } else {
+          localStorage.removeItem("spste.login.email");
+        }
+      } catch {
+        // Ignore storage failures (private mode / blocked storage).
       }
 
       setSessionUser(data);
@@ -18385,59 +19245,154 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
   if (!sessionUser) {
     return (
       <main className="login-shell">
-        <section className="login-panel">
-          <img className="login-logo" src="/sps-logo.jpeg" alt="SPS Trading Enterprises" />
-          <div>
-            <h1>Iniciar sesión</h1>
-            <p className="route-helper-text">Accede según tu rol para administrar catálogos, rutas, inventario y pedidos.</p>
+        <section className="login-card" aria-label="Inicio de sesión">
+          <div className="login-brand-pane">
+            <div className="login-brand">
+              <img className="login-brand-logo" src="/sps-logo.jpeg" alt="SPS Trading Enterprises" />
+            </div>
+
+            <div className="login-brand-copy">
+              <h1>
+                Bienvenido de
+                <span> nuevo</span>
+              </h1>
+              <p>Accede según tu rol para administrar catálogos, rutas, inventario y pedidos de manera eficiente.</p>
+            </div>
+
+            <div className="login-illustration" aria-hidden="true">
+              <div className="login-illustration-platform">
+                <div className="login-illustration-screen login-illustration-screen--left" />
+                <div className="login-illustration-screen login-illustration-screen--right" />
+                <div className="login-illustration-lock">
+                  <span />
+                </div>
+              </div>
+            </div>
+
+            <p className="login-security-note">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3 5 6v6c0 5 3.2 8.4 7 9.5 3.8-1.1 7-4.5 7-9.5V6l-7-3Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+                <path d="m9.2 12 1.8 1.8 3.8-3.8" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Tu información está segura con nosotros.
+            </p>
           </div>
 
-          <form className="login-form" onSubmit={(event) => void handleLogin(event)}>
-            <label className="field">
-              <span>Correo</span>
-              <input
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="usuario@spste.com"
-                autoComplete="email"
-                required
-              />
-            </label>
+          <div className="login-form-pane">
+            <div className="login-form-header">
+              <div className="login-form-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <rect x="5" y="10" width="14" height="10" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.7" />
+                  <path d="M8 10V8a4 4 0 0 1 8 0v2" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                </svg>
+              </div>
+              <h2>Iniciar sesión</h2>
+            </div>
 
-            <label className="field">
-              <span>Contraseña</span>
-              <input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="Ingresa tu contraseña"
-                autoComplete="current-password"
-                required
-              />
-            </label>
+            <form className="login-form" onSubmit={(event) => void handleLogin(event)}>
+              <label className="field login-field">
+                <span>Correo</span>
+                <div className="login-input-wrap">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="3.5" y="5.5" width="17" height="13" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.7" />
+                    <path d="m5 7.5 7 5.5 7-5.5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="usuario@spste.com"
+                    autoComplete="email"
+                    required
+                  />
+                </div>
+              </label>
 
-            {loginError ? <p className="form-feedback error">{loginError}</p> : null}
+              <label className="field login-field">
+                <span>Contraseña</span>
+                <div className="login-input-wrap">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="5" y="10" width="14" height="10" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.7" />
+                    <path d="M8 10V8a4 4 0 0 1 8 0v2" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                  </svg>
+                  <input
+                    type={showLoginPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder="Ingresa tu contraseña"
+                    autoComplete="current-password"
+                    required
+                  />
+                  <button
+                    className="login-password-toggle"
+                    type="button"
+                    aria-label={showLoginPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                    onClick={() => setShowLoginPassword((current) => !current)}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      {showLoginPassword ? (
+                        <>
+                          <path d="M4 4l16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                          <path d="M10.5 10.7A3 3 0 0 0 13.3 13.5M9.6 5.6A10.8 10.8 0 0 1 12 5.2c5.2 0 8.8 4.2 9.8 6.8a11.2 11.2 0 0 1-4.1 4.8M6.2 6.8A11.4 11.4 0 0 0 2.2 12C3.2 14.6 6.8 18.8 12 18.8c1.2 0 2.3-.2 3.3-.6" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                        </>
+                      ) : (
+                        <>
+                          <path d="M2.5 12S5.8 6.5 12 6.5 21.5 12 21.5 12 18.2 17.5 12 17.5 2.5 12 2.5 12Z" fill="none" stroke="currentColor" strokeWidth="1.7" />
+                          <circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" strokeWidth="1.7" />
+                        </>
+                      )}
+                    </svg>
+                  </button>
+                </div>
+              </label>
 
-            <button className="submit-button" type="submit" disabled={isAuthenticating}>
-              {isAuthenticating ? "Ingresando..." : "Entrar"}
-            </button>
-          </form>
+              <label className="login-remember">
+                <input
+                  type="checkbox"
+                  checked={rememberLoginEmail}
+                  onChange={(event) => setRememberLoginEmail(event.target.checked)}
+                />
+                <span>Recordarme</span>
+              </label>
+
+              {loginError ? <p className="form-feedback error">{loginError}</p> : null}
+
+              <button className="login-submit" type="submit" disabled={isAuthenticating}>
+                {isAuthenticating ? "Ingresando..." : "Entrar"}
+                {!isAuthenticating ? (
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 12h12M13 6l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                ) : null}
+              </button>
+            </form>
+          </div>
         </section>
       </main>
     );
   }
 
   if (sessionUser.role === "sales-rep-aruba") {
-    return (
-      <main className="portal-shell portal-shell--field">
-        <aside className="sidebar">
-          <img className="sidebar-logo" src="/sps-logo.jpeg" alt="SPS Trading Enterprises" />
+    const sellerInitials = getUserInitials(sessionUser.name);
 
-          <div className="sidebar-user">
-            <p className="section-label">{userRoleLabel}</p>
-            <h2>{sessionUser.name}</h2>
-            <p>{sessionUser.email}</p>
+    return (
+      <main className="portal-shell portal-shell--field portal-shell--seller">
+        <aside className="sidebar seller-sidebar">
+          <div className="seller-brand">
+            <div className="seller-brand-mark" aria-hidden="true">SPS</div>
+            <div className="seller-brand-copy">
+              <strong>SPS Trading Enterprises</strong>
+              <span>Portal de ventas</span>
+            </div>
+          </div>
+
+          <div className="sidebar-user seller-sidebar-user">
+            <div className="seller-avatar" aria-hidden="true">{sellerInitials}</div>
+            <div className="seller-sidebar-user-copy">
+              <p className="section-label">{userRoleLabel}</p>
+              <h2>{sessionUser.name}</h2>
+              <p>{sessionUser.email}</p>
+            </div>
           </div>
 
           <nav className="sidebar-nav">
@@ -18446,6 +19401,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               type="button"
               onClick={() => setSellerActiveSection("routes")}
             >
+              <SellerIcon name="routes" />
               Rutas asignadas
             </button>
             <button
@@ -18453,6 +19409,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               type="button"
               onClick={() => setSellerActiveSection("clients")}
             >
+              <SellerIcon name="clients" />
               Clientes
             </button>
             <button
@@ -18460,6 +19417,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               type="button"
               onClick={() => setSellerActiveSection("orders")}
             >
+              <SellerIcon name="orders" />
               Pedidos
             </button>
             <button
@@ -18467,151 +19425,274 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               type="button"
               onClick={() => setSellerActiveSection("performance")}
             >
+              <SellerIcon name="performance" />
               Desempeño
             </button>
           </nav>
-
-          <button className="ghost-button" type="button" onClick={handleLogout}>
-            Cerrar sesión
-          </button>
         </aside>
 
         <section className="portal-content portal-content--field">
-          <header className="portal-header portal-header--field">
-            <div className="portal-header-top">
-              <div>
-                <p className="section-label">Portal Vendedor · {sessionUser.name}</p>
-                <h1>
-                  {sellerActiveSection === "orders"
-                    ? "Pedidos realizados"
-                    : sellerActiveSection === "clients"
-                      ? "Clientes Aruba"
-                      : sellerActiveSection === "performance"
-                        ? "Mi desempeño"
-                      : "Rutas asignadas"}
-                </h1>
+          <header className="seller-topbar">
+            <div className="seller-topbar-spacer" aria-hidden="true" />
+
+            <div className="seller-topbar-actions">
+              <div className={`seller-topbar-user-menu ${isSellerTopbarMenuOpen ? "is-open" : ""}`}>
+                <button
+                  className="seller-topbar-user"
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={isSellerTopbarMenuOpen}
+                  onClick={() => setIsSellerTopbarMenuOpen((current) => !current)}
+                >
+                  <div className="seller-avatar" aria-hidden="true">{sellerInitials}</div>
+                  <div className="seller-topbar-user-copy">
+                    <strong>{sessionUser.name}</strong>
+                    <span>{sessionUser.email}</span>
+                  </div>
+                  <span className="seller-topbar-caret" aria-hidden="true">
+                    <SellerIcon name="chevron" />
+                  </span>
+                </button>
+
+                {isSellerTopbarMenuOpen ? (
+                  <div className="seller-topbar-dropdown" role="menu">
+                    <button
+                      className="seller-topbar-dropdown-item"
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setIsSellerTopbarMenuOpen(false);
+                        handleLogout();
+                      }}
+                    >
+                      <SellerIcon name="logout" />
+                      Cerrar sesión
+                    </button>
+                  </div>
+                ) : null}
               </div>
-              <button className="portal-mobile-logout" type="button" onClick={handleLogout}>
-                Salir
-              </button>
             </div>
-            <p className="portal-header-desc">
-              {sellerActiveSection === "orders"
-                ? "Consulta el historial de pedidos enviados desde tu portal y revisa su estado actual."
-                : sellerActiveSection === "clients"
-                  ? "Consulta todos los clientes de Aruba y agrega o quita los productos que deben quedar disponibles para ese cliente."
-                  : sellerActiveSection === "performance"
-                    ? "Revisa tus metas semanales y mensuales, tu facturacion y el progreso para obtener bonos."
-                  : "Revisa las rutas creadas por gerencia, abre el día de trabajo, selecciona el cliente y arma el pedido que recibirá bodega para despacho."}
-            </p>
           </header>
 
+          <div className="seller-portal-body">
           {pushNotificationBannerNode}
 
           {sellerActiveSection === "performance" ? (
-            <section className="routes-layout">
-              <article className="creation-selector-block">
-                <p className="section-label">Motivacion comercial</p>
-                <h2>Mis metas y facturacion</h2>
-                <p className="route-helper-text">
-                  Semana {sellerPerformanceMeta.weekLabel || "-"} · Mes {sellerPerformanceMeta.monthLabel || "-"}
-                </p>
+            <section className="routes-layout seller-performance-layout">
+              <article className="seller-hero seller-hero--performance">
+                <div>
+                  <p className="seller-hero-eyebrow">Tu rendimiento · Metas y facturación</p>
+                  <h2>Mi desempeño</h2>
+                  <p>
+                    Revisa tu facturación, el avance de metas y el ritmo de envíos a bodega.
+                    Semana {sellerPerformanceMeta.weekLabel || "—"} · Mes {sellerPerformanceMeta.monthLabel || "—"}.
+                  </p>
+                </div>
+                <div className="seller-hero-art" aria-hidden="true">
+                  <div className="seller-perf-art">
+                    <span className="seller-perf-art-bar" />
+                    <span className="seller-perf-art-bar" />
+                    <span className="seller-perf-art-bar" />
+                    <span className="seller-perf-art-bar" />
+                    <div className="seller-perf-art-badge">
+                      <SellerIcon name="performance" />
+                    </div>
+                  </div>
+                </div>
               </article>
 
               {sellerPerformanceError ? <p className="form-feedback error">{sellerPerformanceError}</p> : null}
 
               {isLoadingSellerPerformance ? (
-                <p className="route-empty-state">Cargando tu desempeno...</p>
+                <div className="seller-empty-state">
+                  <div className="seller-empty-magnifier">
+                    <SellerIcon name="performance" />
+                  </div>
+                  <h3>Cargando tu desempeño...</h3>
+                  <p>Estamos consultando metas, facturación y envíos recientes.</p>
+                </div>
               ) : sellerPerformance ? (
                 <>
-                  <div className="accounting-kpi-grid stores-detail-kpis">
-                    <article className="kpi-card tone-cyan kpi-card-with-goal">
-                      <p>Facturacion semanal</p>
-                      <strong>{formatAwgCurrency(sellerPerformance.billingStats.weeklyRevenueAwg)}</strong>
-                      <div className="kpi-goal-block">
-                        <span className="kpi-goal-label">Meta semanal</span>
-                        {sellerPerformance.goals.hasCustomGoals ? (
-                          <strong className="kpi-goal-value">{formatAwgCurrency(sellerPerformance.goals.weeklyGoalAwg)}</strong>
-                        ) : (
-                          <strong className="kpi-goal-value is-pending">Gerencia aun no la define</strong>
-                        )}
-                      </div>
+                  <div className="seller-perf-stat-row">
+                    <article className="seller-perf-stat-chip">
+                      <span>Pedidos</span>
+                      <strong>{sellerPerformance.orderStats.total}</strong>
                     </article>
-                    <article className="kpi-card tone-amber kpi-card-with-goal">
-                      <p>Facturacion mensual</p>
-                      <strong>{formatAwgCurrency(sellerPerformance.billingStats.monthlyRevenueAwg)}</strong>
-                      <div className="kpi-goal-block">
-                        <span className="kpi-goal-label">Meta mensual</span>
-                        {sellerPerformance.goals.hasCustomGoals ? (
-                          <strong className="kpi-goal-value">{formatAwgCurrency(sellerPerformance.goals.monthlyGoalAwg)}</strong>
-                        ) : (
-                          <strong className="kpi-goal-value is-pending">Gerencia aun no la define</strong>
-                        )}
-                      </div>
+                    <article className="seller-perf-stat-chip is-green">
+                      <span>Entregados</span>
+                      <strong>{sellerPerformance.orderStats.delivered}</strong>
                     </article>
-                    <article className={`kpi-card ${sellerPerformance.goals.weeklyGoalMet ? "tone-cyan" : "tone-slate"}`}>
-                      <p>Progreso semanal</p>
-                      <strong>{sellerPerformance.goals.hasCustomGoals ? `${sellerPerformance.goals.weeklyProgress}%` : "—"}</strong>
-                      <small>
-                        {sellerPerformance.goals.hasCustomGoals
-                          ? (sellerPerformance.goals.weeklyGoalMet
-                            ? `Bono: ${formatAwgCurrency(sellerPerformance.goals.weeklyBonusAwg)}`
-                            : "Meta pendiente")
-                          : "Esperando meta de gerencia"}
-                      </small>
+                    <article className="seller-perf-stat-chip is-orange">
+                      <span>Pendientes</span>
+                      <strong>{sellerPerformance.orderStats.pending}</strong>
                     </article>
-                    <article className={`kpi-card ${sellerPerformance.goals.monthlyGoalMet ? "tone-cyan" : "tone-slate"}`}>
-                      <p>Progreso mensual</p>
-                      <strong>{sellerPerformance.goals.hasCustomGoals ? `${sellerPerformance.goals.monthlyProgress}%` : "—"}</strong>
-                      <small>
-                        {sellerPerformance.goals.hasCustomGoals
-                          ? (sellerPerformance.goals.monthlyGoalMet
-                            ? `Bono: ${formatAwgCurrency(sellerPerformance.goals.monthlyBonusAwg)}`
-                            : "Meta pendiente")
-                          : "Esperando meta de gerencia"}
-                      </small>
+                    <article className="seller-perf-stat-chip is-purple">
+                      <span>Facturas</span>
+                      <strong>{sellerPerformance.billingStats.invoiceCount}</strong>
                     </article>
                   </div>
 
-                  <article className="database-card seller-submission-timeline">
-                    <div className="management-table-header">
-                      <div>
-                        <h2>Mis envios a bodega</h2>
-                        <p>Hora en que subiste cada pedido y tiempo entre visitas a tiendas.</p>
+                  <div className="seller-perf-kpi-grid">
+                    <article className="seller-perf-kpi-card">
+                      <div className="seller-perf-kpi-top">
+                        <div className="seller-panel-icon is-green">
+                          <SellerIcon name="calendar" />
+                        </div>
+                        <p className="section-label">Semana</p>
                       </div>
+                      <p className="seller-perf-kpi-label">Facturación semanal</p>
+                      <strong className="seller-perf-kpi-value">
+                        {formatAwgCurrency(sellerPerformance.billingStats.weeklyRevenueAwg)}
+                        <small>AWG</small>
+                      </strong>
+                      <div className="seller-perf-goal-meta">
+                        <span>Meta semanal</span>
+                        {sellerPerformance.goals.hasCustomGoals ? (
+                          <strong>{formatAwgCurrency(sellerPerformance.goals.weeklyGoalAwg)} AWG</strong>
+                        ) : (
+                          <strong className="is-pending">Gerencia aún no la define</strong>
+                        )}
+                      </div>
+                      <div className="seller-perf-progress">
+                        <div className="seller-perf-progress-track">
+                          <div
+                            className={`seller-perf-progress-fill ${sellerPerformance.goals.weeklyGoalMet ? "is-met" : ""}`}
+                            style={{
+                              width: sellerPerformance.goals.hasCustomGoals
+                                ? `${Math.min(100, Math.max(0, sellerPerformance.goals.weeklyProgress))}%`
+                                : "0%",
+                            }}
+                          />
+                        </div>
+                        <div className="seller-perf-progress-copy">
+                          <strong>
+                            {sellerPerformance.goals.hasCustomGoals
+                              ? `${sellerPerformance.goals.weeklyProgress}%`
+                              : "—"}
+                          </strong>
+                          <span>
+                            {sellerPerformance.goals.hasCustomGoals
+                              ? (sellerPerformance.goals.weeklyGoalMet
+                                ? `Meta cumplida · Bono ${formatAwgCurrency(sellerPerformance.goals.weeklyBonusAwg)}`
+                                : "Meta pendiente")
+                              : "Esperando meta de gerencia"}
+                          </span>
+                        </div>
+                      </div>
+                    </article>
+
+                    <article className="seller-perf-kpi-card is-monthly">
+                      <div className="seller-perf-kpi-top">
+                        <div className="seller-panel-icon">
+                          <SellerIcon name="performance" />
+                        </div>
+                        <p className="section-label">Mes</p>
+                      </div>
+                      <p className="seller-perf-kpi-label">Facturación mensual</p>
+                      <strong className="seller-perf-kpi-value">
+                        {formatAwgCurrency(sellerPerformance.billingStats.monthlyRevenueAwg)}
+                        <small>AWG</small>
+                      </strong>
+                      <div className="seller-perf-goal-meta">
+                        <span>Meta mensual</span>
+                        {sellerPerformance.goals.hasCustomGoals ? (
+                          <strong>{formatAwgCurrency(sellerPerformance.goals.monthlyGoalAwg)} AWG</strong>
+                        ) : (
+                          <strong className="is-pending">Gerencia aún no la define</strong>
+                        )}
+                      </div>
+                      <div className="seller-perf-progress">
+                        <div className="seller-perf-progress-track">
+                          <div
+                            className={`seller-perf-progress-fill is-purple ${sellerPerformance.goals.monthlyGoalMet ? "is-met" : ""}`}
+                            style={{
+                              width: sellerPerformance.goals.hasCustomGoals
+                                ? `${Math.min(100, Math.max(0, sellerPerformance.goals.monthlyProgress))}%`
+                                : "0%",
+                            }}
+                          />
+                        </div>
+                        <div className="seller-perf-progress-copy">
+                          <strong>
+                            {sellerPerformance.goals.hasCustomGoals
+                              ? `${sellerPerformance.goals.monthlyProgress}%`
+                              : "—"}
+                          </strong>
+                          <span>
+                            {sellerPerformance.goals.hasCustomGoals
+                              ? (sellerPerformance.goals.monthlyGoalMet
+                                ? `Meta cumplida · Bono ${formatAwgCurrency(sellerPerformance.goals.monthlyBonusAwg)}`
+                                : "Meta pendiente")
+                              : "Esperando meta de gerencia"}
+                          </span>
+                        </div>
+                      </div>
+                    </article>
+                  </div>
+
+                  <article className="seller-panel seller-performance-panel">
+                    <div className="seller-panel-header">
+                      <div className="seller-panel-header-main">
+                        <div className="seller-panel-icon is-orange">
+                          <SellerIcon name="send" />
+                        </div>
+                        <div>
+                          <p className="section-label">Actividad</p>
+                          <h2>Mis envíos a bodega</h2>
+                          <p>Hora de cada pedido y tiempo entre visitas a tiendas.</p>
+                        </div>
+                      </div>
+                      <span className="seller-chip-count">
+                        {sellerPerformance.orderSubmissions.length} envío{sellerPerformance.orderSubmissions.length === 1 ? "" : "s"}
+                      </span>
                     </div>
+
                     {sellerPerformance.orderSubmissions.length > 0 ? (
-                      <div className="table-wrap table-wrap--cards">
-                        <table className="data-table data-table--seller-submissions">
-                          <thead>
-                            <tr>
-                              <th>Fecha</th>
-                              <th>Hora</th>
-                              <th>Cliente</th>
-                              <th>Traslado</th>
-                              <th>Unidades</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {sellerPerformance.orderSubmissions.slice(0, 30).map((submission) => (
-                              <tr key={submission.orderId}>
-                                <td>{String(submission.createdAt).slice(0, 10)}</td>
-                                <td><strong>{formatSellerOrderTime(submission.createdAt)}</strong></td>
-                                <td>{submission.storeName}</td>
-                                <td>{formatTravelMinutes(submission.minutesSincePrevious)}</td>
-                                <td>{submission.totalUnits}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                      <div className="seller-perf-submission-list">
+                        {sellerPerformance.orderSubmissions.slice(0, 30).map((submission) => (
+                          <article key={submission.orderId} className="seller-perf-submission-row">
+                            <div className="seller-perf-submission-time">
+                              <strong>{formatSellerOrderTime(submission.createdAt)}</strong>
+                              <span>{String(submission.createdAt).slice(0, 10)}</span>
+                            </div>
+                            <div className="seller-perf-submission-main">
+                              <strong>{submission.storeName}</strong>
+                              <span>
+                                {submission.routeName || "Sin ruta"}
+                                {submission.routeDay ? ` · ${formatRouteDayLabel(submission.routeDay as RouteDayKey)}` : ""}
+                              </span>
+                            </div>
+                            <div className="seller-perf-submission-meta">
+                              <span className="seller-perf-pill">
+                                <SellerIcon name="clock" />
+                                {formatTravelMinutes(submission.minutesSincePrevious)}
+                              </span>
+                              <span className="seller-perf-pill is-green">
+                                {submission.totalUnits} und
+                              </span>
+                            </div>
+                          </article>
+                        ))}
                       </div>
                     ) : (
-                      <p className="route-empty-state">Aun no has enviado pedidos a bodega.</p>
+                      <div className="seller-empty-state seller-empty-state--compact">
+                        <div className="seller-empty-magnifier">
+                          <SellerIcon name="orders" />
+                        </div>
+                        <h3>Aún no has enviado pedidos a bodega</h3>
+                        <p>Cuando envíes desde Rutas asignadas, verás aquí el historial de envíos.</p>
+                      </div>
                     )}
                   </article>
                 </>
               ) : (
-                <p className="route-empty-state">No fue posible cargar tu desempeno.</p>
+                <div className="seller-empty-state">
+                  <div className="seller-empty-magnifier">
+                    <SellerIcon name="performance" />
+                  </div>
+                  <h3>No fue posible cargar tu desempeño</h3>
+                  <p>Intenta de nuevo en un momento o vuelve a entrar a esta sección.</p>
+                </div>
               )}
             </section>
           ) : sellerActiveSection === "orders" ? (
@@ -18795,12 +19876,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
               {selectedSellerOrderEdit ? (
                 <AppModalOverlay onDismiss={() => setSelectedSellerOrderEdit(null)}>
-                  <div className="modal-card seller-order-detail-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                  <div className="modal-card modal-card--wide seller-order-detail-modal seller-order-edit-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                     <div className="modal-header">
                       <div>
                         <p className="section-label">Modificar pedido</p>
                         <h2>{selectedSellerOrderEdit.storeName}</h2>
-                        <p>Solo puedes editar la cantidad durante las primeras 6 horas después de crear el pedido.</p>
+                        <p>Puedes editar productos, cantidades, notas y fecha durante las primeras 6 horas después de crear el pedido.</p>
                       </div>
                       <button className="modal-close-button" type="button" onClick={() => setSelectedSellerOrderEdit(null)}>Cerrar</button>
                     </div>
@@ -18817,8 +19898,52 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       />
                     </label>
 
+                    <div className="seller-order-edit-notes-grid">
+                      <label className="field">
+                        <span>Nota u observación del pedido en factura</span>
+                        <textarea
+                          rows={3}
+                          value={sellerOrderEditNotes}
+                          placeholder="Ejemplo: cliente pidió media paca de sal..."
+                          onChange={(event) => setSellerOrderEditNotes(event.target.value)}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Nota u observación del pedido interno</span>
+                        <textarea
+                          rows={3}
+                          value={sellerOrderEditInternalNotes}
+                          placeholder="Solo uso interno: instrucciones para bodega..."
+                          onChange={(event) => setSellerOrderEditInternalNotes(event.target.value)}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="seller-order-edit-add">
+                      <label className="field field-full">
+                        <span>Agregar producto</span>
+                        <SearchableProductSelect
+                          products={productOptions.filter((product) => (
+                            product.shareWithAruba !== false
+                            && !sellerOrderEditItems.some((item) => item.productId === product.value)
+                          ))}
+                          value={sellerOrderEditAddProductId}
+                          onChange={setSellerOrderEditAddProductId}
+                          placeholder="Buscar producto por nombre o SKU..."
+                        />
+                      </label>
+                      <button
+                        className="ghost-button ghost-button--accent"
+                        type="button"
+                        disabled={!sellerOrderEditAddProductId}
+                        onClick={() => addSellerOrderEditItem(sellerOrderEditAddProductId)}
+                      >
+                        + Agregar
+                      </button>
+                    </div>
+
                     <div className="table-wrap table-wrap--cards">
-                      <table className="data-table data-table--order-items">
+                      <table className="data-table data-table--order-items data-table--seller-order-edit">
                         <thead>
                           <tr>
                             <th>SKU</th>
@@ -18826,36 +19951,73 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             <th>Stock actual</th>
                             <th>Cantidad</th>
                             <th>Notas</th>
+                            <th>Acción</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {selectedSellerOrderEdit.items.map((item) => (
+                          {sellerOrderEditItems.length > 0 ? sellerOrderEditItems.map((item) => (
                             <tr key={`${selectedSellerOrderEdit._id}-${item.productId}`}>
                               <td>{item.productSku}</td>
                               <td>{item.productName}</td>
-                              <td>{item.stockCurrent ?? "-"}</td>
                               <td>
                                 <input
                                   className="catalog-price-input seller-order-input"
                                   type="number"
                                   min="0"
                                   step="any"
-                                  value={sellerOrderEditDraft[item.productId] ?? String(item.quantity)}
-                                  onChange={(event) => setSellerOrderEditDraft((current) => ({
-                                    ...current,
-                                    [item.productId]: event.target.value,
-                                  }))}
+                                  value={item.stockCurrent}
+                                  placeholder="-"
+                                  onChange={(event) => updateSellerOrderEditItem(item.productId, {
+                                    stockCurrent: event.target.value,
+                                  })}
                                 />
                               </td>
-                              <td>{item.notes || "-"}</td>
+                              <td>
+                                <input
+                                  className="catalog-price-input seller-order-input"
+                                  type="number"
+                                  min="0"
+                                  step="any"
+                                  value={item.quantity}
+                                  onChange={(event) => updateSellerOrderEditItem(item.productId, {
+                                    quantity: event.target.value,
+                                  })}
+                                />
+                              </td>
+                              <td>
+                                <input
+                                  className="seller-order-edit-notes-input"
+                                  type="text"
+                                  value={item.notes}
+                                  placeholder="Observación"
+                                  onChange={(event) => updateSellerOrderEditItem(item.productId, {
+                                    notes: event.target.value,
+                                  })}
+                                />
+                              </td>
+                              <td>
+                                <button
+                                  className="ghost-button ghost-button--danger"
+                                  type="button"
+                                  aria-label={`Eliminar ${item.productName}`}
+                                  disabled={sellerOrderEditItems.length <= 1}
+                                  onClick={() => removeSellerOrderEditItem(item.productId)}
+                                >
+                                  Eliminar
+                                </button>
+                              </td>
                             </tr>
-                          ))}
+                          )) : (
+                            <tr>
+                              <td colSpan={6} className="empty-table-cell">Agrega al menos un producto al pedido.</td>
+                            </tr>
+                          )}
                         </tbody>
                       </table>
                     </div>
 
                     <div className="seller-order-footer">
-                      <p>Las cantidades modificadas reemplazarán el pedido original.</p>
+                      <p>Los cambios reemplazarán el pedido original enviado a bodega.</p>
                       <button className="submit-button seller-order-submit" type="button" onClick={() => void handleSellerOrderEditSubmit()} disabled={isSavingSellerOrderEdit}>
                         {isSavingSellerOrderEdit ? "Guardando cambios..." : "Guardar cambios"}
                       </button>
@@ -18931,19 +20093,37 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             </section>
           ) : (
             <section className="routes-layout">
-              <article className="creation-selector-block">
-                <p className="section-label">Tu agenda</p>
-                <h2>Rutas asignadas por gerencia</h2>
-                <p className="route-helper-text">Aquí solo verás las rutas asociadas a tu usuario y podrás preparar el pedido de cada cliente visitado.</p>
+              <article className="seller-hero">
+                <div>
+                  <p className="seller-hero-eyebrow">👋 ¡Hola! Bienvenido de nuevo · Tu agenda</p>
+                  <h2>Rutas asignadas por gerencia</h2>
+                  <p>Aquí solo verás las rutas asociadas a tu usuario y podrás preparar el pedido de cada cliente visitado.</p>
+                </div>
+                <div className="seller-hero-art" aria-hidden="true">
+                  <div className="seller-map-art">
+                    <div className="seller-map-art-path" />
+                    <div className="seller-map-art-pin" />
+                    <div className="seller-map-art-dot" />
+                    <div className="seller-map-art-dot" />
+                    <div className="seller-map-art-dot" />
+                  </div>
+                </div>
               </article>
 
-              <article className="database-card">
-                <div className="management-table-header">
-                  <div>
-                    <h2>Mis rutas</h2>
-                    <p>Selecciona una ruta para abrir sus días y clientes asignados.</p>
+              <article className="seller-panel">
+                <div className="seller-panel-header">
+                  <div className="seller-panel-header-main">
+                    <div className="seller-panel-icon">
+                      <SellerIcon name="routes" />
+                    </div>
+                    <div>
+                      <h2>Mis rutas</h2>
+                      <p>Selecciona una ruta para abrir sus días y clientes asignados.</p>
+                    </div>
                   </div>
-                  <p className="management-table-meta">{sellerRoutes.length} rutas</p>
+                  <span className="seller-chip-count">
+                    {sellerRoutes.length} ruta{sellerRoutes.length === 1 ? "" : "s"}
+                  </span>
                 </div>
 
                 {sellerRoutesError ? <p className="form-feedback error">{sellerRoutesError}</p> : null}
@@ -18963,30 +20143,51 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           type="button"
                           onClick={() => setSelectedSellerRouteId(routeKey)}
                         >
-                          <div>
-                            <p className="section-label">{route.weekLabel}</p>
-                            <strong>{route.name}</strong>
-                            <span>{route.days.length} días planeados</span>
+                          <div className="seller-route-list-item-main">
+                            <div className="seller-route-list-icon">
+                              <SellerIcon name="calendar" />
+                            </div>
+                            <div>
+                              <p className="section-label">{route.weekLabel}</p>
+                              <strong>{route.name}</strong>
+                              <span>{route.days.length} días planeados</span>
+                            </div>
                           </div>
-                          <span>{route.plannedStops} tiendas</span>
+                          <span className="seller-route-list-meta">
+                            {route.plannedStops} tiendas
+                            <SellerIcon name="chevron" />
+                          </span>
                         </button>
                       );
                     })
                   ) : (
-                    <p className="route-empty-state">Aún no tienes rutas asignadas.</p>
+                    <div className="seller-empty-state">
+                      <div className="seller-empty-magnifier">
+                        <SellerIcon name="map" />
+                      </div>
+                      <h3>Aún no tienes rutas asignadas</h3>
+                      <p>Cuando gerencia te asigne una ruta, aparecerá aquí lista para trabajar.</p>
+                    </div>
                   )}
                 </div>
               </article>
 
               {selectedSellerRoute ? (
                 <article className="route-builder-card seller-route-workspace">
-                  <div className="management-table-header">
-                    <div>
-                      <p className="section-label">Ruta activa</p>
-                      <h2>{selectedSellerRoute.name}</h2>
-                      <p>{selectedSellerRoute.weekLabel} · {selectedSellerRoute.salesRepName}</p>
+                  <div className="seller-route-active-header">
+                    <div className="seller-route-active-header-main">
+                      <div className="seller-panel-icon is-green">
+                        <SellerIcon name="map" />
+                      </div>
+                      <div>
+                        <p className="section-label">Ruta activa</p>
+                        <h2>{selectedSellerRoute.name}</h2>
+                        <p>{selectedSellerRoute.weekLabel} · {selectedSellerRoute.salesRepName}</p>
+                      </div>
                     </div>
-                    <p className="management-table-meta">{selectedSellerRoute.plannedStops} tiendas</p>
+                    <span className="seller-chip-count is-green">
+                      {selectedSellerRoute.plannedStops} tiendas
+                    </span>
                   </div>
 
                   <div className="seller-route-day-tabs">
@@ -19000,6 +20201,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           setSellerRouteStoreSearch("");
                         }}
                       >
+                        <span className="seller-day-icon">
+                          <SellerIcon name="calendar" />
+                        </span>
                         <strong>{formatRouteDayLabel(day.day)}</strong>
                         <span>{day.stores.length} clientes</span>
                       </button>
@@ -19009,23 +20213,33 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   {selectedSellerDay ? (
                     <>
                       <div className="seller-route-client-panel">
-                        <label className="field field-full">
-                          <span>Buscar tienda</span>
-                          <input
-                            type="search"
-                            placeholder="Buscar entre todas las tiendas de la ruta"
-                            value={sellerRouteStoreSearch}
-                            onChange={(event) => setSellerRouteStoreSearch(event.target.value)}
-                          />
-                        </label>
+                        <div className="seller-store-toolbar">
+                          <label className="field field-full">
+                            <span>Buscar tienda</span>
+                            <input
+                              type="search"
+                              placeholder="Buscar entre todas las tiendas de la ruta..."
+                              value={sellerRouteStoreSearch}
+                              onChange={(event) => setSellerRouteStoreSearch(event.target.value)}
+                            />
+                          </label>
+                          <button className="seller-filter-btn" type="button">
+                            <SellerIcon name="filter" />
+                            Filtros
+                          </button>
+                        </div>
 
                         <div className="field field-full">
-                          <span>{normalizedSellerRouteStoreSearch ? "Resultados en toda la ruta" : "Cliente de la ruta"}</span>
-                          <p className="seller-route-store-search-meta">
-                            {normalizedSellerRouteStoreSearch
-                              ? `${sellerRouteStoresForPanel.length} de ${allSelectedSellerRouteStores.length} tiendas`
-                              : `${sellerRouteStoresForPanel.length} tiendas`}
-                          </p>
+                          <div className="seller-clients-header">
+                            <strong>
+                              {normalizedSellerRouteStoreSearch ? "Resultados en toda la ruta" : "Clientes de la ruta"}
+                            </strong>
+                            <span>
+                              {normalizedSellerRouteStoreSearch
+                                ? `${sellerRouteStoresForPanel.length} de ${allSelectedSellerRouteStores.length} tiendas`
+                                : `${sellerRouteStoresForPanel.length} tiendas`}
+                            </span>
+                          </div>
                           <div className="seller-route-store-chips">
                             {sellerRouteStoresForPanel.length > 0 ? sellerRouteStoresForPanel.map((store) => {
                               const isActive = selectedSellerStoreId === store.storeId;
@@ -19051,34 +20265,77 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 </button>
                               );
                             }) : (
-                              <p className="route-empty-state">No hay tiendas que coincidan con la búsqueda.</p>
+                              <div className="seller-empty-state">
+                                <div className="seller-empty-magnifier">
+                                  <SellerIcon name="search" />
+                                </div>
+                                <h3>No hay tiendas que coincidan</h3>
+                                <p>Prueba con otro nombre o limpia la búsqueda para ver todos los clientes del día.</p>
+                              </div>
                             )}
                           </div>
                         </div>
 
                         {selectedSellerStore ? (
-                          <p className="warehouse-selected-meta">{selectedSellerStore.storeName} · {selectedSellerStore.address || "Sin dirección"}</p>
+                          <p className="seller-selected-store-banner">
+                            {selectedSellerStore.storeName}
+                            <small>{selectedSellerStore.address || "Sin dirección"}</small>
+                          </p>
                         ) : null}
 
-                        {selectedSellerStoreId ? (
-                          <div className="seller-route-order-extras">
-                            {sellerOrderStatus ? <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p> : null}
-                            {renderSellerRouteOrderExtras()}
+                        {!selectedSellerStoreId ? (
+                          <div className="seller-empty-state">
+                            <div className="seller-empty-magnifier">
+                              <SellerIcon name="search" />
+                            </div>
+                            <h3>Selecciona un cliente para armar el pedido</h3>
+                            <p>Elige una tienda de la ruta para ver el catálogo, agregar cantidades y enviar a bodega.</p>
                           </div>
-                        ) : sellerOrderStatus ? (
-                          <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p>
                         ) : null}
                       </div>
 
                       {renderSellerProductCatalogPanel(selectedSellerStoreId || null, { showOrderFields: true })}
                     </>
                   ) : (
-                    <p className="route-empty-state">Selecciona un día de la ruta para trabajar su pedido.</p>
+                    <div className="seller-empty-state">
+                      <div className="seller-empty-magnifier">
+                        <SellerIcon name="search" />
+                      </div>
+                      <h3>Selecciona un día para ver los clientes</h3>
+                      <p>Elige un día de la ruta activa para preparar los pedidos de cada visita.</p>
+                    </div>
                   )}
                 </article>
               ) : null}
             </section>
           )}
+          </div>
+
+          {sellerOrderSuccessNotice ? (
+            <AppModalOverlay onDismiss={() => setSellerOrderSuccessNotice(null)}>
+              <div
+                className="modal-card seller-order-success-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="seller-order-success-title"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="seller-order-success-icon" aria-hidden="true">
+                  <SellerIcon name="check" />
+                </div>
+                <p className="section-label">Pedido enviado</p>
+                <h2 id="seller-order-success-title">Pedido enviado a bodega correctamente</h2>
+                <p className="route-helper-text">{sellerOrderSuccessNotice}</p>
+                <button
+                  className="submit-button seller-order-success-button"
+                  type="button"
+                  onClick={() => setSellerOrderSuccessNotice(null)}
+                >
+                  Continuar
+                </button>
+              </div>
+            </AppModalOverlay>
+          ) : null}
         </section>
       </main>
     );
@@ -20812,31 +22069,56 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
     );
   }
 
-  return (
-    <main className="portal-shell">
-      <aside className="sidebar">
-        <img className="sidebar-logo" src="/sps-logo.jpeg" alt="SPS Trading Enterprises" />
+  const mgmtInitials = getUserInitials(sessionUser.name);
 
-        <div className="sidebar-user">
-          <p className="section-label">{userRoleLabel}</p>
-          <h2>{sessionUser.name}</h2>
-          <p>{sessionUser.email}</p>
+  return (
+    <main className={`portal-shell portal-shell--management ${isMgmtSidebarCollapsed ? "is-sidebar-collapsed" : ""}`}>
+      <aside className="sidebar mgmt-sidebar" aria-hidden={isMgmtSidebarCollapsed}>
+        <div className="mgmt-sidebar-top">
+          <div className="mgmt-brand">
+            <img className="mgmt-brand-logo" src="/sps-logo.jpeg" alt="SPS Trading Enterprises" />
+            <div className="mgmt-brand-copy">
+              <strong>SPS Trading</strong>
+              <span>Portal {userRoleLabel}</span>
+            </div>
+          </div>
+          <button
+            className="mgmt-sidebar-toggle"
+            type="button"
+            aria-label="Ocultar menú"
+            title="Ocultar menú"
+            onClick={() => setIsMgmtSidebarCollapsed(true)}
+          >
+            <MgmtIcon name="menu" />
+          </button>
+        </div>
+
+        <div className="sidebar-user mgmt-sidebar-user">
+          <div className="mgmt-avatar" aria-hidden="true">{mgmtInitials}</div>
+          <div className="mgmt-sidebar-user-copy">
+            <p className="section-label">{userRoleLabel}</p>
+            <h2>{sessionUser.name}</h2>
+            <p>{sessionUser.email}</p>
+          </div>
         </div>
 
         <nav className="sidebar-nav">
           {sessionUser.role === "management"
             ? (
                 <>
-                  <button
-                    className={`sidebar-link ${activeSection === "dashboard" ? "active" : ""}`}
-                    type="button"
-                    onClick={() => setActiveSection("dashboard")}
-                  >
-                    Dashboard
-                  </button>
+                  <div className="mgmt-nav-group">
+                    <button
+                      className={`sidebar-link ${activeSection === "dashboard" ? "active" : ""}`}
+                      type="button"
+                      onClick={() => setActiveSection("dashboard")}
+                    >
+                      <MgmtIcon name="dashboard" />
+                      Dashboard
+                    </button>
+                  </div>
 
                   {managementSidebarSections.map((section) => (
-                    <div key={section.key}>
+                    <div className="mgmt-nav-group" key={section.key}>
                       <p className="section-label">{section.label}</p>
                       {section.items.map((item) => (
                         <button
@@ -20849,6 +22131,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             setWarehouseOrderCompletionStatus(null);
                           }}
                         >
+                          <MgmtIcon name={getMgmtNavIcon(item.key)} />
                           {item.label}
                         </button>
                       ))}
@@ -20859,16 +22142,19 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             : sessionUser.role === "colombia-ops"
               ? (
                   <>
-                    <button
-                      className={`sidebar-link ${activeSection === "dashboard" ? "active" : ""}`}
-                      type="button"
-                      onClick={() => setActiveSection("dashboard")}
-                    >
-                      Dashboard
-                    </button>
+                    <div className="mgmt-nav-group">
+                      <button
+                        className={`sidebar-link ${activeSection === "dashboard" ? "active" : ""}`}
+                        type="button"
+                        onClick={() => setActiveSection("dashboard")}
+                      >
+                        <MgmtIcon name="dashboard" />
+                        Dashboard
+                      </button>
+                    </div>
 
                     {colombiaOpsSidebarSections.map((section) => (
-                      <div key={section.key}>
+                      <div className="mgmt-nav-group" key={section.key}>
                         <p className="section-label">{section.label}</p>
                         {section.items.map((item) => (
                           <button
@@ -20877,6 +22163,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             type="button"
                             onClick={() => setActiveSection(item.key)}
                           >
+                            <MgmtIcon name={getMgmtNavIcon(item.key)} />
                             {item.label}
                           </button>
                         ))}
@@ -20887,7 +22174,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             : sessionUser.role === "contabilidad"
               ? (
                   contabilidadSidebarSections.map((section) => (
-                    <div key={section.key}>
+                    <div className="mgmt-nav-group" key={section.key}>
                       <p className="section-label">{section.label}</p>
                       {section.items.map((item) => (
                         <button
@@ -20900,31 +22187,89 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             setWarehouseOrderCompletionStatus(null);
                           }}
                         >
+                          <MgmtIcon name={getMgmtNavIcon(item.key)} />
                           {item.label}
                         </button>
                       ))}
                     </div>
                   ))
                 )
-            : visibleSidebarItems.map((item) => (
-                <button
-                  key={item.key}
-                  className={`sidebar-link ${activeSection === item.key ? "active" : ""}`}
-                  type="button"
-                  onClick={() => setActiveSection(item.key)}
-                >
-                  {item.label}
-                </button>
-              ))}
+            : (
+                <div className="mgmt-nav-group">
+                  {visibleSidebarItems.map((item) => (
+                    <button
+                      key={item.key}
+                      className={`sidebar-link ${activeSection === item.key ? "active" : ""}`}
+                      type="button"
+                      onClick={() => setActiveSection(item.key)}
+                    >
+                      <MgmtIcon name={getMgmtNavIcon(item.key)} />
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              )}
         </nav>
-
-        <button className="ghost-button" type="button" onClick={handleLogout}>
-          Cerrar sesion
-        </button>
       </aside>
 
       <section className="portal-content">
+        <header className="mgmt-topbar">
+          {isMgmtSidebarCollapsed ? (
+            <button
+              className="mgmt-sidebar-toggle mgmt-sidebar-toggle--open"
+              type="button"
+              aria-label="Mostrar menú"
+              title="Mostrar menú"
+              onClick={() => setIsMgmtSidebarCollapsed(false)}
+            >
+              <MgmtIcon name="menu" />
+            </button>
+          ) : null}
+
+          <div className="mgmt-topbar-spacer" aria-hidden="true" />
+
+          <div className="mgmt-topbar-actions">
+            <div className={`mgmt-topbar-user-menu ${isMgmtTopbarMenuOpen ? "is-open" : ""}`}>
+              <button
+                className="mgmt-topbar-user"
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded={isMgmtTopbarMenuOpen}
+                onClick={() => setIsMgmtTopbarMenuOpen((current) => !current)}
+              >
+                <div className="mgmt-avatar" aria-hidden="true">{mgmtInitials}</div>
+                <div className="mgmt-topbar-user-copy">
+                  <strong>{sessionUser.name}</strong>
+                  <span>{sessionUser.email}</span>
+                </div>
+                <span className="mgmt-topbar-caret" aria-hidden="true">
+                  <MgmtIcon name="chevron" />
+                </span>
+              </button>
+
+              {isMgmtTopbarMenuOpen ? (
+                <div className="mgmt-topbar-dropdown" role="menu">
+                  <button
+                    className="mgmt-topbar-dropdown-item"
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setIsMgmtTopbarMenuOpen(false);
+                      handleLogout();
+                    }}
+                  >
+                    <MgmtIcon name="logout" />
+                    Cerrar sesión
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </header>
+
+        <div className="mgmt-portal-body">
         <header className="portal-header">
+          <div>
           <p className="section-label">{`Portal ${userRoleLabel}`}</p>
           <h1>
             {activeSection === "dashboard"
@@ -21036,13 +22381,21 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   ? "Diseña la cobertura semanal por vendedor y asigna el listado de tiendas a visitar cada día."
                   : "Consulta existencias, costos y vencimientos del inventario."}
           </p>
+          </div>
+          <div className="mgmt-hero-art" aria-hidden="true">
+            <div className="mgmt-hero-boxes">
+              <span className="mgmt-hero-box" />
+              <span className="mgmt-hero-box" />
+              <span className="mgmt-hero-clipboard" />
+            </div>
+          </div>
         </header>
 
         {pushNotificationBannerNode}
 
         {activeSection === "dashboard" ? (
-          <section className="dashboard-layout">
-            <div className="dashboard-grid">
+          <section className="dashboard-layout mgmt-dashboard">
+            <div className="dashboard-grid mgmt-dashboard-kpi-grid">
               {isLoadingKpis
                 ? kpiPlaceholders.map((placeholder) => (
                     <article key={placeholder} className="kpi-card is-loading" />
@@ -21053,12 +22406,17 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     return (
                       <button
                         key={card.label}
-                        className={`kpi-card kpi-card-button tone-${card.tone} ${activeSection === targetSection ? "is-active" : ""}`}
+                        className={`kpi-card kpi-card-button mgmt-dashboard-kpi tone-${card.tone} ${activeSection === targetSection ? "is-active" : ""}`}
                         type="button"
                         onClick={() => targetSection ? setActiveSection(targetSection) : undefined}
                         disabled={!targetSection}
                       >
-                        <p>{card.label}</p>
+                        <div className="mgmt-dashboard-kpi-top">
+                          <span className={`mgmt-dashboard-kpi-icon tone-${card.tone}`}>
+                            <MgmtIcon name={getDashboardCardIcon(card.label)} />
+                          </span>
+                          <p>{card.label}</p>
+                        </div>
                         <strong>{card.valueLabel}</strong>
                       </button>
                     );
@@ -21066,12 +22424,17 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             </div>
 
             {isColombiaOpsUser ? (
-              <div className="dashboard-table-grid">
-                <article className="database-card">
-                  <div className="management-table-header">
-                    <div>
-                      <h2>Ultimas exportaciones realizadas</h2>
-                      <p>Ultimos 10 lotes exportados con su cliente y resultado facturado.</p>
+              <div className="dashboard-table-grid mgmt-dashboard-panels">
+                <article className="database-card mgmt-dashboard-panel">
+                  <div className="management-table-header mgmt-dashboard-panel-header">
+                    <div className="mgmt-dashboard-panel-title">
+                      <span className="mgmt-dashboard-panel-icon is-purple">
+                        <MgmtIcon name={getDashboardPanelIcon("Ultimas exportaciones realizadas")} />
+                      </span>
+                      <div>
+                        <h2>Ultimas exportaciones realizadas</h2>
+                        <p>Ultimos 10 lotes exportados con su cliente y resultado facturado.</p>
+                      </div>
                     </div>
                   </div>
                   <div className="table-wrap">
@@ -21109,12 +22472,17 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             ) : null}
 
             {!isColombiaOpsUser ? (
-              <div className="dashboard-table-grid">
-              <article className="database-card">
-                <div className="management-table-header">
-                  <div>
-                    <h2>Productos mas vendidos</h2>
-                    <p>Unidades despachadas acumuladas en pedidos entregados.</p>
+              <div className="dashboard-table-grid mgmt-dashboard-panels">
+              <article className="database-card mgmt-dashboard-panel">
+                <div className="management-table-header mgmt-dashboard-panel-header">
+                  <div className="mgmt-dashboard-panel-title">
+                    <span className="mgmt-dashboard-panel-icon is-green">
+                      <MgmtIcon name={getDashboardPanelIcon("Productos mas vendidos")} />
+                    </span>
+                    <div>
+                      <h2>Productos mas vendidos</h2>
+                      <p>Unidades despachadas acumuladas en pedidos entregados.</p>
+                    </div>
                   </div>
                 </div>
                 <div className="table-wrap">
@@ -21145,11 +22513,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 </div>
               </article>
 
-              <article className="database-card">
-                <div className="management-table-header">
-                  <div>
-                    <h2>Productos menos vendidos</h2>
-                    <p>Productos con menor salida entre los pedidos ya entregados.</p>
+              <article className="database-card mgmt-dashboard-panel">
+                <div className="management-table-header mgmt-dashboard-panel-header">
+                  <div className="mgmt-dashboard-panel-title">
+                    <span className="mgmt-dashboard-panel-icon is-orange">
+                      <MgmtIcon name={getDashboardPanelIcon("Productos menos vendidos")} />
+                    </span>
+                    <div>
+                      <h2>Productos menos vendidos</h2>
+                      <p>Productos con menor salida entre los pedidos ya entregados.</p>
+                    </div>
                   </div>
                 </div>
                 <div className="table-wrap">
@@ -21180,11 +22553,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 </div>
               </article>
 
-              <article className="database-card">
-                <div className="management-table-header">
-                  <div>
-                    <h2>Productos proximos a vencerse</h2>
-                    <p>Inventario con vencimiento cercano en los proximos dos meses.</p>
+              <article className="database-card mgmt-dashboard-panel">
+                <div className="management-table-header mgmt-dashboard-panel-header">
+                  <div className="mgmt-dashboard-panel-title">
+                    <span className="mgmt-dashboard-panel-icon is-orange">
+                      <MgmtIcon name={getDashboardPanelIcon("Productos proximos a vencerse")} />
+                    </span>
+                    <div>
+                      <h2>Productos proximos a vencerse</h2>
+                      <p>Inventario con vencimiento cercano en los proximos dos meses.</p>
+                    </div>
                   </div>
                 </div>
                 <div className="table-wrap">
@@ -21217,11 +22595,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 </div>
               </article>
 
-              <article className="database-card">
-                <div className="management-table-header">
-                  <div>
-                    <h2>Clientes con mas facturacion</h2>
-                    <p>Clientes con mayor venta acumulada segun pedidos facturados.</p>
+              <article className="database-card mgmt-dashboard-panel">
+                <div className="management-table-header mgmt-dashboard-panel-header">
+                  <div className="mgmt-dashboard-panel-title">
+                    <span className="mgmt-dashboard-panel-icon is-green">
+                      <MgmtIcon name={getDashboardPanelIcon("Clientes con mas facturacion")} />
+                    </span>
+                    <div>
+                      <h2>Clientes con mas facturacion</h2>
+                      <p>Clientes con mayor venta acumulada segun pedidos facturados.</p>
+                    </div>
                   </div>
                 </div>
                 <div className="table-wrap">
@@ -21252,11 +22635,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 </div>
               </article>
 
-              <article className="database-card">
-                <div className="management-table-header">
-                  <div>
-                    <h2>Clientes con menos facturacion</h2>
-                    <p>Clientes con menor venta acumulada entre los pedidos facturados.</p>
+              <article className="database-card mgmt-dashboard-panel">
+                <div className="management-table-header mgmt-dashboard-panel-header">
+                  <div className="mgmt-dashboard-panel-title">
+                    <span className="mgmt-dashboard-panel-icon is-purple">
+                      <MgmtIcon name={getDashboardPanelIcon("Clientes con menos facturacion")} />
+                    </span>
+                    <div>
+                      <h2>Clientes con menos facturacion</h2>
+                      <p>Clientes con menor venta acumulada entre los pedidos facturados.</p>
+                    </div>
                   </div>
                 </div>
                 <div className="table-wrap">
@@ -29810,6 +31198,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             </div>
           </AppModalOverlay>
         ) : null}
+        </div>
       </section>
     </main>
   );
