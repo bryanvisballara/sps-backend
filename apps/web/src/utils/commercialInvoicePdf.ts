@@ -366,6 +366,149 @@ export async function buildCommercialInvoiceBatchPdf(inputs: CommercialInvoiceDo
     pdf.text(`${footerLabel} ${formatInvoiceAmount(input.totalAmount)}`, pageWidth - margin, footerY, { align: "right" });
   });
 
+  if (inputs.length > 1) {
+    const consolidatedByProduct = new Map<string, {
+      productLabel: string;
+      description: string;
+      quantity: number;
+      orderCount: number;
+    }>();
+
+    for (const input of inputs) {
+      const seenInOrder = new Set<string>();
+
+      for (const item of input.lineItems) {
+        const key = String(item.productLabel ?? "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .toUpperCase();
+
+        if (!key) {
+          continue;
+        }
+
+        const existing = consolidatedByProduct.get(key);
+        const quantity = Number.isFinite(item.quantity) ? item.quantity : 0;
+
+        if (existing) {
+          existing.quantity += quantity;
+
+          if (!seenInOrder.has(key)) {
+            existing.orderCount += 1;
+            seenInOrder.add(key);
+          }
+        } else {
+          consolidatedByProduct.set(key, {
+            productLabel: item.productLabel,
+            description: item.description || "-",
+            quantity,
+            orderCount: 1,
+          });
+          seenInOrder.add(key);
+        }
+      }
+    }
+
+    const consolidatedRows = [...consolidatedByProduct.values()]
+      .sort((left, right) => left.productLabel.localeCompare(right.productLabel, "es", { sensitivity: "base" }));
+
+    pdf.addPage();
+
+    const drawConsolidatedHeader = () => {
+      if (logoImage) {
+        pdf.addImage(logoImage.dataUrl, logoImage.format, margin, 44, 164, 48);
+      }
+
+      pdf.setTextColor(17, 17, 17);
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(11);
+      pdf.text(COMPANY.legalName, pageWidth - margin, 58, { align: "right" });
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(10);
+      pdf.text(COMPANY.addressLine1, pageWidth - margin, 72, { align: "right" });
+      pdf.text(COMPANY.addressLine2, pageWidth - margin, 84, { align: "right" });
+      pdf.text(COMPANY.phone, pageWidth - margin, 96, { align: "right" });
+      pdf.text(COMPANY.email, pageWidth - margin, 108, { align: "right" });
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(18);
+      pdf.text("CONSOLIDADO", margin, 116);
+      pdf.setFontSize(10);
+      pdf.text("RESUMEN PARA BODEGA", margin, 132);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(10);
+      pdf.text(
+        `${inputs.length} pedidos · ${consolidatedRows.length} productos · ${formatInvoiceDate(new Date())}`,
+        margin,
+        148,
+      );
+      pdf.setFontSize(9);
+      pdf.setTextColor(60, 60, 60);
+      pdf.text("Cantidades totales sumadas de todas las facturas seleccionadas.", margin, 162);
+
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(8);
+      pdf.setTextColor(60, 60, 60);
+      pdf.text(COMPANY.bankLine, pageWidth / 2, pageHeight - 24, { align: "center" });
+    };
+
+    const consolidatedTableStartY = 178;
+    const consolidatedTableBody = consolidatedRows.map((row) => [
+      row.productLabel.toUpperCase(),
+      row.description.toUpperCase(),
+      formatInvoiceQuantity(row.quantity),
+      String(row.orderCount),
+    ]);
+    const totalUnits = consolidatedRows.reduce((sum, row) => sum + row.quantity, 0);
+
+    autoTable(pdf, {
+      startY: consolidatedTableStartY,
+      margin: { top: consolidatedTableStartY, left: margin, right: margin, bottom: 56 },
+      head: [["PRODUCTO", "DESCRIPCION", "QTY TOTAL", "PEDIDOS"]],
+      body: consolidatedTableBody,
+      showHead: "everyPage",
+      styles: {
+        font: "helvetica",
+        fontSize: 9,
+        cellPadding: 5,
+        overflow: "linebreak",
+        valign: "top",
+      },
+      headStyles: {
+        fillColor: [255, 255, 255],
+        textColor: [17, 17, 17],
+        fontStyle: "bold",
+        lineWidth: 0.2,
+        lineColor: [17, 17, 17],
+      },
+      alternateRowStyles: { fillColor: [243, 244, 246] },
+      columnStyles: {
+        0: { cellWidth: 240, overflow: "ellipsize" },
+        1: { cellWidth: 155 },
+        2: { cellWidth: 70, halign: "right", fontStyle: "bold" },
+        3: { cellWidth: 50, halign: "right" },
+      },
+      theme: "plain",
+      didDrawPage: () => drawConsolidatedHeader(),
+    });
+
+    const consolidatedFinalY = (pdf as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY
+      ?? consolidatedTableStartY;
+    const consolidatedFooterY = Math.min(consolidatedFinalY + 28, pageHeight - 48);
+
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(10);
+    pdf.setTextColor(17, 17, 17);
+    pdf.text(
+      `TOTAL UNIDADES ${formatInvoiceQuantity(totalUnits)}`,
+      pageWidth - margin,
+      consolidatedFooterY,
+      { align: "right" },
+    );
+  }
+
   const totalPages = pdf.getNumberOfPages();
 
   for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
