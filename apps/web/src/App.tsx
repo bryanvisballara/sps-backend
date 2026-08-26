@@ -877,6 +877,54 @@ type SellerOrderRecord = {
   giftItems: OrderGiftItemRecord[];
 };
 
+function mapOrderItemsToSellerClientProducts(order: Pick<SellerOrderRecord, "items">): SellerClientProduct[] {
+  return (order.items ?? []).map((item) => ({
+    productId: item.productId,
+    sku: item.productSku ?? "",
+    name: item.productName ?? "",
+    category: "",
+    description: item.description ?? "",
+    imageUrl: "",
+    salePrice: Number(item.salePriceAwg ?? 0),
+    warehouseStock: 0,
+    displaysPerBox: 1,
+    unitsPerBox: 0,
+    unitsPerBoxUnit: "unidad",
+    productWeightKg: 0,
+  }));
+}
+
+function mergeSellerClientProducts(
+  products: SellerClientProduct[],
+  fallbackProducts: SellerClientProduct[],
+): SellerClientProduct[] {
+  const byId = new Map(products.map((product) => [product.productId, product]));
+
+  fallbackProducts.forEach((product) => {
+    if (!byId.has(product.productId)) {
+      byId.set(product.productId, product);
+    }
+  });
+
+  return Array.from(byId.values());
+}
+
+function buildStaffOrderEditDraft(order: SellerOrderRecord): SellerOrderDraft {
+  return Object.fromEntries(
+    order.items.map((item) => [
+      item.productId,
+      {
+        stockCurrent: item.stockCurrent === null || item.stockCurrent === undefined ? "" : String(item.stockCurrent),
+        quantity: String(item.quantity ?? ""),
+        notes: item.notes ?? "",
+        salePriceAwg: item.salePriceAwg === null || item.salePriceAwg === undefined ? "" : String(item.salePriceAwg),
+        description: item.description ?? "",
+        lineSubtotalAwg: "",
+      },
+    ]),
+  );
+}
+
 type OrderEditLogRecord = {
   _id: string;
   orderId: string;
@@ -5631,6 +5679,7 @@ export default function App() {
   const [sellerOrderDraft, setSellerOrderDraft] = useState<SellerOrderDraft>({});
   const [sellerOrderCartProductIds, setSellerOrderCartProductIds] = useState<string[]>([]);
   const [editingStaffOrder, setEditingStaffOrder] = useState<SellerOrderRecord | null>(null);
+  const [editingStaffInvoiceNumberDraft, setEditingStaffInvoiceNumberDraft] = useState("");
   const [pendingStaffOrderPrefill, setPendingStaffOrderPrefill] = useState<{
     storeId: string;
     productIds: string[];
@@ -6056,6 +6105,7 @@ export default function App() {
 
   function resetStaffOrderComposerDraft() {
     setEditingStaffOrder(null);
+    setEditingStaffInvoiceNumberDraft("");
     setPendingStaffOrderPrefill(null);
     setSelectedSellerRouteId("");
     setSelectedSellerDayKey("");
@@ -6116,48 +6166,31 @@ export default function App() {
     resetStaffOrderComposerDraft();
     setSelectedWarehouseOrderDetail(null);
     setEditingStaffOrder(order);
+    setEditingStaffInvoiceNumberDraft(Number(order.invoiceNumber ?? 0) > 0 ? String(Number(order.invoiceNumber)) : "");
     setSellerDeliveryDateDraft(order.deliveryDate || String(order.createdAt).slice(0, 10));
     setSellerOrderNotesDraft(order.orderNotes ?? "");
     setSellerInternalOrderNotesDraft(order.internalOrderNotes ?? "");
     setSellerOrderAttachmentsDraft(Array.isArray(order.attachments) ? order.attachments : []);
     setSellerOrderAttachmentError("");
     setSellerOrderStatus(null);
+    const fallbackProducts = mapOrderItemsToSellerClientProducts(order);
+    const draft = buildStaffOrderEditDraft(order);
+    const giftItems = (order.giftItems ?? []).map((item) => ({
+      key: buildOrderGiftItemKey(item.productId, item.stockRowId ?? ""),
+      productId: item.productId,
+      stockRowId: item.stockRowId ?? "",
+      quantity: item.quantity,
+    }));
+    setSellerClientProducts(fallbackProducts);
+    setSellerOrderCartProductIds(order.items.map((item) => item.productId));
+    setSellerOrderDraft(draft);
+    setSellerGiftDraftItems(giftItems);
     setPendingStaffOrderPrefill({
       storeId: order.storeId,
       productIds: order.items.map((item) => item.productId),
-      draft: Object.fromEntries(
-        order.items.map((item) => [
-          item.productId,
-          {
-            stockCurrent: item.stockCurrent === null || item.stockCurrent === undefined ? "" : String(item.stockCurrent),
-            quantity: String(item.quantity ?? ""),
-            notes: item.notes ?? "",
-            salePriceAwg: item.salePriceAwg === null || item.salePriceAwg === undefined ? "" : String(item.salePriceAwg),
-            description: item.description ?? "",
-            lineSubtotalAwg: "",
-          },
-        ]),
-      ),
-      giftItems: (order.giftItems ?? []).map((item) => ({
-        key: buildOrderGiftItemKey(item.productId, item.stockRowId ?? ""),
-        productId: item.productId,
-        stockRowId: item.stockRowId ?? "",
-        quantity: item.quantity,
-      })),
-      fallbackProducts: order.items.map((item) => ({
-        productId: item.productId,
-        sku: item.productSku,
-        name: item.productName,
-        category: "",
-        description: item.description ?? "",
-        imageUrl: "",
-        salePrice: Number(item.salePriceAwg ?? 0),
-        warehouseStock: 0,
-        displaysPerBox: 1,
-        unitsPerBox: 0,
-        unitsPerBoxUnit: "unidad",
-        productWeightKg: 0,
-      })),
+      draft,
+      giftItems,
+      fallbackProducts,
     });
     setSelectedSellerRouteId(order.routeId);
     setSelectedSellerDayKey(order.routeDay as RouteDayKey);
@@ -6289,7 +6322,28 @@ export default function App() {
   }
 
   const sellerOrderCartIdSet = new Set(sellerOrderCartProductIds);
-  const sellerOrderCartProducts = sellerClientProducts.filter((product) => sellerOrderCartIdSet.has(product.productId));
+  const sellerOrderCartProductSource = (() => {
+    const byId = new Map(sellerClientProducts.map((product) => [product.productId, product]));
+
+    if (editingStaffOrder) {
+      mapOrderItemsToSellerClientProducts(editingStaffOrder).forEach((product) => {
+        if (!byId.has(product.productId)) {
+          byId.set(product.productId, product);
+        }
+      });
+    }
+
+    pendingStaffOrderPrefill?.fallbackProducts.forEach((product) => {
+      if (!byId.has(product.productId)) {
+        byId.set(product.productId, product);
+      }
+    });
+
+    return byId;
+  })();
+  const sellerOrderCartProducts = sellerOrderCartProductIds
+    .map((productId) => sellerOrderCartProductSource.get(productId))
+    .filter((product): product is SellerClientProduct => Boolean(product));
   const sellerDraftedItems = sellerOrderCartProducts
     .map((product) => {
       const draft = getSellerOrderDraftForProduct(product);
@@ -8518,26 +8572,12 @@ export default function App() {
       return;
     }
 
-    if (isLoadingSellerClientProducts) {
-      return;
-    }
-
-    setSellerClientProducts((current) => {
-      const byId = new Map(current.map((product) => [product.productId, product]));
-
-      pendingStaffOrderPrefill.fallbackProducts.forEach((product) => {
-        if (!byId.has(product.productId)) {
-          byId.set(product.productId, product);
-        }
-      });
-
-      return Array.from(byId.values());
-    });
+    setSellerClientProducts((current) => mergeSellerClientProducts(current, pendingStaffOrderPrefill.fallbackProducts));
     setSellerOrderCartProductIds(pendingStaffOrderPrefill.productIds);
     setSellerOrderDraft(pendingStaffOrderPrefill.draft);
     setSellerGiftDraftItems(pendingStaffOrderPrefill.giftItems);
     setPendingStaffOrderPrefill(null);
-  }, [pendingStaffOrderPrefill, selectedSellerStoreId, isLoadingSellerClientProducts, sellerClientProducts]);
+  }, [pendingStaffOrderPrefill, selectedSellerStoreId]);
 
   useEffect(() => {
     if (!isStaffOrderComposerActive || !canCreateStaffOrders(sessionUser?.role)) {
@@ -8624,14 +8664,14 @@ export default function App() {
       return;
     }
 
-    if (!(editingStaffOrder && pendingStaffOrderPrefill && activeStoreId === pendingStaffOrderPrefill.storeId)) {
+    if (!(editingStaffOrder && activeStoreId === editingStaffOrder.storeId)) {
       setSellerOrderDraft({});
       setSellerOrderCartProductIds([]);
       setSellerGiftDraftItems([]);
       setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
     }
     void refreshSellerClientProducts(activeStoreId);
-  }, [selectedSellerStoreId, selectedSellerClientId, sellerActiveSection, sessionUser, isSellerOrderFlowActive, editingStaffOrder, pendingStaffOrderPrefill]);
+  }, [selectedSellerStoreId, selectedSellerClientId, sellerActiveSection, sessionUser, isSellerOrderFlowActive, editingStaffOrder]);
 
   useEffect(() => {
     if (!isSellerOrderFlowActive) {
@@ -8894,13 +8934,19 @@ export default function App() {
       }
 
       setSellerAssignedStore(data.store);
-      setSellerClientProducts(data.products.map((product) => ({
+      const nextProducts = data.products.map((product) => ({
         ...product,
         description: typeof product.description === "string" ? product.description : "",
         imageUrl: typeof product.imageUrl === "string" ? product.imageUrl : "",
         salePrice: Number(product.salePrice ?? 0),
         warehouseStock: Number(product.warehouseStock ?? 0),
-      })));
+      }));
+      const fallbackProducts = editingStaffOrder && editingStaffOrder.storeId === storeId
+        ? mapOrderItemsToSellerClientProducts(editingStaffOrder)
+        : pendingStaffOrderPrefill && pendingStaffOrderPrefill.storeId === storeId
+          ? pendingStaffOrderPrefill.fallbackProducts
+          : [];
+      setSellerClientProducts(mergeSellerClientProducts(nextProducts, fallbackProducts));
     } catch {
       setSellerAssignedStore(null);
       setSellerClientProducts([]);
@@ -9667,8 +9713,21 @@ export default function App() {
                   {editingStaffOrder?.salesRepName}
                   {" · Entrega "}
                   {editingStaffOrder?.deliveryDate || "sin fecha"}
-                  {editingStaffOrder?.invoiceNumber ? ` · #${editingStaffOrder.invoiceNumber}` : ""}
                 </p>
+                <label className="staff-order-invoice-field">
+                  <span>Consecutivo</span>
+                  <span className="staff-order-invoice-input-wrap">
+                    <span>#</span>
+                    <input
+                      className="warehouse-order-qty-input staff-order-invoice-input"
+                      type="number"
+                      min={MIN_INVOICE_NUMBER}
+                      step="1"
+                      value={editingStaffInvoiceNumberDraft}
+                      onChange={(event) => setEditingStaffInvoiceNumberDraft(event.target.value)}
+                    />
+                  </span>
+                </label>
               </div>
               <p className="management-table-meta">
                 {editingStaffOrder?.routeName || "Ruta"}
@@ -9676,7 +9735,7 @@ export default function App() {
               </p>
             </div>
             <p className="route-helper-text">
-              Puedes ajustar productos, cantidades, notas, fecha de entrega y adjuntos. La ruta y el cliente se mantienen.
+              Puedes ajustar productos, cantidades, notas, fecha de entrega, consecutivo y adjuntos. La ruta y el cliente se mantienen.
             </p>
           </article>
         ) : (
@@ -9928,7 +9987,7 @@ export default function App() {
                 </div>
               </div>
             </div>
-            {isLoadingSellerClientProducts ? (
+            {isLoadingSellerClientProducts && sellerOrderCartProducts.length === 0 ? (
               <p className="route-empty-state">Cargando productos...</p>
             ) : sellerOrderCartProducts.length > 0 ? (
               <>
@@ -17466,6 +17525,16 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       return;
     }
 
+    const parsedInvoiceNumber = Number(editingStaffInvoiceNumberDraft.trim());
+
+    if (isEditingReceivedOrder && (!Number.isFinite(parsedInvoiceNumber) || parsedInvoiceNumber < MIN_INVOICE_NUMBER)) {
+      setSellerOrderStatus({
+        tone: "error",
+        message: `Indica un consecutivo valido (minimo ${MIN_INVOICE_NUMBER}).`,
+      });
+      return;
+    }
+
     try {
       setIsSubmittingSellerOrder(true);
       setSellerOrderStatus(null);
@@ -17485,6 +17554,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             orderNotes: sellerOrderNotesDraft.trim(),
             internalOrderNotes: sellerInternalOrderNotesDraft.trim(),
             attachments: sellerOrderAttachmentsDraft,
+            invoiceNumber: parsedInvoiceNumber,
             items: sellerDraftedItems,
             giftItems: sellerGiftDraftItems.map((item) => ({
               productId: item.productId,

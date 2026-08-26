@@ -3862,6 +3862,29 @@ h1 {
   box-shadow: 0 0 0 3px rgba(0, 193, 214, 0.16);
 }
 
+.staff-order-invoice-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #0f4c5c;
+}
+
+.staff-order-invoice-input-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 700;
+  color: #2563eb;
+}
+
+.staff-order-invoice-input {
+  width: 7.5rem;
+  text-align: left;
+}
+
 .warehouse-order-remove-item {
   white-space: nowrap;
 }
