@@ -2802,21 +2802,60 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
             ...items.map((item) => item.productId),
             ...giftItems.map((item) => item.productId),
         ]));
-        const products = await Product.find({ _id: { $in: productIds }, active: { $ne: false } }).select({ _id: 1 }).lean();
+        const [products, catalogSalePriceByProductId] = await Promise.all([
+            Product.find({ _id: { $in: productIds }, active: { $ne: false } }).select({ _id: 1, salePrice: 1 }).lean(),
+            getClientCatalogProductSalePrices(String(order.storeId ?? "")),
+        ]);
         const availableProductIds = new Set(products.map((product) => String(product._id)));
+        const existingItemIds = new Set((Array.isArray(order.items) ? order.items : []).map((item) => String(item.productId)));
+        const productsById = new Map(products.map((product) => [String(product._id), product]));
+        const pricedItems = items.map((item) => {
+            if (existingItemIds.has(item.productId) && Number.isFinite(Number(item.salePriceAwg))) {
+                return item;
+            }
+            const isCatalogClient = catalogSalePriceByProductId.size > 0;
+            const resolvedSalePrice = resolveAddedOrderItemSalePrice({
+                payloadSalePrice: Number(item.salePriceAwg ?? NaN),
+                catalogSalePrice: isCatalogClient ? catalogSalePriceByProductId.get(item.productId) : undefined,
+                productSalePrice: Number(productsById.get(item.productId)?.salePrice ?? NaN),
+            });
+            return resolvedSalePrice === undefined
+                ? item
+                : { ...item, salePriceAwg: resolvedSalePrice };
+        });
         if (productIds.some((productId) => !availableProductIds.has(productId))) {
             response.status(400).json({ message: "Uno o varios productos del pedido ya no estan disponibles." });
             return;
         }
         if (order.status === "delivered") {
-            await applyOrderInventoryDelta(String(order._id), [...previousItems, ...previousGiftItems], [...items, ...giftItems]);
+            await applyOrderInventoryDelta(String(order._id), [...previousItems, ...previousGiftItems], [...pricedItems, ...giftItems]);
         }
         const previousInternalNotes = String(order.internalOrderNotes ?? "");
+        const previousOrderNotes = String(order.orderNotes ?? "");
+        const previousDeliveryDate = order.deliveryDate;
+        const previousAttachments = Array.isArray(order.attachments)
+            ? order.attachments.map((attachment) => ({
+                name: String(attachment?.name ?? "").trim(),
+                url: String(attachment?.url ?? "").trim(),
+            })).filter((attachment) => attachment.name && attachment.url)
+            : [];
         const previousInvoiceNumber = Number(order.invoiceNumber ?? 0) || null;
         const hasInternalNotesField = typeof body.internalOrderNotes === "string";
+        const hasOrderNotesField = typeof body.orderNotes === "string";
+        const hasAttachmentsField = Object.prototype.hasOwnProperty.call(body, "attachments");
+        const hasDeliveryDateField = body.deliveryDate !== undefined && body.deliveryDate !== null && String(body.deliveryDate).trim() !== "";
         const nextInternalOrderNotes = hasInternalNotesField
             ? String(body.internalOrderNotes).trim()
             : previousInternalNotes;
+        const nextOrderNotes = hasOrderNotesField
+            ? String(body.orderNotes).trim()
+            : previousOrderNotes;
+        const nextAttachments = hasAttachmentsField
+            ? normalizeOrderAttachments(body.attachments)
+            : previousAttachments;
+        const nextDeliveryDate = hasDeliveryDateField
+            ? normalizeDeliveryDate(body.deliveryDate, { allowPast: true })
+            : previousDeliveryDate;
         let nextInvoiceNumber = previousInvoiceNumber;
         if (body.invoiceNumber !== undefined && body.invoiceNumber !== null && String(body.invoiceNumber).trim() !== "") {
             if (!canChangeDeliveredInvoiceNumber(requestedByRole)) {
@@ -2826,9 +2865,12 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
             nextInvoiceNumber = await resolveRequestedInvoiceNumber(body.invoiceNumber, order);
         }
         const updatedOrder = await Order.findByIdAndUpdate(order._id, {
-            items,
+            items: pricedItems,
             giftItems,
             ...(hasInternalNotesField ? { internalOrderNotes: nextInternalOrderNotes } : {}),
+            ...(hasOrderNotesField ? { orderNotes: nextOrderNotes } : {}),
+            ...(hasAttachmentsField ? { attachments: nextAttachments } : {}),
+            ...(hasDeliveryDateField ? { deliveryDate: nextDeliveryDate } : {}),
             ...(nextInvoiceNumber && nextInvoiceNumber !== previousInvoiceNumber
                 ? { invoiceNumber: nextInvoiceNumber }
                 : {}),
@@ -2855,7 +2897,7 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
         const actor = normalizeOrderEditActor(body);
         if (actor) {
             const changes = [
-                ...(await buildOrderItemsEditChanges(previousItems, items, "items")),
+                ...(await buildOrderItemsEditChanges(previousItems, pricedItems, "items")),
                 ...(await buildOrderItemsEditChanges(previousGiftItems, giftItems, "giftItems")),
             ];
             if (hasInternalNotesField && previousInternalNotes !== nextInternalOrderNotes) {
@@ -2865,6 +2907,42 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
                     before: previousInternalNotes,
                     after: nextInternalOrderNotes,
                 });
+            }
+            if (hasOrderNotesField && previousOrderNotes !== nextOrderNotes) {
+                changes.push({
+                    field: "orderNotes",
+                    summary: "Actualizo nota de factura",
+                    before: previousOrderNotes,
+                    after: nextOrderNotes,
+                });
+            }
+            if (hasDeliveryDateField) {
+                const previousDeliveryKey = previousDeliveryDate instanceof Date
+                    ? previousDeliveryDate.toISOString().slice(0, 10)
+                    : String(previousDeliveryDate ?? "").slice(0, 10);
+                const nextDeliveryKey = nextDeliveryDate instanceof Date
+                    ? nextDeliveryDate.toISOString().slice(0, 10)
+                    : String(nextDeliveryDate ?? "").slice(0, 10);
+                if (previousDeliveryKey && nextDeliveryKey && previousDeliveryKey !== nextDeliveryKey) {
+                    changes.push({
+                        field: "deliveryDate",
+                        summary: `Cambio fecha de entrega de ${previousDeliveryKey} a ${nextDeliveryKey}`,
+                        before: previousDeliveryKey,
+                        after: nextDeliveryKey,
+                    });
+                }
+            }
+            if (hasAttachmentsField) {
+                const previousAttachmentKey = previousAttachments.map((attachment) => `${attachment.name}|${attachment.url}`).join(";;");
+                const nextAttachmentKey = nextAttachments.map((attachment) => `${attachment.name}|${attachment.url}`).join(";;");
+                if (previousAttachmentKey !== nextAttachmentKey) {
+                    changes.push({
+                        field: "attachments",
+                        summary: "Actualizo archivo adjunto del pedido",
+                        before: previousAttachments.map((attachment) => attachment.name).join(", "),
+                        after: nextAttachments.map((attachment) => attachment.name).join(", "),
+                    });
+                }
             }
             const afterInvoiceNumber = Number(updatedOrder.invoiceNumber ?? 0) || null;
             if (previousInvoiceNumber !== afterInvoiceNumber) {
@@ -3487,6 +3565,24 @@ function resolveFrozenOrderItemSalePrice(item, productSalePrice = 0, catalogSale
         return Math.round(catalogSalePrice * 100) / 100;
     }
     return Math.round(Math.max(0, Number(productSalePrice ?? 0)) * 100) / 100;
+}
+function resolveAddedOrderItemSalePrice(params) {
+    const catalogSalePrice = Number(params.catalogSalePrice ?? NaN);
+    if (Number.isFinite(catalogSalePrice) && catalogSalePrice >= 0) {
+        const payloadSalePrice = Number(params.payloadSalePrice ?? NaN);
+        if (Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0 && payloadSalePrice <= catalogSalePrice + 0.009) {
+            return Math.round(payloadSalePrice * 100) / 100;
+        }
+        return Math.round(catalogSalePrice * 100) / 100;
+    }
+    const payloadSalePrice = Number(params.payloadSalePrice ?? NaN);
+    if (Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0) {
+        return Math.round(payloadSalePrice * 100) / 100;
+    }
+    const productSalePrice = Number(params.productSalePrice ?? NaN);
+    return Number.isFinite(productSalePrice) && productSalePrice >= 0
+        ? Math.round(productSalePrice * 100) / 100
+        : undefined;
 }
 async function buildWarehouseInvoiceDocumentLines(order) {
     const orderItems = Array.isArray(order.items) ? order.items : [];
@@ -5413,6 +5509,40 @@ apiRouter.get("/management/categories", async (request, response) => {
 apiRouter.get("/management/products", async (_request, response) => {
     const products = await Product.find().sort({ createdAt: -1 }).lean();
     response.json(products);
+});
+apiRouter.get("/management/stores/:id/catalog-prices", async (request, response) => {
+    try {
+        const storeId = String(request.params.id ?? "").trim();
+        const productId = typeof request.query.productId === "string" ? request.query.productId.trim() : "";
+        if (!storeId) {
+            response.status(400).json({ message: "Indica el cliente para consultar el precio de catalogo." });
+            return;
+        }
+        const catalogSalePriceByProductId = await getClientCatalogProductSalePrices(storeId);
+        if (productId) {
+            const salePrice = catalogSalePriceByProductId.get(productId);
+            const isCatalogClient = catalogSalePriceByProductId.size > 0;
+            response.json({
+                storeId,
+                productId,
+                salePrice: salePrice ?? null,
+                hasCatalogPrice: salePrice !== undefined,
+                isCatalogClient,
+            });
+            return;
+        }
+        response.json({
+            storeId,
+            isCatalogClient: catalogSalePriceByProductId.size > 0,
+            prices: Array.from(catalogSalePriceByProductId.entries()).map(([id, salePrice]) => ({
+                productId: id,
+                salePrice,
+            })),
+        });
+    }
+    catch (error) {
+        sendCreationError(response, error);
+    }
 });
 apiRouter.get("/management/catalogs", async (_request, response) => {
     const catalogs = await CatalogRecord.find().sort({ createdAt: -1 }).lean();

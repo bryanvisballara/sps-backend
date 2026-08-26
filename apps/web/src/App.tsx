@@ -3460,6 +3460,21 @@ function formatInvoiceNumberLabel(order: Pick<SellerOrderRecord, "invoiceNumber"
   return order.invoiceVoided ? `#${order.invoiceNumber} (anulada)` : `#${order.invoiceNumber}`;
 }
 
+function getSellerOrderInvoiceTotalAwg(order: Pick<SellerOrderRecord, "items">) {
+  const items = Array.isArray(order.items) ? order.items : [];
+
+  return roundCurrencyValue(items.reduce((sum, item) => {
+    const quantity = Number(item.quantity ?? 0);
+    const salePriceAwg = Number(item.salePriceAwg ?? 0);
+
+    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(salePriceAwg) || salePriceAwg < 0) {
+      return sum;
+    }
+
+    return sum + (quantity * salePriceAwg);
+  }, 0));
+}
+
 function formatPaymentMethodLabel(paymentMethod: string) {
   if (paymentMethod === "datafono") {
     return "Datáfono";
@@ -3756,6 +3771,7 @@ type WarehouseOrderListProps = {
   showSalesRep?: boolean;
   showInvoiceNumber?: boolean;
   showConsecutivo?: boolean;
+  showInvoiceTotal?: boolean;
   showInvoiceNotes?: boolean;
   showInternalNotes?: boolean;
   showRoute?: boolean;
@@ -3781,6 +3797,7 @@ function WarehouseOrderList({
   showSalesRep = true,
   showInvoiceNumber = false,
   showConsecutivo = false,
+  showInvoiceTotal = false,
   showInvoiceNotes = false,
   showInternalNotes = false,
   showRoute = true,
@@ -3796,6 +3813,7 @@ function WarehouseOrderList({
     + Number(showStatus)
     + Number(showInvoiceNumber)
     + Number(showConsecutivo)
+    + Number(showInvoiceTotal)
     + Number(showInvoiceNotes)
     + Number(showInternalNotes)
     + Number(selectable)
@@ -3825,6 +3843,7 @@ function WarehouseOrderList({
       <th className="warehouse-order-client-col">Cliente</th>
       {showRoute ? <th className="warehouse-order-col-optional">Ruta</th> : null}
       {showStatus ? <th>Estado</th> : null}
+      {showInvoiceTotal ? <th>Total</th> : null}
       {showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
       {showInvoiceNotes ? <th className="warehouse-order-col-optional">Observación factura</th> : null}
       {showInternalNotes ? <th className="warehouse-order-col-optional">Nota interna</th> : null}
@@ -3935,6 +3954,9 @@ function WarehouseOrderList({
                         <td className="warehouse-order-col-optional">{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
                       ) : null}
                       {showStatus ? <td>{formatSellerOrderStatus(order.status, order.invoiceVoided)}</td> : null}
+                      {showInvoiceTotal ? (
+                        <td>{`${formatAwgCurrency(getSellerOrderInvoiceTotalAwg(order))} AWG`}</td>
+                      ) : null}
                       {showSalesRep && showInvoiceNumber ? <td>{formatInvoiceNumberLabel(order)}</td> : null}
                       {showInvoiceNotes ? (
                         <td className="warehouse-order-notes-cell warehouse-order-col-optional">
@@ -5608,6 +5630,14 @@ export default function App() {
   const [orderDeleteReviewNotesDraft, setOrderDeleteReviewNotesDraft] = useState<Record<string, string>>({});
   const [sellerOrderDraft, setSellerOrderDraft] = useState<SellerOrderDraft>({});
   const [sellerOrderCartProductIds, setSellerOrderCartProductIds] = useState<string[]>([]);
+  const [editingStaffOrder, setEditingStaffOrder] = useState<SellerOrderRecord | null>(null);
+  const [pendingStaffOrderPrefill, setPendingStaffOrderPrefill] = useState<{
+    storeId: string;
+    productIds: string[];
+    draft: SellerOrderDraft;
+    giftItems: SellerGiftDraftItem[];
+    fallbackProducts: SellerClientProduct[];
+  } | null>(null);
   const [sellerGiftDraftItems, setSellerGiftDraftItems] = useState<SellerGiftDraftItem[]>([]);
   const [sellerGiftDraft, setSellerGiftDraft] = useState({ productId: "", stockRowId: "", quantity: "1" });
   const [sellerOrderNotesDraft, setSellerOrderNotesDraft] = useState("");
@@ -6017,10 +6047,16 @@ export default function App() {
       return sessionUser.id;
     }
 
+    if (editingStaffOrder?.salesRepId) {
+      return String(editingStaffOrder.salesRepId).trim();
+    }
+
     return String(selectedSellerRoute?.salesRepId ?? "").trim();
   }
 
   function resetStaffOrderComposerDraft() {
+    setEditingStaffOrder(null);
+    setPendingStaffOrderPrefill(null);
     setSelectedSellerRouteId("");
     setSelectedSellerDayKey("");
     setSelectedSellerStoreId("");
@@ -6062,6 +6098,72 @@ export default function App() {
 
     resetStaffOrderComposerDraft();
     setActiveSection("create-order");
+  }
+
+  function openStaffOrderComposerForEdit(order: SellerOrderRecord) {
+    if (!canCreateStaffOrders(sessionUser?.role)) {
+      return;
+    }
+
+    if (order.status !== "submitted" && order.status !== "dispatched") {
+      setWarehouseOrderCompletionStatus({
+        tone: "error",
+        message: "Solo puedes editar pedidos recibidos pendientes de facturar.",
+      });
+      return;
+    }
+
+    resetStaffOrderComposerDraft();
+    setSelectedWarehouseOrderDetail(null);
+    setEditingStaffOrder(order);
+    setSellerDeliveryDateDraft(order.deliveryDate || String(order.createdAt).slice(0, 10));
+    setSellerOrderNotesDraft(order.orderNotes ?? "");
+    setSellerInternalOrderNotesDraft(order.internalOrderNotes ?? "");
+    setSellerOrderAttachmentsDraft(Array.isArray(order.attachments) ? order.attachments : []);
+    setSellerOrderAttachmentError("");
+    setSellerOrderStatus(null);
+    setPendingStaffOrderPrefill({
+      storeId: order.storeId,
+      productIds: order.items.map((item) => item.productId),
+      draft: Object.fromEntries(
+        order.items.map((item) => [
+          item.productId,
+          {
+            stockCurrent: item.stockCurrent === null || item.stockCurrent === undefined ? "" : String(item.stockCurrent),
+            quantity: String(item.quantity ?? ""),
+            notes: item.notes ?? "",
+            salePriceAwg: item.salePriceAwg === null || item.salePriceAwg === undefined ? "" : String(item.salePriceAwg),
+            description: item.description ?? "",
+            lineSubtotalAwg: "",
+          },
+        ]),
+      ),
+      giftItems: (order.giftItems ?? []).map((item) => ({
+        key: buildOrderGiftItemKey(item.productId, item.stockRowId ?? ""),
+        productId: item.productId,
+        stockRowId: item.stockRowId ?? "",
+        quantity: item.quantity,
+      })),
+      fallbackProducts: order.items.map((item) => ({
+        productId: item.productId,
+        sku: item.productSku,
+        name: item.productName,
+        category: "",
+        description: item.description ?? "",
+        imageUrl: "",
+        salePrice: Number(item.salePriceAwg ?? 0),
+        warehouseStock: 0,
+        displaysPerBox: 1,
+        unitsPerBox: 0,
+        unitsPerBoxUnit: "unidad",
+        productWeightKg: 0,
+      })),
+    });
+    setSelectedSellerRouteId(order.routeId);
+    setSelectedSellerDayKey(order.routeDay as RouteDayKey);
+    setSelectedSellerStoreId(order.storeId);
+    setActiveSection("create-order");
+    void loadStaffOrderComposerRoutes();
   }
 
   function openDirectInvoiceComposer() {
@@ -6161,7 +6263,7 @@ export default function App() {
     const defaultDescription = String(product.description ?? "").trim();
     const salePriceAwg = String(existing?.salePriceAwg ?? "").trim() !== ""
       ? String(existing?.salePriceAwg)
-      : (isDirectInvoiceComposer ? defaultSalePrice : "");
+      : defaultSalePrice;
     const quantity = existing?.quantity ?? "";
     const quantityValue = Number(quantity || 0);
     const unitPrice = resolveSellerDraftUnitPrice(product, { salePriceAwg });
@@ -6178,7 +6280,7 @@ export default function App() {
       // Keep the typed subtotal while editing. Only seed from price × qty when absent.
       lineSubtotalAwg: existing
         ? String(existing.lineSubtotalAwg ?? "")
-        : (isDirectInvoiceComposer ? derivedSubtotal : ""),
+        : derivedSubtotal,
     };
   }
 
@@ -6362,12 +6464,13 @@ export default function App() {
         ? roundCurrencyValue(liveSalePrice * (1 - lotPromotionDiscount / 100))
         : 0;
       const selectedLotChanged = Boolean(selectedStockRowId && item.stockRowId && selectedStockRowId !== item.stockRowId);
-      // Catalog client pricing wins over a stale frozen product price when still open.
-      const defaultSalePrice = catalogSalePrice !== null && selectedWarehouseOrderDetail.status !== "delivered"
-        ? (hasLotPromotion ? lotPromotionPrice : catalogSalePrice)
-        : hasLotPromotion
-          ? lotPromotionPrice
-          : (hasFrozenPrice && !selectedLotChanged ? roundCurrencyValue(storedSalePrice) : liveSalePrice);
+      const defaultSalePrice = hasFrozenPrice && !selectedLotChanged
+        ? roundCurrencyValue(storedSalePrice)
+        : catalogSalePrice !== null
+          ? (hasLotPromotion ? lotPromotionPrice : catalogSalePrice)
+          : hasLotPromotion
+            ? lotPromotionPrice
+            : liveSalePrice;
       const quantity = Number(warehouseOrderItemDraft[item.productId] ?? item.quantity ?? 0);
       const defaultLineTotal = roundCurrencyValue(defaultSalePrice * quantity);
       const accountingPricing = canAccountingAdjustDispatchPricing
@@ -6395,10 +6498,10 @@ export default function App() {
         lineTotal,
         priceSource: canAccountingAdjustDispatchPricing
           ? "manual"
+          : hasFrozenPrice
+            ? "frozen"
           : catalogSalePrice !== null
             ? "catalog"
-          : hasFrozenPrice
-          ? "frozen"
             : productOption?.variableSalePrice
               ? "variable"
               : "product",
@@ -6450,6 +6553,7 @@ export default function App() {
         const draftSalePrice = Number(draft?.salePriceAwg);
         const fallbackSalePrice = Number(
           item.salePriceAwg
+          ?? item.catalogSalePriceAwg
           ?? invRow?.salePrice
           ?? productOption?.salePrice
           ?? 0,
@@ -7900,7 +8004,7 @@ export default function App() {
       return;
     }
 
-    if (activeSection !== "catalog") {
+    if (activeSection !== "catalog" && activeSection !== "orders" && activeSection !== "create-order" && activeSection !== "direct-invoice") {
       return;
     }
 
@@ -8385,12 +8489,55 @@ export default function App() {
       return;
     }
 
-    setSelectedSellerRouteId((current) => (
-      staffOrderRoutes.some((route) => (route._id ?? route.code) === current)
-        ? current
-        : (staffOrderRoutes[0]?._id ?? staffOrderRoutes[0]?.code ?? "")
-    ));
-  }, [staffOrderRoutes, isStaffOrderComposerActive]);
+    setSelectedSellerRouteId((current) => {
+      if (staffOrderRoutes.some((route) => (route._id ?? route.code) === current)) {
+        return current;
+      }
+
+      if (
+        editingStaffOrder
+        && staffOrderRoutes.some((route) => (route._id ?? route.code) === editingStaffOrder.routeId)
+      ) {
+        return editingStaffOrder.routeId;
+      }
+
+      if (editingStaffOrder) {
+        return current || editingStaffOrder.routeId;
+      }
+
+      return staffOrderRoutes[0]?._id ?? staffOrderRoutes[0]?.code ?? "";
+    });
+  }, [staffOrderRoutes, isStaffOrderComposerActive, editingStaffOrder]);
+
+  useEffect(() => {
+    if (!pendingStaffOrderPrefill) {
+      return;
+    }
+
+    if (selectedSellerStoreId !== pendingStaffOrderPrefill.storeId) {
+      return;
+    }
+
+    if (isLoadingSellerClientProducts) {
+      return;
+    }
+
+    setSellerClientProducts((current) => {
+      const byId = new Map(current.map((product) => [product.productId, product]));
+
+      pendingStaffOrderPrefill.fallbackProducts.forEach((product) => {
+        if (!byId.has(product.productId)) {
+          byId.set(product.productId, product);
+        }
+      });
+
+      return Array.from(byId.values());
+    });
+    setSellerOrderCartProductIds(pendingStaffOrderPrefill.productIds);
+    setSellerOrderDraft(pendingStaffOrderPrefill.draft);
+    setSellerGiftDraftItems(pendingStaffOrderPrefill.giftItems);
+    setPendingStaffOrderPrefill(null);
+  }, [pendingStaffOrderPrefill, selectedSellerStoreId, isLoadingSellerClientProducts, sellerClientProducts]);
 
   useEffect(() => {
     if (!isStaffOrderComposerActive || !canCreateStaffOrders(sessionUser?.role)) {
@@ -8402,6 +8549,11 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedSellerRoute) {
+      if (editingStaffOrder?.routeDay) {
+        setSelectedSellerDayKey(editingStaffOrder.routeDay as RouteDayKey);
+        return;
+      }
+
       setSelectedSellerDayKey("");
       return;
     }
@@ -8409,15 +8561,22 @@ export default function App() {
     setSelectedSellerDayKey((current) => (
       selectedSellerRoute.days.some((day) => day.day === current)
         ? current
-        : (selectedSellerRoute.days[0]?.day ?? "")
+        : (editingStaffOrder?.routeDay && selectedSellerRoute.days.some((day) => day.day === editingStaffOrder.routeDay)
+          ? editingStaffOrder.routeDay as RouteDayKey
+          : (selectedSellerRoute.days[0]?.day ?? ""))
     ));
-  }, [selectedSellerRoute]);
+  }, [selectedSellerRoute, editingStaffOrder]);
 
   useEffect(() => {
     setSellerRouteStoreSearch("");
   }, [selectedSellerRouteId]);
 
   useEffect(() => {
+    if (editingStaffOrder?.storeId) {
+      setSelectedSellerStoreId(editingStaffOrder.storeId);
+      return;
+    }
+
     if (selectedSellerStores.length === 0) {
       setSelectedSellerStoreId("");
       return;
@@ -8434,7 +8593,7 @@ export default function App() {
         ? current
         : "";
     });
-  }, [selectedSellerStores]);
+  }, [selectedSellerStores, editingStaffOrder]);
 
   useEffect(() => {
     if (!isSellerOrderFlowActive) {
@@ -8465,12 +8624,14 @@ export default function App() {
       return;
     }
 
-    setSellerOrderDraft({});
-    setSellerOrderCartProductIds([]);
-    setSellerGiftDraftItems([]);
-    setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
+    if (!(editingStaffOrder && pendingStaffOrderPrefill && activeStoreId === pendingStaffOrderPrefill.storeId)) {
+      setSellerOrderDraft({});
+      setSellerOrderCartProductIds([]);
+      setSellerGiftDraftItems([]);
+      setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
+    }
     void refreshSellerClientProducts(activeStoreId);
-  }, [selectedSellerStoreId, selectedSellerClientId, sellerActiveSection, sessionUser, isSellerOrderFlowActive]);
+  }, [selectedSellerStoreId, selectedSellerClientId, sellerActiveSection, sessionUser, isSellerOrderFlowActive, editingStaffOrder, pendingStaffOrderPrefill]);
 
   useEffect(() => {
     if (!isSellerOrderFlowActive) {
@@ -8810,6 +8971,39 @@ export default function App() {
     setSellerOrderCartProductIds((current) => (
       current.includes(productId) ? current : [...current, productId]
     ));
+
+    const storeId = selectedSellerStoreId || selectedSellerClientId;
+    const assignedProduct = sellerClientProducts.find((product) => product.productId === productId);
+    const catalogProduct = [...sellerProductCatalog.expiringSoon, ...sellerProductCatalog.products]
+      .find((product) => product.productId === productId);
+    const fallbackPrice = Number(assignedProduct?.promotion?.promotionSalePrice ?? assignedProduct?.salePrice ?? catalogProduct?.salePrice ?? 0);
+
+    if (storeId && isStoreAssignedToAnyCatalog(storeId)) {
+      void fetchClientCatalogUnitPrice(storeId, productId, fallbackPrice).then((unitPrice) => {
+        if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+          return;
+        }
+
+        setSellerOrderDraft((current) => {
+          const existing = current[productId];
+          const quantityValue = Number(existing?.quantity || 0);
+
+          return {
+            ...current,
+            [productId]: {
+              stockCurrent: existing?.stockCurrent ?? "",
+              quantity: existing?.quantity ?? "",
+              notes: existing?.notes ?? "",
+              salePriceAwg: formatSellerDraftMoney(unitPrice),
+              description: existing?.description ?? "",
+              lineSubtotalAwg: formatSellerDraftMoney(
+                unitPrice * (Number.isFinite(quantityValue) ? Math.max(0, quantityValue) : 0),
+              ),
+            },
+          };
+        });
+      });
+    }
   }
 
   function removeProductFromSellerOrderCart(productId: string) {
@@ -9426,7 +9620,9 @@ export default function App() {
                     ? `${sellerDraftedItems.length} producto${sellerDraftedItems.length === 1 ? "" : "s"} listos · Total estimado ${formatAwgCurrency(sellerOrderEstimatedTotal)} AWG`
                     : isDirectInvoiceComposer
                       ? "Agrega productos al pedido y pon cantidades antes de facturar."
-                      : "Agrega productos al pedido y pon cantidades antes de enviar a bodega."}
+                      : editingStaffOrder
+                        ? "Ajusta cantidades o agrega productos antes de guardar el pedido."
+                        : "Agrega productos al pedido y pon cantidades antes de enviar a bodega."}
                 </p>
                 <button
                   className="seller-order-submit"
@@ -9443,8 +9639,8 @@ export default function App() {
                   <SellerIcon name="send" />
                   <span>
                     {isSubmittingSellerOrder
-                      ? (isDirectInvoiceComposer ? "Facturando..." : "Enviando...")
-                      : (isDirectInvoiceComposer ? "Facturar pedido" : "Enviar pedido")}
+                      ? (isDirectInvoiceComposer ? "Facturando..." : editingStaffOrder ? "Guardando..." : "Enviando...")
+                      : (isDirectInvoiceComposer ? "Facturar pedido" : editingStaffOrder ? "Guardar cambios" : "Enviar pedido")}
                   </span>
                 </button>
               </div>
@@ -9456,50 +9652,92 @@ export default function App() {
   }
 
   function renderStaffOrderComposerBody() {
+    const isEditingReceivedOrder = Boolean(editingStaffOrder);
+
     return (
       <div className="staff-order-composer-body">
-        <article className="database-card">
-          <div className="management-table-header">
-            <div>
-              <h2>Rutas comerciales</h2>
-              <p>Selecciona la ruta del vendedor que visita al cliente.</p>
+        {isEditingReceivedOrder ? (
+          <article className="database-card">
+            <div className="management-table-header">
+              <div>
+                <h2>Pedido en edición</h2>
+                <p>
+                  {editingStaffOrder?.storeName}
+                  {" · "}
+                  {editingStaffOrder?.salesRepName}
+                  {" · Entrega "}
+                  {editingStaffOrder?.deliveryDate || "sin fecha"}
+                  {editingStaffOrder?.invoiceNumber ? ` · #${editingStaffOrder.invoiceNumber}` : ""}
+                </p>
+              </div>
+              <p className="management-table-meta">
+                {editingStaffOrder?.routeName || "Ruta"}
+                {editingStaffOrder?.routeDay ? ` · ${formatRouteDayLabel(editingStaffOrder.routeDay as RouteDayKey)}` : ""}
+              </p>
             </div>
-            <p className="management-table-meta">{activeComposerRoutes.length} rutas</p>
-          </div>
+            <p className="route-helper-text">
+              Puedes ajustar productos, cantidades, notas, fecha de entrega y adjuntos. La ruta y el cliente se mantienen.
+            </p>
+          </article>
+        ) : (
+          <article className="database-card">
+            <div className="management-table-header">
+              <div>
+                <h2>Rutas comerciales</h2>
+                <p>Selecciona la ruta del vendedor que visita al cliente.</p>
+              </div>
+              <p className="management-table-meta">{activeComposerRoutes.length} rutas</p>
+            </div>
 
-          {composerRoutesError ? <p className="form-feedback error">{composerRoutesError}</p> : null}
+            {composerRoutesError ? <p className="form-feedback error">{composerRoutesError}</p> : null}
 
-          <div className="seller-route-list">
-            {isLoadingComposerRoutes ? (
-              <article className="route-summary-card is-loading" />
-            ) : activeComposerRoutes.length > 0 ? (
-              activeComposerRoutes.map((route) => {
-                const routeKey = route._id ?? route.code;
-                const isSelected = routeKey === selectedSellerRouteId;
+            <div className="seller-route-list">
+              {isLoadingComposerRoutes ? (
+                <article className="route-summary-card is-loading" />
+              ) : activeComposerRoutes.length > 0 ? (
+                activeComposerRoutes.map((route) => {
+                  const routeKey = route._id ?? route.code;
+                  const isSelected = routeKey === selectedSellerRouteId;
 
-                return (
-                  <button
-                    key={routeKey}
-                    className={`seller-route-list-item ${isSelected ? "is-active" : ""}`}
-                    type="button"
-                    onClick={() => setSelectedSellerRouteId(routeKey)}
-                  >
-                    <div>
-                      <p className="section-label">{route.weekLabel}</p>
-                      <strong>{route.name}</strong>
-                      <span>{route.salesRepName} · {route.days.length} días planeados</span>
-                    </div>
-                    <span>{route.plannedStops} tiendas</span>
-                  </button>
-                );
-              })
-            ) : (
-              <p className="route-empty-state">No hay rutas activas disponibles.</p>
-            )}
-          </div>
-        </article>
+                  return (
+                    <button
+                      key={routeKey}
+                      className={`seller-route-list-item ${isSelected ? "is-active" : ""}`}
+                      type="button"
+                      onClick={() => setSelectedSellerRouteId(routeKey)}
+                    >
+                      <div>
+                        <p className="section-label">{route.weekLabel}</p>
+                        <strong>{route.name}</strong>
+                        <span>{route.salesRepName} · {route.days.length} días planeados</span>
+                      </div>
+                      <span>{route.plannedStops} tiendas</span>
+                    </button>
+                  );
+                })
+              ) : (
+                <p className="route-empty-state">No hay rutas activas disponibles.</p>
+              )}
+            </div>
+          </article>
+        )}
 
-        {selectedSellerRoute ? (
+        {isEditingReceivedOrder && selectedSellerStoreId ? (
+          <article className="route-builder-card seller-route-workspace">
+            <div className="management-table-header">
+              <div>
+                <p className="section-label">Cliente</p>
+                <h2>{editingStaffOrder?.storeName}</h2>
+                <p>{editingStaffOrder?.salesRepName}</p>
+              </div>
+            </div>
+            <p className="seller-selected-store-banner">
+              {editingStaffOrder?.storeName}
+              <small>{storeOptionsById.get(selectedSellerStoreId)?.address || "Sin dirección"}</small>
+            </p>
+            {renderSellerProductCatalogPanel(selectedSellerStoreId, { showOrderFields: true })}
+          </article>
+        ) : selectedSellerRoute ? (
           <article className="route-builder-card seller-route-workspace">
             <div className="management-table-header">
               <div>
@@ -9588,15 +9826,19 @@ export default function App() {
   }
 
   function renderStaffOrderComposerPage() {
+    const isEditingReceivedOrder = Boolean(editingStaffOrder);
+
     return (
       <section className="routes-layout staff-order-composer-page">
         <article className="creation-selector-block">
           <div className="creation-header database-header">
             <div>
-              <p className="section-label">Nuevo pedido</p>
-              <h2>Agregar pedido</h2>
+              <p className="section-label">{isEditingReceivedOrder ? "Edicion" : "Nuevo pedido"}</p>
+              <h2>{isEditingReceivedOrder ? "Editar pedido" : "Agregar pedido"}</h2>
               <p className="route-helper-text">
-                Selecciona ruta, cliente y productos igual que en el portal del vendedor. El pedido queda a nombre del vendedor de la ruta.
+                {isEditingReceivedOrder
+                  ? "Modifica productos, cantidades, notas y fecha de entrega del pedido recibido. Al guardar, se actualiza el mismo pedido en bodega."
+                  : "Selecciona ruta, cliente y productos igual que en el portal del vendedor. El pedido queda a nombre del vendedor de la ruta."}
               </p>
             </div>
             <button className="ghost-button ghost-button--back" type="button" onClick={closeStaffOrderComposer}>
@@ -12238,7 +12480,49 @@ export default function App() {
     return lots.find((lot) => lot.quantity > 0)?.stockRowId || lots[0]?.stockRowId || "";
   }
 
-  function addProductToWarehouseOrder() {
+  function isStoreAssignedToAnyCatalog(storeId: string) {
+    const normalizedStoreId = String(storeId ?? "").trim();
+
+    if (!normalizedStoreId) {
+      return false;
+    }
+
+    return catalogs.some((catalog) => (
+      (catalog.assignedClientIds ?? []).some((clientId) => String(clientId) === normalizedStoreId)
+      || (catalog.assignedClients ?? []).some((entry) => String(entry.clientId) === normalizedStoreId)
+    ));
+  }
+
+  async function fetchClientCatalogUnitPrice(storeId: string, productId: string, fallbackPrice = 0) {
+    const listPrice = roundCurrencyValue(Math.max(0, fallbackPrice));
+
+    if (!storeId || !productId) {
+      return listPrice;
+    }
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/management/stores/${storeId}/catalog-prices?productId=${encodeURIComponent(productId)}`);
+      const data = (await response.json()) as {
+        salePrice?: number | null;
+        hasCatalogPrice?: boolean;
+        isCatalogClient?: boolean;
+      };
+
+      if (!response.ok || data.isCatalogClient !== true) {
+        return listPrice;
+      }
+
+      if (data.hasCatalogPrice && Number.isFinite(Number(data.salePrice))) {
+        return roundCurrencyValue(Number(data.salePrice));
+      }
+    } catch {
+      // Fall back to the list price when catalog lookup is unavailable.
+    }
+
+    return listPrice;
+  }
+
+  async function addProductToWarehouseOrder() {
     if (!selectedWarehouseOrderDetail || (selectedWarehouseOrderDetail.status === "delivered" && !canEditCompletedWarehouseOrders)) {
       return;
     }
@@ -12270,12 +12554,22 @@ export default function App() {
       return;
     }
 
+    const selectedLot = lots.find((lot) => lot.stockRowId === selectedStockRowId);
+    const fallbackPrice = Number(selectedLot?.salePrice ?? product.salePrice ?? 0);
+    const unitPrice = await fetchClientCatalogUnitPrice(
+      selectedWarehouseOrderDetail.storeId,
+      product.value,
+      fallbackPrice,
+    );
+    const usesCatalogPrice = isStoreAssignedToAnyCatalog(selectedWarehouseOrderDetail.storeId);
     const newItem = {
       productId: product.value,
       stockCurrent: null,
       quantity,
       stockRowId: selectedStockRowId,
       notes: "",
+      salePriceAwg: unitPrice,
+      ...(usesCatalogPrice ? { catalogSalePriceAwg: unitPrice } : {}),
       productName: product.label,
       productSku: product.sku,
     };
@@ -12295,6 +12589,10 @@ export default function App() {
     setWarehouseOrderLotDraft((current) => ({
       ...current,
       [product.value]: selectedStockRowId || resolveSuggestedWarehouseLotId(product.value),
+    }));
+    setAccountingOrderUnitPriceDraft((current) => ({
+      ...current,
+      [product.value]: unitPrice > 0 ? String(unitPrice) : "",
     }));
     setWarehouseOrderEditStatus(null);
     closeWarehouseAddProductModal();
@@ -12462,6 +12760,9 @@ export default function App() {
           quantity,
           stockRowId: warehouseOrderLotDraft[item.productId] || item.stockRowId || "",
         notes: item.notes,
+          ...(Number.isFinite(Number(item.salePriceAwg)) && Number(item.salePriceAwg) >= 0
+            ? { salePriceAwg: roundCurrencyValue(Number(item.salePriceAwg)) }
+            : {}),
         };
 
         if (hasAccountingDispatchAccess(sessionUser?.role)) {
@@ -14264,6 +14565,7 @@ export default function App() {
     const invRow = inventoryRowsByProductId.get(item.productId);
     const unitPrice = roundCurrencyValue(Number(
       item.salePriceAwg
+      ?? item.catalogSalePriceAwg
       ?? invRow?.salePrice
       ?? productOption?.salePrice
       ?? 0,
@@ -14331,7 +14633,7 @@ export default function App() {
     setInvoiceChangeStatus(null);
   }
 
-  function addInvoiceChangeProduct(productId: string) {
+  async function addInvoiceChangeProduct(productId: string) {
     if (!invoiceChangeOrder) {
       return;
     }
@@ -14356,7 +14658,9 @@ export default function App() {
       return;
     }
 
-    const unitPrice = roundCurrencyValue(Number(invRow?.salePrice ?? productOption.salePrice ?? 0));
+    const fallbackPrice = Number(invRow?.salePrice ?? productOption.salePrice ?? 0);
+    const unitPrice = await fetchClientCatalogUnitPrice(invoiceChangeOrder.storeId, normalizedProductId, fallbackPrice);
+    const usesCatalogPrice = isStoreAssignedToAnyCatalog(invoiceChangeOrder.storeId);
     const description = String(productOption.description ?? "").trim();
     const newItem: SellerOrderRecord["items"][number] = {
       productId: normalizedProductId,
@@ -14365,6 +14669,7 @@ export default function App() {
       notes: "",
       description,
       salePriceAwg: unitPrice,
+      ...(usesCatalogPrice ? { catalogSalePriceAwg: unitPrice } : {}),
       productName: productOption.label,
       productSku: productOption.sku,
     };
@@ -17107,6 +17412,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
   async function handleSellerOrderSubmit() {
     const isStaffComposer = canCreateStaffOrders(sessionUser?.role) && isStaffOrderComposerActive;
+    const isEditingReceivedOrder = Boolean(editingStaffOrder) && isStaffComposer && !isDirectInvoiceComposer;
 
     if (!sessionUser || (sessionUser.role !== "sales-rep-aruba" && !isStaffComposer)) {
       return;
@@ -17114,18 +17420,22 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
     const salesRepId = resolveStaffOrderSalesRepId();
 
-    if (!salesRepId) {
+    if (!isEditingReceivedOrder && !salesRepId) {
       setSellerOrderStatus({ tone: "error", message: "Selecciona una ruta con vendedor asignado." });
       return;
     }
 
-    if (!selectedSellerStore) {
+    if (!isEditingReceivedOrder && !selectedSellerStore) {
       setSellerOrderStatus({ tone: "error", message: "Selecciona un cliente de la ruta antes de enviar el pedido." });
       return;
     }
 
-    if (!selectedSellerRoute || !selectedSellerDayKey) {
+    if (!isEditingReceivedOrder && (!selectedSellerRoute || !selectedSellerDayKey)) {
       setSellerOrderStatus({ tone: "error", message: "Selecciona la ruta y el dia activo antes de enviar el pedido." });
+      return;
+    }
+
+    if (isEditingReceivedOrder && !editingStaffOrder) {
       return;
     }
 
@@ -17134,7 +17444,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
         tone: "error",
         message: isDirectInvoiceComposer
           ? "Agrega cantidad en al menos un producto antes de facturar."
-          : "Agrega stock actual o cantidad en al menos un producto antes de enviar el registro a bodega.",
+          : isEditingReceivedOrder
+            ? "El pedido debe conservar al menos un producto con cantidad."
+            : "Agrega stock actual o cantidad en al menos un producto antes de enviar el registro a bodega.",
       });
       return;
     }
@@ -17158,11 +17470,51 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       setIsSubmittingSellerOrder(true);
       setSellerOrderStatus(null);
 
+      if (isEditingReceivedOrder && editingStaffOrder) {
+        const response = await fetch(`${apiBaseUrl}/warehouse/orders/${editingStaffOrder._id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            requestedByRole: sessionUser.role,
+            editedByUserId: sessionUser.id,
+            editedByUserName: sessionUser.name,
+            editedByRole: sessionUser.role,
+            requestedByUserId: sessionUser.id,
+            requestedByUserName: sessionUser.name,
+            deliveryDate: sellerDeliveryDateDraft,
+            orderNotes: sellerOrderNotesDraft.trim(),
+            internalOrderNotes: sellerInternalOrderNotesDraft.trim(),
+            attachments: sellerOrderAttachmentsDraft,
+            items: sellerDraftedItems,
+            giftItems: sellerGiftDraftItems.map((item) => ({
+              productId: item.productId,
+              stockRowId: item.stockRowId,
+              quantity: item.quantity,
+              notes: "Obsequio",
+            })),
+          }),
+        });
+        const data = (await response.json()) as { message?: string; order?: SellerOrderRecord };
+
+        if (!response.ok || !data.order) {
+          setSellerOrderStatus({ tone: "error", message: data.message ?? "No fue posible actualizar el pedido." });
+          return;
+        }
+
+        closeStaffOrderComposer();
+        setWarehouseOrderCompletionStatus({
+          tone: "success",
+          message: data.message ?? "Pedido actualizado correctamente.",
+        });
+        await refreshWarehouseOrders();
+        return;
+      }
+
       const orderPayload = {
-        routeId: selectedSellerRoute._id ?? selectedSellerRoute.code,
-        routeName: selectedSellerRoute.name,
+        routeId: selectedSellerRoute!._id ?? selectedSellerRoute!.code,
+        routeName: selectedSellerRoute!.name,
         routeDay: selectedSellerDayKey,
-        storeId: selectedSellerStore.storeId,
+        storeId: selectedSellerStore!.storeId,
         salesRepId,
         deliveryDate: sellerDeliveryDateDraft,
         orderNotes: sellerOrderNotesDraft.trim(),
@@ -21788,7 +22140,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   />
                 </label>
 
-                <button className="submit-button" type="button" onClick={addProductToWarehouseOrder}>
+                <button className="submit-button" type="button" onClick={() => void addProductToWarehouseOrder()}>
                   Agregar al pedido
                 </button>
               </div>
@@ -22285,7 +22637,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               : activeSection === "orders"
                 ? "Recepción de pedidos"
               : activeSection === "create-order"
-                ? "Agregar pedido"
+                ? (editingStaffOrder ? "Editar pedido" : "Agregar pedido")
               : activeSection === "direct-invoice"
                 ? "Facturar pedido"
               : activeSection === "store-performance"
@@ -22338,7 +22690,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               : activeSection === "orders"
                 ? "Revisa pedidos de vendedores, agrega pedidos manuales y consulta completados con exportacion QuickBooks."
               : activeSection === "create-order"
-                ? "Crea un pedido manualmente seleccionando ruta, cliente y productos como lo haria el vendedor."
+                ? (editingStaffOrder
+                  ? "Modifica el pedido recibido con la misma experiencia de agregar pedido: productos, cantidades, notas y fecha de entrega."
+                  : "Crea un pedido manualmente seleccionando ruta, cliente y productos como lo haria el vendedor.")
               : activeSection === "direct-invoice"
                 ? "Factura ventas del camion al instante. Ajusta precio, cantidad, notas y descripcion por linea antes de confirmar."
               : activeSection === "store-performance"
@@ -30087,21 +30441,35 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 loadingMessage="Cargando pedidos recibidos..."
                 showInternalNotes
                 showRoute={false}
-                onSelectOrder={setSelectedWarehouseOrderDetail}
+                showSalesRep={false}
+                showStatus={false}
+                showConsecutivo
+                showInvoiceTotal
+                hideDefaultViewButton
+                onSelectOrder={(order) => openStaffOrderComposerForEdit(order)}
                 renderActions={(order) => {
                   const isDeletingOrder = deletingWarehouseOrderId === order._id;
 
                   return (
-                    <button
-                      className="table-action-icon is-danger"
-                      type="button"
-                      aria-label={pendingOrderDeleteOrderIds.has(String(order._id)) ? "Solicitud pendiente" : sessionUser?.role === "management" ? "Borrar pedido" : "Solicitar borrado"}
-                      title={pendingOrderDeleteOrderIds.has(String(order._id)) ? "Solicitud pendiente" : sessionUser?.role === "management" ? "Borrar pedido" : "Solicitar borrado"}
-                      disabled={isDeletingOrder || pendingOrderDeleteOrderIds.has(String(order._id))}
-                      onClick={() => void handleDeleteWarehouseOrder(order)}
-                    >
-                      x
-                    </button>
+                    <>
+                      <button
+                        className="seller-order-detail-trigger"
+                        type="button"
+                        onClick={() => openStaffOrderComposerForEdit(order)}
+                      >
+                        Editar
+                      </button>
+                      <button
+                        className="table-action-icon is-danger"
+                        type="button"
+                        aria-label={pendingOrderDeleteOrderIds.has(String(order._id)) ? "Solicitud pendiente" : sessionUser?.role === "management" ? "Borrar pedido" : "Solicitar borrado"}
+                        title={pendingOrderDeleteOrderIds.has(String(order._id)) ? "Solicitud pendiente" : sessionUser?.role === "management" ? "Borrar pedido" : "Solicitar borrado"}
+                        disabled={isDeletingOrder || pendingOrderDeleteOrderIds.has(String(order._id))}
+                        onClick={() => void handleDeleteWarehouseOrder(order)}
+                      >
+                        x
+                      </button>
+                    </>
                   );
                 }}
               />
@@ -30217,7 +30585,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     <tr>
                       <th>Fecha</th>
                       <th>Factura</th>
-                      <th>Vendedor</th>
+                      <th>Total</th>
                       <th>Cliente</th>
                       <th>Notas internas</th>
                       <th>Productos</th>
@@ -30245,7 +30613,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           <tr key={order._id} className={order.invoiceVoided ? "is-voided-invoice" : undefined}>
                             <td>{formatDeliveryDateLabel(getOrderDeliveryDateKey(order))}</td>
                             <td>{formatInvoiceNumberLabel(order)}</td>
-                            <td>{order.salesRepName}</td>
+                            <td>{`${formatAwgCurrency(getSellerOrderInvoiceTotalAwg(order))} AWG`}</td>
                             <td>{order.storeName}</td>
                             <td className="warehouse-order-notes-cell">{order.internalOrderNotes?.trim() || "-"}</td>
                             <td>{`${order.items.length} producto${order.items.length === 1 ? "" : "s"} / ${totalUnits} und`}</td>
@@ -30709,7 +31077,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   className="secondary-action-button"
                   type="button"
                   disabled={!invoiceChangeAddProductId}
-                  onClick={() => addInvoiceChangeProduct(invoiceChangeAddProductId)}
+                  onClick={() => void addInvoiceChangeProduct(invoiceChangeAddProductId)}
                 >
                   + Agregar
                 </button>

@@ -181,13 +181,8 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
         const dueDateKey = resolveDueDateKey(invoiceDateKey, terms);
         // Prefer store address over deliveryZone snapshots that sometimes glue name+address.
         const location = String(store?.address ?? order.deliveryZone ?? "").trim();
-        const memoParts = [
-            String(order.routeName ?? "").trim(),
-            String(order.salesRepName ?? "").trim(),
-            String(order.orderNotes ?? "").trim(),
-            String(order.internalOrderNotes ?? "").trim(),
-        ].filter(Boolean);
-        const memo = memoParts.join(" - ");
+        // QuickBooks Memo: only warehouse internal notes (never route, seller, or customer-facing notes).
+        const memo = String(order.internalOrderNotes ?? "").trim();
         const resolveProduct = (productId, productSku) => (productsById.get(String(productId ?? ""))
             ?? productsBySku.get(normalizeSku(String(productSku ?? "")))
             ?? null);
