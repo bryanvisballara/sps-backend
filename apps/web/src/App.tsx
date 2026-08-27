@@ -3523,6 +3523,23 @@ function getSellerOrderInvoiceTotalAwg(order: Pick<SellerOrderRecord, "items">) 
   }, 0));
 }
 
+function formatOrderItemNotes(order: Pick<SellerOrderRecord, "items">) {
+  const notes = (order.items ?? [])
+    .map((item) => {
+      const note = String(item.notes ?? "").trim();
+
+      if (!note) {
+        return "";
+      }
+
+      const productName = String(item.productName ?? "").trim();
+      return productName ? `${productName}: ${note}` : note;
+    })
+    .filter(Boolean);
+
+  return notes.length > 0 ? notes.join(" · ") : "-";
+}
+
 function formatPaymentMethodLabel(paymentMethod: string) {
   if (paymentMethod === "datafono") {
     return "Datáfono";
@@ -3822,6 +3839,7 @@ type WarehouseOrderListProps = {
   showInvoiceTotal?: boolean;
   showInvoiceNotes?: boolean;
   showInternalNotes?: boolean;
+  showProductNotes?: boolean;
   showRoute?: boolean;
   selectable?: boolean;
   selectedOrderIds?: Set<string>;
@@ -3848,6 +3866,7 @@ function WarehouseOrderList({
   showInvoiceTotal = false,
   showInvoiceNotes = false,
   showInternalNotes = false,
+  showProductNotes = false,
   showRoute = true,
   selectable = false,
   selectedOrderIds = new Set<string>(),
@@ -3864,6 +3883,7 @@ function WarehouseOrderList({
     + Number(showInvoiceTotal)
     + Number(showInvoiceNotes)
     + Number(showInternalNotes)
+    + Number(showProductNotes)
     + Number(selectable)
     - Number(!showSalesRep);
 
@@ -3893,8 +3913,9 @@ function WarehouseOrderList({
       {showStatus ? <th>Estado</th> : null}
       {showInvoiceTotal ? <th>Total</th> : null}
       {showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
-      {showInvoiceNotes ? <th className="warehouse-order-col-optional">Observación factura</th> : null}
-      {showInternalNotes ? <th className="warehouse-order-col-optional">Nota interna</th> : null}
+      {showInvoiceNotes ? <th>Observación factura</th> : null}
+      {showInternalNotes ? <th>Nota interna</th> : null}
+      {showProductNotes ? <th>Notas productos</th> : null}
       <th>Und.</th>
       <th className="warehouse-order-col-actions">{actionsColumnLabel}</th>
     </tr>
@@ -4007,13 +4028,18 @@ function WarehouseOrderList({
                       ) : null}
                       {showSalesRep && showInvoiceNumber ? <td>{formatInvoiceNumberLabel(order)}</td> : null}
                       {showInvoiceNotes ? (
-                        <td className="warehouse-order-notes-cell warehouse-order-col-optional">
+                        <td className="warehouse-order-notes-cell">
                           {order.orderNotes?.trim() || "-"}
                         </td>
                       ) : null}
                       {showInternalNotes ? (
-                        <td className="warehouse-order-notes-cell warehouse-order-col-optional">
+                        <td className="warehouse-order-notes-cell">
                           {order.internalOrderNotes?.trim() || "-"}
+                        </td>
+                      ) : null}
+                      {showProductNotes ? (
+                        <td className="warehouse-order-notes-cell">
+                          {formatOrderItemNotes(order)}
                         </td>
                       ) : null}
                       <td>{`${order.items.length} prod. / ${totalUnits} und`}</td>
@@ -21150,7 +21176,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             <th>Lote</th>
                             <th>Precio</th>
                             <th>Total</th>
-                            <th className="warehouse-order-col-optional">Notas</th>
+                            <th className="warehouse-order-notes-col">Notas</th>
                             {canMutateSelectedWarehouseOrder ? <th>Quitar</th> : null}
                           </tr>
                         </thead>
@@ -21284,7 +21310,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                   `${formatAwgCurrency(item.lineTotal)} AWG`
                                 )}
                               </td>
-                              <td className="warehouse-order-col-optional">{item.notes || "-"}</td>
+                              <td className="warehouse-order-notes-col warehouse-order-notes-cell">{item.notes || "-"}</td>
                               {canMutateSelectedWarehouseOrder ? (
                                 <td>
                                   <button
@@ -21705,6 +21731,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       showConsecutivo
                       showRoute={false}
                       showInternalNotes
+                      showProductNotes
                       selectable
                       selectedOrderIds={selectedCompletedOrderIds}
                       onToggleOrderSelection={toggleCompletedOrderSelection}

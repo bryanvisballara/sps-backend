@@ -3645,6 +3645,17 @@ h1 {
   line-height: 1.35;
 }
 
+.table-wrap--warehouse-items .data-table--warehouse-order-items {
+  min-width: 760px;
+}
+
+.table-wrap--warehouse-items .data-table--warehouse-order-items .warehouse-order-notes-col {
+  min-width: 140px;
+  max-width: 260px;
+  white-space: normal !important;
+  word-break: break-word;
+}
+
 .table-wrap--warehouse-items .data-table--inventory {
   min-width: 720px;
 }
