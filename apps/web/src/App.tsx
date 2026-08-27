@@ -9462,6 +9462,32 @@ export default function App() {
     );
   }
 
+  function renderStaffOrderSaveButton() {
+    const isEditingReceivedOrder = Boolean(editingStaffOrder);
+
+    return (
+      <button
+        className="submit-button seller-order-submit"
+        type="button"
+        onClick={() => void handleSellerOrderSubmit()}
+        disabled={
+          isSubmittingSellerOrder
+          || isUploadingSellerOrderAttachment
+          || isLoadingSellerClientProducts
+          || sellerDraftedItems.length === 0
+          || (isDirectInvoiceComposer && !directInvoicePaymentMethod)
+        }
+      >
+        <SellerIcon name="send" />
+        <span>
+          {isSubmittingSellerOrder
+            ? (isDirectInvoiceComposer ? "Facturando..." : isEditingReceivedOrder ? "Guardando..." : "Enviando...")
+            : (isDirectInvoiceComposer ? "Facturar pedido" : isEditingReceivedOrder ? "Guardar cambios" : "Enviar pedido")}
+        </span>
+      </button>
+    );
+  }
+
   function renderSellerRouteOrderExtras() {
     const giftQuantityValue = Number(sellerGiftDraft.quantity || 0);
 
@@ -9696,25 +9722,7 @@ export default function App() {
                         ? "Ajusta cantidades o agrega productos antes de guardar el pedido."
                         : "Agrega productos al pedido y pon cantidades antes de enviar a bodega."}
                 </p>
-                <button
-                  className="seller-order-submit"
-                  type="button"
-                  onClick={() => void handleSellerOrderSubmit()}
-                  disabled={
-                    isSubmittingSellerOrder
-                    || isUploadingSellerOrderAttachment
-                    || isLoadingSellerClientProducts
-                    || sellerDraftedItems.length === 0
-                    || (isDirectInvoiceComposer && !directInvoicePaymentMethod)
-                  }
-                >
-                  <SellerIcon name="send" />
-                  <span>
-                    {isSubmittingSellerOrder
-                      ? (isDirectInvoiceComposer ? "Facturando..." : editingStaffOrder ? "Guardando..." : "Enviando...")
-                      : (isDirectInvoiceComposer ? "Facturar pedido" : editingStaffOrder ? "Guardar cambios" : "Enviar pedido")}
-                  </span>
-                </button>
+                {renderStaffOrderSaveButton()}
               </div>
             </div>
           </div>
@@ -9755,11 +9763,17 @@ export default function App() {
                   </span>
                 </label>
               </div>
-              <p className="management-table-meta">
-                {editingStaffOrder?.routeName || "Ruta"}
-                {editingStaffOrder?.routeDay ? ` · ${formatRouteDayLabel(editingStaffOrder.routeDay as RouteDayKey)}` : ""}
-              </p>
+              <div className="management-table-header-actions">
+                <p className="management-table-meta">
+                  {editingStaffOrder?.routeName || "Ruta"}
+                  {editingStaffOrder?.routeDay ? ` · ${formatRouteDayLabel(editingStaffOrder.routeDay as RouteDayKey)}` : ""}
+                </p>
+                {renderStaffOrderSaveButton()}
+              </div>
             </div>
+            {sellerOrderStatus ? (
+              <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p>
+            ) : null}
             <p className="route-helper-text">
               Puedes ajustar productos, cantidades, notas, fecha de entrega, consecutivo y adjuntos. La ruta y el cliente se mantienen.
             </p>
@@ -9926,9 +9940,12 @@ export default function App() {
                   : "Selecciona ruta, cliente y productos igual que en el portal del vendedor. El pedido queda a nombre del vendedor de la ruta."}
               </p>
             </div>
-            <button className="ghost-button ghost-button--back" type="button" onClick={closeStaffOrderComposer}>
-              Volver a pedidos
-            </button>
+            <div className="management-table-header-actions">
+              <button className="ghost-button ghost-button--back" type="button" onClick={closeStaffOrderComposer}>
+                Volver a pedidos
+              </button>
+              {isEditingReceivedOrder ? renderStaffOrderSaveButton() : null}
+            </div>
           </div>
         </article>
 

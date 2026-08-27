@@ -7920,6 +7920,7 @@ async function syncDeliveredOrdersIntoLogisticsInvoices() {
         salesRepName: 1,
         routeName: 1,
         items: 1,
+        giftItems: 1,
         updatedAt: 1,
         createdAt: 1,
     })
@@ -7927,9 +7928,10 @@ async function syncDeliveredOrdersIntoLogisticsInvoices() {
     if (deliveredOrders.length === 0) {
         return;
     }
-    const productIds = Array.from(new Set(deliveredOrders.flatMap((order) => (order.items ?? [])
-        .map((item) => String(item.productId ?? "").trim())
-        .filter(Boolean))));
+    const productIds = Array.from(new Set(deliveredOrders.flatMap((order) => [
+        ...(order.items ?? []).map((item) => String(item.productId ?? "").trim()),
+        ...(order.giftItems ?? []).map((item) => String(item.productId ?? "").trim()),
+    ].filter(Boolean))));
     const clientIds = Array.from(new Set(deliveredOrders
         .map((order) => String(order.storeId ?? "").trim())
         .filter(Boolean)));

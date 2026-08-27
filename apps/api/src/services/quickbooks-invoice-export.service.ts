@@ -163,6 +163,7 @@ function resolveQuickBooksItemDescription(product: {
 }
 
 type ExportLineItem = {
+  productId?: string;
   productName: string;
   productSku: string;
   description: string;
@@ -170,6 +171,22 @@ type ExportLineItem = {
   rate: number;
   amount: number;
 };
+
+function appendMissingGiftLines(existing: ExportLineItem[], gifts: ExportLineItem[]) {
+  const giftedProductIds = new Set(
+    existing
+      .filter((line) => line.rate === 0)
+      .map((line) => String(line.productId ?? "").trim())
+      .filter(Boolean),
+  );
+
+  const missingGifts = gifts.filter((gift) => {
+    const productId = String(gift.productId ?? "").trim();
+    return !productId || !giftedProductIds.has(productId);
+  });
+
+  return [...existing, ...missingGifts];
+}
 
 export async function buildQuickBooksInvoiceExportCsv(params: {
   startDate?: string;
@@ -267,12 +284,39 @@ export async function buildQuickBooksInvoiceExportCsv(params: {
       ?? null
     );
 
-    const lineItems: ExportLineItem[] = logisticsInvoice?.items?.length
+    const mapGiftExportLines = (): ExportLineItem[] => (
+      (order.giftItems ?? []).flatMap((item) => {
+        const quantity = Number(item.quantity ?? 0);
+
+        if (!Number.isFinite(quantity) || quantity <= 0) {
+          return [];
+        }
+
+        const productId = String(item.productId ?? "");
+        const product = resolveProduct(productId);
+        const productName = resolveQuickBooksItemName(product, "Obsequio");
+        const description = resolveQuickBooksItemDescription(product, String(item.notes ?? "Obsequio"))
+          || "Obsequio";
+
+        return [{
+          productId,
+          productName,
+          productSku: String(product?.sku ?? "-"),
+          description,
+          quantity,
+          rate: 0,
+          amount: 0,
+        }];
+      })
+    );
+
+    const billedLineItems: ExportLineItem[] = logisticsInvoice?.items?.length
       ? logisticsInvoice.items.map((item) => {
         const product = resolveProduct(item.productId, item.productSku);
         const productName = resolveQuickBooksItemName(product, String(item.productName ?? "Producto"));
 
         return {
+          productId: String(item.productId ?? ""),
           productName,
           productSku: String(item.productSku ?? product?.sku ?? "-"),
           description: resolveQuickBooksItemDescription(product),
@@ -281,47 +325,31 @@ export async function buildQuickBooksInvoiceExportCsv(params: {
           amount: roundMoney(Number(item.lineTotalAwg ?? 0)),
         };
       })
-      : [
-        ...(order.items ?? []).flatMap((item) => {
-          const quantity = Number(item.quantity ?? 0);
+      : (order.items ?? []).flatMap((item) => {
+        const quantity = Number(item.quantity ?? 0);
 
-          if (!Number.isFinite(quantity) || quantity <= 0) {
-            return [];
-          }
+        if (!Number.isFinite(quantity) || quantity <= 0) {
+          return [];
+        }
 
-          const product = resolveProduct(String(item.productId ?? ""));
-          const rate = roundMoney(Number(item.salePriceAwg ?? 0));
-          const productName = resolveQuickBooksItemName(product, "Producto");
+        const productId = String(item.productId ?? "");
+        const product = resolveProduct(productId);
+        const rate = roundMoney(Number(item.salePriceAwg ?? 0));
+        const productName = resolveQuickBooksItemName(product, "Producto");
 
-          return [{
-            productName,
-            productSku: String(product?.sku ?? "-"),
-            description: resolveQuickBooksItemDescription(product, String(item.notes ?? "")),
-            quantity,
-            rate,
-            amount: roundMoney(rate * quantity),
-          }];
-        }),
-        ...(order.giftItems ?? []).flatMap((item) => {
-          const quantity = Number(item.quantity ?? 0);
+        return [{
+          productId,
+          productName,
+          productSku: String(product?.sku ?? "-"),
+          description: resolveQuickBooksItemDescription(product, String(item.notes ?? "")),
+          quantity,
+          rate,
+          amount: roundMoney(rate * quantity),
+        }];
+      });
 
-          if (!Number.isFinite(quantity) || quantity <= 0) {
-            return [];
-          }
-
-          const product = resolveProduct(String(item.productId ?? ""));
-          const productName = resolveQuickBooksItemName(product, "Obsequio");
-
-          return [{
-            productName,
-            productSku: String(product?.sku ?? "-"),
-            description: resolveQuickBooksItemDescription(product, String(item.notes ?? "Obsequio")),
-            quantity,
-            rate: 0,
-            amount: 0,
-          }];
-        }),
-      ];
+    const lineItems = appendMissingGiftLines(billedLineItems, mapGiftExportLines())
+      .filter((lineItem) => Number.isFinite(lineItem.quantity) && lineItem.quantity > 0);
 
     if (lineItems.length === 0) {
       continue;

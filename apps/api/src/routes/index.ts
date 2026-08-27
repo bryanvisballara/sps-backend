@@ -10188,6 +10188,7 @@ async function syncDeliveredOrdersIntoLogisticsInvoices() {
       salesRepName: 1,
       routeName: 1,
       items: 1,
+      giftItems: 1,
       updatedAt: 1,
       createdAt: 1,
     })
@@ -10199,11 +10200,10 @@ async function syncDeliveredOrdersIntoLogisticsInvoices() {
 
   const productIds = Array.from(
     new Set(
-      deliveredOrders.flatMap((order) =>
-        (order.items ?? [])
-          .map((item) => String(item.productId ?? "").trim())
-          .filter(Boolean),
-      ),
+      deliveredOrders.flatMap((order) => [
+        ...(order.items ?? []).map((item) => String(item.productId ?? "").trim()),
+        ...(order.giftItems ?? []).map((item) => String(item.productId ?? "").trim()),
+      ].filter(Boolean)),
     ),
   );
   const clientIds = Array.from(
