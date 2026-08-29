@@ -779,6 +779,18 @@
   background: linear-gradient(90deg, var(--mg-purple), var(--mg-purple-deep));
   border-color: transparent;
   box-shadow: 0 10px 20px rgba(91, 84, 232, 0.24);
+  color: #ffffff !important;
+}
+
+.portal-shell--management .submit-button span,
+.portal-shell--management .seller-order-submit span {
+  color: #ffffff !important;
+}
+
+.portal-shell--management .submit-button svg,
+.portal-shell--management .seller-order-submit svg {
+  color: #ffffff;
+  stroke: #ffffff;
 }
 
 .portal-shell--management .creation-header.database-header,

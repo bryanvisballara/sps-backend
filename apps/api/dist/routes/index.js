@@ -1017,10 +1017,12 @@ function normalizeSalesOrderPayload(body, options) {
     if (!routeId || !routeName || !routeDay || !storeId || !salesRepId) {
         throw new Error("Selecciona cliente y vendedor antes de enviar el pedido.");
     }
-    if (!Array.isArray(payload.items) || payload.items.length === 0) {
-        throw new Error("Agrega al menos un producto al pedido antes de enviarlo a bodega.");
+    const giftItems = normalizeOrderGiftItems(payload.giftItems);
+    const rawItems = Array.isArray(payload.items) ? payload.items : [];
+    if (rawItems.length === 0 && giftItems.length === 0) {
+        throw new Error("Agrega al menos un producto o un obsequio al pedido.");
     }
-    const items = payload.items.map((item, index) => {
+    const items = rawItems.map((item, index) => {
         if (typeof item !== "object" || item === null) {
             throw new Error(`El producto #${index + 1} del pedido no es valido.`);
         }
@@ -1058,7 +1060,6 @@ function normalizeSalesOrderPayload(body, options) {
     });
     const orderNotes = typeof payload.orderNotes === "string" ? payload.orderNotes.trim() : "";
     const internalOrderNotes = typeof payload.internalOrderNotes === "string" ? payload.internalOrderNotes.trim() : "";
-    const giftItems = normalizeOrderGiftItems(payload.giftItems);
     const attachments = normalizeOrderAttachments(payload.attachments);
     return {
         routeId,
@@ -1072,6 +1073,7 @@ function normalizeSalesOrderPayload(body, options) {
         items,
         giftItems,
         attachments,
+        invoiceNumber: payload.invoiceNumber,
     };
 }
 async function createSubmittedSalesOrder(payload) {
@@ -1129,7 +1131,7 @@ async function createSubmittedSalesOrder(payload) {
                 : {}),
         };
     });
-    const invoiceNumber = await getNextInvoiceNumber();
+    const invoiceNumber = await resolveNewOrderInvoiceNumber(payload.invoiceNumber);
     return Order.create({
         routeId: payload.routeId,
         routeName: payload.routeName,
@@ -1149,8 +1151,14 @@ async function createSubmittedSalesOrder(payload) {
         attachments: payload.attachments,
     });
 }
-function normalizeWarehouseOrderItems(rawItems, existingItems) {
-    if (!Array.isArray(rawItems) || rawItems.length === 0) {
+function normalizeWarehouseOrderItems(rawItems, existingItems, options) {
+    if (!Array.isArray(rawItems)) {
+        throw new Error("Agrega al menos un producto al pedido.");
+    }
+    if (rawItems.length === 0) {
+        if (options?.allowEmpty) {
+            return [];
+        }
         throw new Error("Agrega al menos un producto al pedido.");
     }
     const existingByProductId = new Map(existingItems.map((item) => [String(item.productId), item]));
@@ -1216,9 +1224,29 @@ function normalizeWarehouseOrderItems(rawItems, existingItems) {
             }];
     });
     if (items.length === 0) {
+        if (options?.allowEmpty) {
+            return [];
+        }
         throw new Error("El pedido debe conservar al menos un producto con cantidad mayor a cero.");
     }
     return items;
+}
+const ORDER_PRODUCT_CATALOG_SELECT = {
+    _id: 1,
+    name: 1,
+    sku: 1,
+    description: 1,
+    displaysPerBox: 1,
+    unitsPerBox: 1,
+    unitsPerBoxUnit: 1,
+};
+function mapOrderLineProductCatalog(product) {
+    return {
+        productDescription: String(product?.description ?? "").trim(),
+        displaysPerBox: Number(product?.displaysPerBox ?? 1) || 1,
+        unitsPerBox: Number(product?.unitsPerBox ?? 0),
+        unitsPerBoxUnit: String(product?.unitsPerBoxUnit ?? "unidad"),
+    };
 }
 async function mapWarehouseOrderRecord(order) {
     const productIds = Array.from(new Set([
@@ -1227,7 +1255,7 @@ async function mapWarehouseOrderRecord(order) {
     ]));
     const [products, catalogSalePriceByProductId] = await Promise.all([
         productIds.length > 0
-            ? Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1 }).lean()
+            ? Product.find({ _id: { $in: productIds } }).select(ORDER_PRODUCT_CATALOG_SELECT).lean()
             : Promise.resolve([]),
         getClientCatalogProductSalePrices(String(order.storeId ?? "")),
     ]);
@@ -1287,6 +1315,7 @@ async function mapWarehouseOrderRecord(order) {
                 ...(catalogSalePrice !== undefined ? { catalogSalePriceAwg: catalogSalePrice } : {}),
                 productName: relatedProduct?.name ?? "Producto eliminado",
                 productSku: relatedProduct?.sku ?? "-",
+                ...mapOrderLineProductCatalog(relatedProduct),
             };
         }),
         giftItems: (Array.isArray(order.giftItems) ? order.giftItems : []).map((item) => {
@@ -1298,6 +1327,7 @@ async function mapWarehouseOrderRecord(order) {
                 notes: item.notes ?? "",
                 productName: relatedProduct?.name ?? "Producto eliminado",
                 productSku: relatedProduct?.sku ?? "-",
+                ...mapOrderLineProductCatalog(relatedProduct),
             };
         }),
     };
@@ -2319,7 +2349,7 @@ apiRouter.get("/sales/orders", async (request, response) => {
             ...(Array.isArray(order.giftItems) ? order.giftItems.map((item) => String(item.productId)).filter(Boolean) : []),
         ])));
         const products = productIds.length > 0
-            ? await Product.find({ _id: { $in: productIds } }).select({ _id: 1, name: 1, sku: 1 }).lean()
+            ? await Product.find({ _id: { $in: productIds } }).select(ORDER_PRODUCT_CATALOG_SELECT).lean()
             : [];
         const productsById = new Map(products.map((product) => [String(product._id), product]));
         response.json(orders.map((order) => ({
@@ -2358,6 +2388,7 @@ apiRouter.get("/sales/orders", async (request, response) => {
                     notes: item.notes ?? "",
                     productName: relatedProduct?.name ?? "Producto eliminado",
                     productSku: relatedProduct?.sku ?? "-",
+                    ...mapOrderLineProductCatalog(relatedProduct),
                 };
             }),
             giftItems: (Array.isArray(order.giftItems) ? order.giftItems : []).map((item) => {
@@ -2369,6 +2400,7 @@ apiRouter.get("/sales/orders", async (request, response) => {
                     notes: item.notes ?? "",
                     productName: relatedProduct?.name ?? "Producto eliminado",
                     productSku: relatedProduct?.sku ?? "-",
+                    ...mapOrderLineProductCatalog(relatedProduct),
                 };
             }),
         })));
@@ -2796,8 +2828,12 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
                 stockRowId: item.stockRowId,
             }))
             : [];
-        const items = normalizeWarehouseOrderItems(body.items, order.items);
         const giftItems = normalizeOrderGiftItems(body.giftItems ?? order.giftItems ?? []);
+        const items = normalizeWarehouseOrderItems(body.items, order.items, { allowEmpty: giftItems.length > 0 });
+        if (items.length === 0 && giftItems.length === 0) {
+            response.status(400).json({ message: "El pedido debe conservar al menos un producto o un obsequio." });
+            return;
+        }
         const productIds = Array.from(new Set([
             ...items.map((item) => item.productId),
             ...giftItems.map((item) => item.productId),
@@ -3506,6 +3542,19 @@ async function isInvoiceNumberAvailable(invoiceNumber, excludeOrderId = "") {
         return false;
     }
     return true;
+}
+async function resolveNewOrderInvoiceNumber(requested) {
+    const parsedRequested = Number(typeof requested === "number" || typeof requested === "string"
+        ? String(requested).trim()
+        : NaN);
+    if (Number.isFinite(parsedRequested) && parsedRequested >= MIN_INVOICE_NUMBER) {
+        const available = await isInvoiceNumberAvailable(parsedRequested);
+        if (!available) {
+            throw new Error(`La factura #${parsedRequested} ya esta en uso.`);
+        }
+        return parsedRequested;
+    }
+    return getNextInvoiceNumber();
 }
 async function resolveRequestedInvoiceNumber(requested, order) {
     const orderId = String(order._id);
