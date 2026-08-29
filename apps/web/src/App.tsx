@@ -2183,10 +2183,6 @@ function isArubaRole(role: string | undefined) {
   return role === "management" || role === "sales-rep-aruba" || role === "warehouse-aruba" || role === "contabilidad";
 }
 
-function isContabilidadWarehouseSection(section: ActiveSection) {
-  return section === "warehouse-dispatch" || section === "warehouse-inventory";
-}
-
 function hasAccountingDispatchAccess(role: string | undefined) {
   return role === "contabilidad" || role === "management";
 }
@@ -2208,9 +2204,8 @@ function canUseWarehousePortalFeatures(role: string | undefined) {
   return role === "warehouse-aruba" || hasAccountingDispatchAccess(role);
 }
 
-function canAccessWarehousePortal(role: string | undefined, section: ActiveSection) {
-  return role === "warehouse-aruba"
-    || (hasAccountingDispatchAccess(role) && isContabilidadWarehouseSection(section));
+function canAccessWarehousePortal(role: string | undefined) {
+  return role === "warehouse-aruba";
 }
 
 function isProductVisibleForSession(product: Record<string, unknown>, sessionUser: SessionUser | null) {
@@ -3927,13 +3922,13 @@ function WarehouseOrderList({
       <th className="warehouse-order-client-col">Cliente</th>
       {showRoute ? <th className="warehouse-order-col-optional">Ruta</th> : null}
       {showStatus ? <th>Estado</th> : null}
-      {showInvoiceTotal ? <th>Total</th> : null}
+      {showConsecutivo ? <th>Factura</th> : null}
       {showSalesRep && showInvoiceNumber ? <th># Factura</th> : null}
       {showInvoiceNotes ? <th>Observación factura</th> : null}
       {showInternalNotes ? <th>Nota interna</th> : null}
       {showProductNotes ? <th>Notas productos</th> : null}
       <th>Und.</th>
-      {showConsecutivo ? <th>Factura</th> : null}
+      {showInvoiceTotal ? <th>Total</th> : null}
       <th className="warehouse-order-col-actions">{actionsColumnLabel}</th>
     </tr>
   );
@@ -4037,8 +4032,8 @@ function WarehouseOrderList({
                         <td className="warehouse-order-col-optional">{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
                       ) : null}
                       {showStatus ? <td>{formatSellerOrderStatus(order.status, order.invoiceVoided)}</td> : null}
-                      {showInvoiceTotal ? (
-                        <td>{`${formatAwgCurrency(getSellerOrderInvoiceTotalAwg(order))} AWG`}</td>
+                      {showConsecutivo ? (
+                        <td>{formatInvoiceNumberLabel(order)}</td>
                       ) : null}
                       {showSalesRep && showInvoiceNumber ? <td>{formatInvoiceNumberLabel(order)}</td> : null}
                       {showInvoiceNotes ? (
@@ -4057,8 +4052,8 @@ function WarehouseOrderList({
                         </td>
                       ) : null}
                       <td>{`${order.items.length} prod. / ${totalUnits} und`}</td>
-                      {showConsecutivo ? (
-                        <td>{formatInvoiceNumberLabel(order)}</td>
+                      {showInvoiceTotal ? (
+                        <td>{`${formatAwgCurrency(getSellerOrderInvoiceTotalAwg(order))} AWG`}</td>
                       ) : null}
                       <td className="table-actions-cell">
                         {order.items.length > 0 ? (
@@ -8264,7 +8259,7 @@ export default function App() {
       return;
     }
 
-    if (activeSection !== "inventory" && activeSection !== "catalog" && activeSection !== "dashboard" && activeSection !== "imports" && activeSection !== "orders" && activeSection !== "create-order" && activeSection !== "direct-invoice" && activeSection !== "products" && activeSection !== "promotions") {
+    if (activeSection !== "inventory" && activeSection !== "warehouse-inventory" && activeSection !== "catalog" && activeSection !== "dashboard" && activeSection !== "imports" && activeSection !== "orders" && activeSection !== "create-order" && activeSection !== "direct-invoice" && activeSection !== "products" && activeSection !== "promotions") {
       return;
     }
 
@@ -20995,134 +20990,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
     );
   }
 
-  if (canAccessWarehousePortal(sessionUser.role, activeSection)) {
-    const isContabilidadUser = sessionUser.role === "contabilidad";
-    const isManagementUser = sessionUser.role === "management";
+  function renderWarehouseDispatchWorkspace(options?: { fieldModals?: boolean }) {
+    const fieldModals = Boolean(options?.fieldModals);
 
     return (
-      <main className="portal-shell portal-shell--field">
-        <aside className="sidebar">
-          <img className="sidebar-logo" src="/sps-logo.jpeg" alt="SPS Trading Enterprises" />
-
-          <div className="sidebar-user">
-            <p className="section-label">{userRoleLabel}</p>
-            <h2>{sessionUser.name}</h2>
-            <p>{sessionUser.email}</p>
-          </div>
-
-          <nav className="sidebar-nav">
-            {isContabilidadUser ? (
-              contabilidadSidebarSections.map((section) => (
-                <div key={section.key}>
-                  <p className="section-label">{section.label}</p>
-                  {section.items.map((item) => (
-                    <button
-                      key={item.key}
-                      className={`sidebar-link ${activeSection === item.key ? "active" : ""}`}
-                      type="button"
-                      onClick={() => {
-                        setActiveSection(item.key as ActiveSection);
-                        setSelectedWarehouseOrderDetail(null);
-                        setWarehouseOrderCompletionStatus(null);
-                      }}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-              ))
-            ) : isManagementUser ? (
-              <>
-                <button
-                  className={`sidebar-link ${activeSection === "dashboard" ? "active" : ""}`}
-                  type="button"
-                  onClick={() => {
-                    setActiveSection("dashboard");
-                    setSelectedWarehouseOrderDetail(null);
-                    setWarehouseOrderCompletionStatus(null);
-                  }}
-                >
-                  Dashboard
-                </button>
-
-                {managementSidebarSections.map((section) => (
-                  <div key={section.key}>
-                    <p className="section-label">{section.label}</p>
-                    {section.items.map((item) => (
-                      <button
-                        key={item.key}
-                        className={`sidebar-link ${activeSection === item.key ? "active" : ""}`}
-                        type="button"
-                        onClick={() => {
-                          setActiveSection(item.key as ActiveSection);
-                          setSelectedWarehouseOrderDetail(null);
-                          setWarehouseOrderCompletionStatus(null);
-                        }}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
-                ))}
-              </>
-            ) : (
-              <>
-                <button
-                  className={`sidebar-link ${warehouseActiveSection === "inventory" ? "active" : ""}`}
-                  type="button"
-                  onClick={() => {
-                    setWarehouseActiveSection("inventory");
-                    setSelectedWarehouseOrderDetail(null);
-                    setWarehouseOrderCompletionStatus(null);
-                  }}
-                >
-                  Inventario
-                </button>
-                <button
-                  className={`sidebar-link ${warehouseActiveSection === "orders" || warehouseActiveSection === "dispatch" ? "active" : ""}`}
-                  type="button"
-                  onClick={() => {
-                    setWarehouseActiveSection("orders");
-                    setSelectedWarehouseOrderDetail(null);
-                    setWarehouseOrderCompletionStatus(null);
-                  }}
-                >
-                  Pedidos
-                </button>
-              </>
-            )}
-          </nav>
-
-          <button className="ghost-button" type="button" onClick={handleLogout}>
-            Cerrar sesión
-          </button>
-        </aside>
-
-        <section className="portal-content portal-content--field">
-          <header className="portal-header portal-header--field">
-            <div className="portal-header-top">
-              <div>
-                <p className="section-label">{`${isContabilidadUser ? "Portal Contabilidad" : isManagementUser ? "Portal Gerencia" : "Portal Bodega"} · ${sessionUser.name}`}</p>
-                <h1>{
-                  warehouseActiveSection === "orders" || warehouseActiveSection === "dispatch"
-                    ? "Pedidos"
-                    : "Inventario"
-                }</h1>
-              </div>
-              <button className="portal-mobile-logout" type="button" onClick={handleLogout}>
-                Salir
-              </button>
-            </div>
-            <p className="portal-header-desc">
-              {warehouseActiveSection === "orders" || warehouseActiveSection === "dispatch"
-                ? "Recibe pedidos, imprime la factura y el pedido queda completado enseguida."
-                : "Consulta el inventario actual y registra salidas cuando sea necesario desde bodega."}
-            </p>
-          </header>
-
-          {pushNotificationBannerNode}
-
-          {warehouseActiveSection === "orders" || warehouseActiveSection === "dispatch" ? (
+      <>
             <section className="routes-layout">
               {selectedWarehouseOrderDetail ? (
                 <>
@@ -22024,6 +21896,414 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 </>
               )}
             </section>
+          {warehouseAddProductModalOpen ? (
+            <AppModalOverlay field={fieldModals} onDismiss={closeWarehouseAddProductModal}>
+              <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                <div className="modal-header">
+                  <div>
+                    <p className="section-label">Pedido</p>
+                    <h2>Añadir producto</h2>
+                    <p>Busca un producto y agregalo al pedido con la cantidad solicitada.</p>
+                  </div>
+                  <button className="modal-close-button" type="button" onClick={closeWarehouseAddProductModal}>Cerrar</button>
+                </div>
+
+                <label className="field field-full">
+                  <span>Producto</span>
+                  <SearchableProductSelect
+                    products={productOptions.filter((entry) => !warehouseOrderItemDraft[entry.value])}
+                    value={warehouseAddProductDraft.productId}
+                    onChange={(productId) => setWarehouseAddProductDraft((current) => ({
+                      ...current,
+                      productId,
+                      stockRowId: resolveSuggestedWarehouseLotId(productId),
+                    }))}
+                  />
+                </label>
+
+                {warehouseAddProductDraft.productId ? (
+                  <label className="field field-full">
+                    <span>Lote</span>
+                    {(inventoryLotsByProductId.get(warehouseAddProductDraft.productId) ?? []).length === 0 ? (
+                      <p className="route-helper-text">Sin lotes registrados para este producto.</p>
+                    ) : (
+                      <select
+                        className="warehouse-order-lot-select"
+                        value={warehouseAddProductDraft.stockRowId}
+                        onChange={(event) => setWarehouseAddProductDraft((current) => ({
+                          ...current,
+                          stockRowId: event.target.value,
+                        }))}
+                      >
+                        {(inventoryLotsByProductId.get(warehouseAddProductDraft.productId) ?? []).map((lot, lotIndex) => (
+                          <option key={lot.stockRowId || `${warehouseAddProductDraft.productId}-${lotIndex}`} value={lot.stockRowId}>
+                            {`${lot.lotName || "Lote"} · ${lot.expirationDate ? lot.expirationDate.slice(0, 10) : "Sin vencimiento"} · ${lot.quantity} und.${lot.promotion ? ` · promo ${lot.promotion.discountPercent}%` : ""}${lotIndex === 0 ? " · sugerido" : ""}`}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </label>
+                ) : null}
+
+                <label className="field">
+                  <span>Cantidad</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={warehouseAddProductDraft.quantity}
+                    onChange={(event) => setWarehouseAddProductDraft((current) => ({ ...current, quantity: event.target.value }))}
+                  />
+                </label>
+
+                <button className="submit-button" type="button" onClick={() => void addProductToWarehouseOrder()}>
+                  Agregar al pedido
+                </button>
+              </div>
+            </AppModalOverlay>
+          ) : null}
+
+          {warehouseAddGiftModalOpen ? (
+            <AppModalOverlay field={fieldModals} onDismiss={closeWarehouseAddGiftModal}>
+              <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+                <div className="modal-header">
+                  <div>
+                    <p className="section-label">Obsequio</p>
+                    <h2>Añadir obsequio</h2>
+                    <p>Selecciona producto, lote y cantidad. Se facturara a precio 0.</p>
+            </div>
+                  <button className="modal-close-button" type="button" onClick={closeWarehouseAddGiftModal}>Cerrar</button>
+                </div>
+
+                <label className="field field-full">
+                  <span>Producto</span>
+                  <SearchableProductSelect
+                    products={productOptions.filter((entry) => entry.shareWithAruba !== false)}
+                    value={warehouseAddGiftDraft.productId}
+                    onChange={(productId) => setWarehouseAddGiftDraft((current) => ({
+                      ...current,
+                      productId,
+                      stockRowId: resolveSuggestedWarehouseLotId(productId),
+                    }))}
+                  />
+                </label>
+
+                {warehouseAddGiftDraft.productId ? (
+                  <label className="field field-full">
+                    <span>Lote</span>
+                    {(inventoryLotsByProductId.get(warehouseAddGiftDraft.productId) ?? []).length === 0 ? (
+                      <p className="route-helper-text">Sin lotes registrados para este producto.</p>
+                    ) : (
+                      <select
+                        className="warehouse-order-lot-select"
+                        value={warehouseAddGiftDraft.stockRowId}
+                        onChange={(event) => setWarehouseAddGiftDraft((current) => ({
+                          ...current,
+                          stockRowId: event.target.value,
+                        }))}
+                      >
+                        {(inventoryLotsByProductId.get(warehouseAddGiftDraft.productId) ?? []).map((lot, lotIndex) => (
+                          <option key={lot.stockRowId || `${warehouseAddGiftDraft.productId}-${lotIndex}`} value={lot.stockRowId}>
+                            {formatWarehouseLotOptionLabel(lot, lotIndex)}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </label>
+                ) : null}
+
+                <label className="field">
+                  <span>Cantidad</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={warehouseAddGiftDraft.quantity}
+                    onChange={(event) => setWarehouseAddGiftDraft((current) => ({ ...current, quantity: event.target.value }))}
+                  />
+                </label>
+
+                <button className="submit-button" type="button" onClick={addGiftToWarehouseOrder}>
+                  Agregar obsequio
+                </button>
+              </div>
+            </AppModalOverlay>
+          ) : null}
+
+          {warehousePaymentModalOpen && canWarehouseInvoiceOrder ? (
+            <AppModalOverlay
+              field={fieldModals}
+              onDismiss={() => {
+                if (!isCompletingWarehouseOrder) {
+                  setWarehousePaymentModalOpen(false);
+                  setWarehousePaymentModalStatus(null);
+                }
+              }}
+            >
+              <div className="modal-card modal-card--wide" role="dialog" onClick={(event) => event.stopPropagation()}>
+                <p className="section-label">Facturacion y recaudo</p>
+                <h2>Facturar y terminar pedido</h2>
+                <p className="route-helper-text">
+                  La facturacion registra el pedido en cartera. El recaudo solo ocurre con datáfono, transferencia o efectivo, o al cobrar facturas en credito pendientes.
+                </p>
+
+                <div className="import-summary-grid">
+                  <div className="import-summary-card">
+                    <p>Cliente</p>
+                    <strong>{selectedWarehouseOrderDetail?.storeName ?? "-"}</strong>
+                  </div>
+                  <div className="import-summary-card">
+                    <p>Facturacion del pedido</p>
+                    <strong>{formatAwgCurrency(warehouseInvoiceTotal)} AWG</strong>
+                  </div>
+                  <div className="import-summary-card">
+                    <p>Recaudo estimado ahora</p>
+                    <strong>{formatAwgCurrency(warehouseTotalRecaudoPreview)} AWG</strong>
+                  </div>
+                </div>
+
+                <label className="field">
+                  <span>Numero de factura</span>
+                  <input
+                    type="number"
+                    min={MIN_INVOICE_NUMBER}
+                    step="1"
+                    value={warehouseInvoiceNumberDraft}
+                    disabled={isCompletingWarehouseOrder}
+                    onChange={(event) => {
+                      setWarehouseInvoiceNumberDraft(event.target.value);
+                      setWarehousePaymentModalStatus(null);
+                    }}
+                  />
+                </label>
+                <p className="route-helper-text">
+                  Este sera el consecutivo impreso en la factura. Puedes cambiarlo antes de confirmar si necesitas otro numero.
+                </p>
+
+                <label className="field">
+                  <span>Metodo de pago del pedido actual</span>
+                  <select
+                    value={warehousePaymentMethodDraft}
+                    onChange={(event) => {
+                      setWarehousePaymentMethodDraft(event.target.value as CarteraPaymentMethod | "");
+                      setWarehousePaymentModalStatus(null);
+                    }}
+                    disabled={isCompletingWarehouseOrder}
+                  >
+                    <option value="">Selecciona una opcion</option>
+                    {carteraPaymentMethodOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                {warehousePaymentMethodDraft === "credito" ? (
+                  <p className="route-helper-text">
+                    Este pedido entrara a cartera como credito pendiente. No generara recaudo hasta que se cobre.
+                  </p>
+                ) : warehousePaymentMethodDraft ? (
+                  <p className="route-helper-text">
+                    Este pedido se factura y se recauda de inmediato por {formatPaymentMethodLabel(warehousePaymentMethodDraft)}.
+                  </p>
+                ) : null}
+
+                <article className="database-card warehouse-credit-collection-card">
+                  <div className="management-table-header">
+                    <div>
+                      <h3>Recaudar credito pendiente</h3>
+                      <p>Si el cliente paga facturas anteriores en esta entrega, registralas aqui.</p>
+                    </div>
+                    <p className="management-table-meta">
+                      {isLoadingWarehousePendingCredit
+                        ? "Cargando..."
+                        : `${warehousePendingCreditEntries.length} factura${warehousePendingCreditEntries.length === 1 ? "" : "s"} pendiente${warehousePendingCreditEntries.length === 1 ? "" : "s"}`}
+                    </p>
+                  </div>
+
+                  {warehousePendingCreditError ? (
+                    <p className="form-feedback error">{warehousePendingCreditError}</p>
+                  ) : null}
+
+                  {warehousePendingCreditEntries.length > 0 ? (
+                    <div className="table-wrap table-wrap--warehouse-items">
+                      <table className="data-table data-table--warehouse-orders">
+                        <thead>
+                          <tr>
+                            <th></th>
+                            <th>Factura</th>
+                            <th>Fecha</th>
+                            <th>Pendiente</th>
+                            <th>Recaudar</th>
+                            <th>Metodo</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {warehousePendingCreditEntries.map((entry) => {
+                            const draft = entry._id ? warehouseCreditCollectionDrafts[entry._id] : undefined;
+
+                            if (!draft) {
+                              return null;
+                            }
+
+                            return (
+                              <tr key={entry._id}>
+                                <td>
+                                  <input
+                                    type="checkbox"
+                                    checked={draft.selected}
+                                    disabled={isCompletingWarehouseOrder}
+                                    onChange={(event) => updateWarehouseCreditCollectionDraft(entry._id!, {
+                                      selected: event.target.checked,
+                                      paymentMethod: event.target.checked ? draft.paymentMethod : "",
+                                    })}
+                                  />
+                                </td>
+                                <td>{entry.storeName}</td>
+                                <td>{String(entry.invoicedAt).slice(0, 10)}</td>
+                                <td>{formatAwgCurrency(entry.outstandingAmountAwg)} AWG</td>
+                                <td>
+                                  <input
+                                    className="import-table-input"
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    max={entry.outstandingAmountAwg}
+                                    value={draft.amountAwg}
+                                    disabled={!draft.selected || isCompletingWarehouseOrder}
+                                    onChange={(event) => updateWarehouseCreditCollectionDraft(entry._id!, {
+                                      amountAwg: event.target.value,
+                                    })}
+                                  />
+                                </td>
+                                <td>
+                                  <select
+                                    value={draft.paymentMethod}
+                                    disabled={!draft.selected || isCompletingWarehouseOrder}
+                                    onChange={(event) => updateWarehouseCreditCollectionDraft(entry._id!, {
+                                      paymentMethod: event.target.value as CarteraCollectionPaymentMethod | "",
+                                    })}
+                                  >
+                                    <option value="">Metodo</option>
+                                    {carteraCollectionPaymentMethodOptions.map((option) => (
+                                      <option key={option.value} value={option.value}>{option.label}</option>
+                                    ))}
+                                  </select>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : !isLoadingWarehousePendingCredit ? (
+                    <p className="warehouse-empty-state">Este cliente no tiene facturas en credito pendientes.</p>
+                  ) : null}
+                </article>
+
+                {warehousePaymentModalStatus ? (
+                  <p className={`form-feedback ${warehousePaymentModalStatus.tone === "error" ? "error" : "success"}`}>
+                    {warehousePaymentModalStatus.message}
+                  </p>
+                ) : null}
+
+                <div className="catalog-form-actions inventory-adjustment-actions">
+                  <button
+                    className="ghost-button ghost-button--cancel"
+                    type="button"
+                    disabled={isCompletingWarehouseOrder}
+                    onClick={() => {
+                      setWarehousePaymentModalOpen(false);
+                      setWarehousePaymentModalStatus(null);
+                      setWarehousePendingCreditEntries([]);
+                      setWarehouseCreditCollectionDrafts({});
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    className="submit-button"
+                    type="button"
+                    disabled={isCompletingWarehouseOrder || !warehousePaymentMethodDraft}
+                    onClick={() => void handleWarehouseOrderComplete()}
+                  >
+                    {isCompletingWarehouseOrder ? "Facturando..." : "Facturar y terminar pedido"}
+                  </button>
+                </div>
+              </div>
+            </AppModalOverlay>
+          ) : null}
+      </>
+    );
+  }
+
+  if (canAccessWarehousePortal(sessionUser.role)) {
+    return (
+      <main className="portal-shell portal-shell--field">
+        <aside className="sidebar">
+          <img className="sidebar-logo" src="/sps-logo.jpeg" alt="SPS Trading Enterprises" />
+
+          <div className="sidebar-user">
+            <p className="section-label">{userRoleLabel}</p>
+            <h2>{sessionUser.name}</h2>
+            <p>{sessionUser.email}</p>
+          </div>
+
+          <nav className="sidebar-nav">
+            <button
+              className={`sidebar-link ${warehouseActiveSection === "inventory" ? "active" : ""}`}
+              type="button"
+              onClick={() => {
+                setWarehouseActiveSection("inventory");
+                setSelectedWarehouseOrderDetail(null);
+                setWarehouseOrderCompletionStatus(null);
+              }}
+            >
+              Inventario
+            </button>
+            <button
+              className={`sidebar-link ${warehouseActiveSection === "orders" || warehouseActiveSection === "dispatch" ? "active" : ""}`}
+              type="button"
+              onClick={() => {
+                setWarehouseActiveSection("orders");
+                setSelectedWarehouseOrderDetail(null);
+                setWarehouseOrderCompletionStatus(null);
+              }}
+            >
+              Pedidos
+            </button>
+          </nav>
+
+          <button className="ghost-button" type="button" onClick={handleLogout}>
+            Cerrar sesión
+          </button>
+        </aside>
+
+        <section className="portal-content portal-content--field">
+          <header className="portal-header portal-header--field">
+            <div className="portal-header-top">
+              <div>
+                <p className="section-label">{`Portal Bodega · ${sessionUser.name}`}</p>
+                <h1>{
+                  warehouseActiveSection === "orders" || warehouseActiveSection === "dispatch"
+                    ? "Pedidos"
+                    : "Inventario"
+                }</h1>
+              </div>
+              <button className="portal-mobile-logout" type="button" onClick={handleLogout}>
+                Salir
+              </button>
+            </div>
+            <p className="portal-header-desc">
+              {warehouseActiveSection === "orders" || warehouseActiveSection === "dispatch"
+                ? "Recibe pedidos, imprime la factura y el pedido queda completado enseguida."
+                : "Consulta el inventario actual y registra salidas cuando sea necesario desde bodega."}
+            </p>
+          </header>
+
+          {pushNotificationBannerNode}
+
+          {warehouseActiveSection === "orders" || warehouseActiveSection === "dispatch" ? (
+            renderWarehouseDispatchWorkspace({ fieldModals: true })
           ) : (
             <section className="database-layout">
               <div className="accounting-kpi-grid">
@@ -22408,342 +22688,6 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             </section>
           )}
 
-          {warehouseAddProductModalOpen ? (
-            <AppModalOverlay field onDismiss={closeWarehouseAddProductModal}>
-              <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
-                <div className="modal-header">
-                  <div>
-                    <p className="section-label">Pedido</p>
-                    <h2>Añadir producto</h2>
-                    <p>Busca un producto y agregalo al pedido con la cantidad solicitada.</p>
-                  </div>
-                  <button className="modal-close-button" type="button" onClick={closeWarehouseAddProductModal}>Cerrar</button>
-                </div>
-
-                <label className="field field-full">
-                  <span>Producto</span>
-                  <SearchableProductSelect
-                    products={productOptions.filter((entry) => !warehouseOrderItemDraft[entry.value])}
-                    value={warehouseAddProductDraft.productId}
-                    onChange={(productId) => setWarehouseAddProductDraft((current) => ({
-                      ...current,
-                      productId,
-                      stockRowId: resolveSuggestedWarehouseLotId(productId),
-                    }))}
-                  />
-                </label>
-
-                {warehouseAddProductDraft.productId ? (
-                  <label className="field field-full">
-                    <span>Lote</span>
-                    {(inventoryLotsByProductId.get(warehouseAddProductDraft.productId) ?? []).length === 0 ? (
-                      <p className="route-helper-text">Sin lotes registrados para este producto.</p>
-                    ) : (
-                      <select
-                        className="warehouse-order-lot-select"
-                        value={warehouseAddProductDraft.stockRowId}
-                        onChange={(event) => setWarehouseAddProductDraft((current) => ({
-                          ...current,
-                          stockRowId: event.target.value,
-                        }))}
-                      >
-                        {(inventoryLotsByProductId.get(warehouseAddProductDraft.productId) ?? []).map((lot, lotIndex) => (
-                          <option key={lot.stockRowId || `${warehouseAddProductDraft.productId}-${lotIndex}`} value={lot.stockRowId}>
-                            {`${lot.lotName || "Lote"} · ${lot.expirationDate ? lot.expirationDate.slice(0, 10) : "Sin vencimiento"} · ${lot.quantity} und.${lot.promotion ? ` · promo ${lot.promotion.discountPercent}%` : ""}${lotIndex === 0 ? " · sugerido" : ""}`}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </label>
-                ) : null}
-
-                <label className="field">
-                  <span>Cantidad</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={warehouseAddProductDraft.quantity}
-                    onChange={(event) => setWarehouseAddProductDraft((current) => ({ ...current, quantity: event.target.value }))}
-                  />
-                </label>
-
-                <button className="submit-button" type="button" onClick={() => void addProductToWarehouseOrder()}>
-                  Agregar al pedido
-                </button>
-              </div>
-            </AppModalOverlay>
-          ) : null}
-
-          {warehouseAddGiftModalOpen ? (
-            <AppModalOverlay field onDismiss={closeWarehouseAddGiftModal}>
-              <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
-                <div className="modal-header">
-                  <div>
-                    <p className="section-label">Obsequio</p>
-                    <h2>Añadir obsequio</h2>
-                    <p>Selecciona producto, lote y cantidad. Se facturara a precio 0.</p>
-            </div>
-                  <button className="modal-close-button" type="button" onClick={closeWarehouseAddGiftModal}>Cerrar</button>
-                </div>
-
-                <label className="field field-full">
-                  <span>Producto</span>
-                  <SearchableProductSelect
-                    products={productOptions.filter((entry) => entry.shareWithAruba !== false)}
-                    value={warehouseAddGiftDraft.productId}
-                    onChange={(productId) => setWarehouseAddGiftDraft((current) => ({
-                      ...current,
-                      productId,
-                      stockRowId: resolveSuggestedWarehouseLotId(productId),
-                    }))}
-                  />
-                </label>
-
-                {warehouseAddGiftDraft.productId ? (
-                  <label className="field field-full">
-                    <span>Lote</span>
-                    {(inventoryLotsByProductId.get(warehouseAddGiftDraft.productId) ?? []).length === 0 ? (
-                      <p className="route-helper-text">Sin lotes registrados para este producto.</p>
-                    ) : (
-                      <select
-                        className="warehouse-order-lot-select"
-                        value={warehouseAddGiftDraft.stockRowId}
-                        onChange={(event) => setWarehouseAddGiftDraft((current) => ({
-                          ...current,
-                          stockRowId: event.target.value,
-                        }))}
-                      >
-                        {(inventoryLotsByProductId.get(warehouseAddGiftDraft.productId) ?? []).map((lot, lotIndex) => (
-                          <option key={lot.stockRowId || `${warehouseAddGiftDraft.productId}-${lotIndex}`} value={lot.stockRowId}>
-                            {formatWarehouseLotOptionLabel(lot, lotIndex)}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </label>
-                ) : null}
-
-                <label className="field">
-                  <span>Cantidad</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={warehouseAddGiftDraft.quantity}
-                    onChange={(event) => setWarehouseAddGiftDraft((current) => ({ ...current, quantity: event.target.value }))}
-                  />
-                </label>
-
-                <button className="submit-button" type="button" onClick={addGiftToWarehouseOrder}>
-                  Agregar obsequio
-                </button>
-              </div>
-            </AppModalOverlay>
-          ) : null}
-
-          {warehousePaymentModalOpen && canWarehouseInvoiceOrder ? (
-            <AppModalOverlay
-              field
-              onDismiss={() => {
-                if (!isCompletingWarehouseOrder) {
-                  setWarehousePaymentModalOpen(false);
-                  setWarehousePaymentModalStatus(null);
-                }
-              }}
-            >
-              <div className="modal-card modal-card--wide" role="dialog" onClick={(event) => event.stopPropagation()}>
-                <p className="section-label">Facturacion y recaudo</p>
-                <h2>Facturar y terminar pedido</h2>
-                <p className="route-helper-text">
-                  La facturacion registra el pedido en cartera. El recaudo solo ocurre con datáfono, transferencia o efectivo, o al cobrar facturas en credito pendientes.
-                </p>
-
-                <div className="import-summary-grid">
-                  <div className="import-summary-card">
-                    <p>Cliente</p>
-                    <strong>{selectedWarehouseOrderDetail?.storeName ?? "-"}</strong>
-                  </div>
-                  <div className="import-summary-card">
-                    <p>Facturacion del pedido</p>
-                    <strong>{formatAwgCurrency(warehouseInvoiceTotal)} AWG</strong>
-                  </div>
-                  <div className="import-summary-card">
-                    <p>Recaudo estimado ahora</p>
-                    <strong>{formatAwgCurrency(warehouseTotalRecaudoPreview)} AWG</strong>
-                  </div>
-                </div>
-
-                <label className="field">
-                  <span>Numero de factura</span>
-                  <input
-                    type="number"
-                    min={MIN_INVOICE_NUMBER}
-                    step="1"
-                    value={warehouseInvoiceNumberDraft}
-                    disabled={isCompletingWarehouseOrder}
-                    onChange={(event) => {
-                      setWarehouseInvoiceNumberDraft(event.target.value);
-                      setWarehousePaymentModalStatus(null);
-                    }}
-                  />
-                </label>
-                <p className="route-helper-text">
-                  Este sera el consecutivo impreso en la factura. Puedes cambiarlo antes de confirmar si necesitas otro numero.
-                </p>
-
-                <label className="field">
-                  <span>Metodo de pago del pedido actual</span>
-                  <select
-                    value={warehousePaymentMethodDraft}
-                    onChange={(event) => {
-                      setWarehousePaymentMethodDraft(event.target.value as CarteraPaymentMethod | "");
-                      setWarehousePaymentModalStatus(null);
-                    }}
-                    disabled={isCompletingWarehouseOrder}
-                  >
-                    <option value="">Selecciona una opcion</option>
-                    {carteraPaymentMethodOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </label>
-
-                {warehousePaymentMethodDraft === "credito" ? (
-                  <p className="route-helper-text">
-                    Este pedido entrara a cartera como credito pendiente. No generara recaudo hasta que se cobre.
-                  </p>
-                ) : warehousePaymentMethodDraft ? (
-                  <p className="route-helper-text">
-                    Este pedido se factura y se recauda de inmediato por {formatPaymentMethodLabel(warehousePaymentMethodDraft)}.
-                  </p>
-                ) : null}
-
-                <article className="database-card warehouse-credit-collection-card">
-                  <div className="management-table-header">
-                    <div>
-                      <h3>Recaudar credito pendiente</h3>
-                      <p>Si el cliente paga facturas anteriores en esta entrega, registralas aqui.</p>
-                    </div>
-                    <p className="management-table-meta">
-                      {isLoadingWarehousePendingCredit
-                        ? "Cargando..."
-                        : `${warehousePendingCreditEntries.length} factura${warehousePendingCreditEntries.length === 1 ? "" : "s"} pendiente${warehousePendingCreditEntries.length === 1 ? "" : "s"}`}
-                    </p>
-                  </div>
-
-                  {warehousePendingCreditError ? (
-                    <p className="form-feedback error">{warehousePendingCreditError}</p>
-                  ) : null}
-
-                  {warehousePendingCreditEntries.length > 0 ? (
-                    <div className="table-wrap table-wrap--warehouse-items">
-                      <table className="data-table data-table--warehouse-orders">
-                        <thead>
-                          <tr>
-                            <th></th>
-                            <th>Factura</th>
-                            <th>Fecha</th>
-                            <th>Pendiente</th>
-                            <th>Recaudar</th>
-                            <th>Metodo</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {warehousePendingCreditEntries.map((entry) => {
-                            const draft = entry._id ? warehouseCreditCollectionDrafts[entry._id] : undefined;
-
-                            if (!draft) {
-                              return null;
-                            }
-
-                            return (
-                              <tr key={entry._id}>
-                                <td>
-                                  <input
-                                    type="checkbox"
-                                    checked={draft.selected}
-                                    disabled={isCompletingWarehouseOrder}
-                                    onChange={(event) => updateWarehouseCreditCollectionDraft(entry._id!, {
-                                      selected: event.target.checked,
-                                      paymentMethod: event.target.checked ? draft.paymentMethod : "",
-                                    })}
-                                  />
-                                </td>
-                                <td>{entry.storeName}</td>
-                                <td>{String(entry.invoicedAt).slice(0, 10)}</td>
-                                <td>{formatAwgCurrency(entry.outstandingAmountAwg)} AWG</td>
-                                <td>
-                                  <input
-                                    className="import-table-input"
-                                    type="number"
-                                    min="0"
-                                    step="any"
-                                    max={entry.outstandingAmountAwg}
-                                    value={draft.amountAwg}
-                                    disabled={!draft.selected || isCompletingWarehouseOrder}
-                                    onChange={(event) => updateWarehouseCreditCollectionDraft(entry._id!, {
-                                      amountAwg: event.target.value,
-                                    })}
-                                  />
-                                </td>
-                                <td>
-                                  <select
-                                    value={draft.paymentMethod}
-                                    disabled={!draft.selected || isCompletingWarehouseOrder}
-                                    onChange={(event) => updateWarehouseCreditCollectionDraft(entry._id!, {
-                                      paymentMethod: event.target.value as CarteraCollectionPaymentMethod | "",
-                                    })}
-                                  >
-                                    <option value="">Metodo</option>
-                                    {carteraCollectionPaymentMethodOptions.map((option) => (
-                                      <option key={option.value} value={option.value}>{option.label}</option>
-                                    ))}
-                                  </select>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : !isLoadingWarehousePendingCredit ? (
-                    <p className="warehouse-empty-state">Este cliente no tiene facturas en credito pendientes.</p>
-                  ) : null}
-                </article>
-
-                {warehousePaymentModalStatus ? (
-                  <p className={`form-feedback ${warehousePaymentModalStatus.tone === "error" ? "error" : "success"}`}>
-                    {warehousePaymentModalStatus.message}
-                  </p>
-                ) : null}
-
-                <div className="catalog-form-actions inventory-adjustment-actions">
-                  <button
-                    className="ghost-button ghost-button--cancel"
-                    type="button"
-                    disabled={isCompletingWarehouseOrder}
-                    onClick={() => {
-                      setWarehousePaymentModalOpen(false);
-                      setWarehousePaymentModalStatus(null);
-                      setWarehousePendingCreditEntries([]);
-                      setWarehouseCreditCollectionDrafts({});
-                    }}
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    className="submit-button"
-                    type="button"
-                    disabled={isCompletingWarehouseOrder || !warehousePaymentMethodDraft}
-                    onClick={() => void handleWarehouseOrderComplete()}
-                  >
-                    {isCompletingWarehouseOrder ? "Facturando..." : "Facturar y terminar pedido"}
-                  </button>
-                </div>
-              </div>
-            </AppModalOverlay>
-          ) : null}
         </section>
       </main>
     );
@@ -22954,7 +22898,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           <h1>
             {activeSection === "dashboard"
               ? "Dashboard"
-              : activeSection === "inventory"
+              : activeSection === "inventory" || activeSection === "warehouse-inventory"
                 ? "Inventario"
                 : activeSection === "inventory-entry"
                   ? "Registrar inventario"
@@ -23011,7 +22955,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           <p>
             {activeSection === "dashboard"
               ? "Vista ejecutiva del estado actual de la operación y la configuración base."
-              : activeSection === "inventory"
+              : activeSection === "inventory" || activeSection === "warehouse-inventory"
                 ? "Consulta existencias, costos, ventas potenciales y productos que vencen dentro de los próximos dos meses."
                 : activeSection === "inventory-entry"
                   ? "Registra entradas de inventario manualmente o cargando el Excel generado desde Facturación."
@@ -28894,7 +28838,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               )}
             </article>
           </section>
-        ) : activeSection === "inventory" ? (
+        ) : activeSection === "inventory" || activeSection === "warehouse-inventory" ? (
           <section className="database-layout">
             <div className="management-overview">
               <div className="accounting-kpi-grid">
@@ -30713,6 +30657,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               </div>
             </article>
           </section>
+        ) : activeSection === "warehouse-dispatch" ? (
+          renderWarehouseDispatchWorkspace()
         ) : activeSection === "create-order" ? (
           renderStaffOrderComposerPage()
         ) : activeSection === "direct-invoice" ? (
@@ -30912,11 +30858,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <thead>
                     <tr>
                       <th>Fecha</th>
-                      <th>Total</th>
+                      <th>Factura</th>
                       <th>Cliente</th>
                       <th>Notas internas</th>
                       <th>Productos</th>
-                      <th>Factura</th>
+                      <th>Total</th>
                       <th>Acciones</th>
                     </tr>
                   </thead>
@@ -30940,11 +30886,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         return (
                           <tr key={order._id} className={order.invoiceVoided ? "is-voided-invoice" : undefined}>
                             <td>{formatDeliveryDateLabel(getOrderDeliveryDateKey(order))}</td>
-                            <td>{`${formatAwgCurrency(getSellerOrderInvoiceTotalAwg(order))} AWG`}</td>
+                            <td>{formatInvoiceNumberLabel(order)}</td>
                             <td>{order.storeName}</td>
                             <td className="warehouse-order-notes-cell">{order.internalOrderNotes?.trim() || "-"}</td>
                             <td>{`${order.items.length} producto${order.items.length === 1 ? "" : "s"} / ${totalUnits} und`}</td>
-                            <td>{formatInvoiceNumberLabel(order)}</td>
+                            <td>{`${formatAwgCurrency(getSellerOrderInvoiceTotalAwg(order))} AWG`}</td>
                             <td className="table-actions-cell">
                               {!order.invoiceVoided ? (
                                 <button
