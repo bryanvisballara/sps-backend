@@ -1009,6 +1009,46 @@ type InvoiceChangeLineDraft = {
   lineSubtotalAwg: string;
 };
 
+type InvoiceChangeGiftDraft = {
+  key: string;
+  productId: string;
+  stockRowId: string;
+  quantity: string;
+  productName: string;
+  productSku: string;
+  productDescription?: string;
+  notes: string;
+};
+
+function mapOrderGiftsToInvoiceChangeDrafts(gifts: OrderGiftItemRecord[] | undefined): InvoiceChangeGiftDraft[] {
+  return (gifts ?? []).map((item, index) => ({
+    key: `${item.productId}-${item.stockRowId || "nolot"}-${index}`,
+    productId: item.productId,
+    stockRowId: item.stockRowId || "",
+    quantity: String(item.quantity ?? 0),
+    productName: item.productName,
+    productSku: item.productSku,
+    productDescription: item.productDescription,
+    notes: item.notes ?? "",
+  }));
+}
+
+function serializeInvoiceChangeGifts(
+  gifts: Array<{ productId: string; stockRowId?: string; quantity?: number | string; notes?: string }>,
+) {
+  return JSON.stringify(
+    gifts
+      .map((item) => ({
+        productId: item.productId,
+        stockRowId: item.stockRowId || "",
+        quantity: Number(item.quantity || 0),
+        notes: String(item.notes ?? ""),
+      }))
+      .filter((item) => Number.isFinite(item.quantity) && item.quantity > 0)
+      .sort((left, right) => `${left.productId}:${left.stockRowId}`.localeCompare(`${right.productId}:${right.stockRowId}`)),
+  );
+}
+
 type InvoiceChangeRequestRecord = {
   _id: string;
   orderId: string;
@@ -2198,6 +2238,46 @@ function hasSaleOrGiftOrderLines(
   const hasSaleItems = (saleItems ?? []).some((item) => Number(item.quantity) > 0);
   const hasGiftItems = (giftItems ?? []).some((item) => Number(item.quantity) > 0);
   return hasSaleItems || hasGiftItems;
+}
+
+function getOrderLineCounts(order: {
+  items?: Array<{ quantity?: number }>;
+  giftItems?: Array<{ quantity?: number }>;
+}) {
+  const saleItems = (order.items ?? []).filter((item) => Number(item.quantity) > 0);
+  const giftItems = (order.giftItems ?? []).filter((item) => Number(item.quantity) > 0);
+
+  return {
+    saleCount: saleItems.length,
+    giftCount: giftItems.length,
+    productCount: saleItems.length + giftItems.length,
+    totalUnits: saleItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+      + giftItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
+  };
+}
+
+function formatOrderLineCountLabel(
+  order: {
+    items?: Array<{ quantity?: number }>;
+    giftItems?: Array<{ quantity?: number }>;
+  },
+  style: "short" | "long" = "short",
+) {
+  const counts = getOrderLineCounts(order);
+  const productWord = style === "long"
+    ? (counts.productCount === 1 ? "producto" : "productos")
+    : "prod.";
+
+  if (counts.giftCount > 0 && counts.saleCount === 0) {
+    const giftWord = counts.giftCount === 1 ? "obsequio" : "obsequios";
+    return `${counts.giftCount} ${giftWord} / ${counts.totalUnits} und`;
+  }
+
+  if (counts.giftCount > 0) {
+    return `${counts.saleCount} ${productWord} + ${counts.giftCount} obs. / ${counts.totalUnits} und`;
+  }
+
+  return `${counts.productCount} ${productWord} / ${counts.totalUnits} und`;
 }
 
 function canUseWarehousePortalFeatures(role: string | undefined) {
@@ -3999,8 +4079,6 @@ function WarehouseOrderList({
               </thead>
               <tbody>
                 {group.orders.map((order) => {
-                  const totalUnits = order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-
                   return (
                     <tr key={order._id} className={order.deliveryOverdue ? "is-overdue" : undefined}>
                       {selectable ? (
@@ -4051,12 +4129,12 @@ function WarehouseOrderList({
                           {formatOrderItemNotes(order)}
                         </td>
                       ) : null}
-                      <td>{`${order.items.length} prod. / ${totalUnits} und`}</td>
+                      <td>{formatOrderLineCountLabel(order)}</td>
                       {showInvoiceTotal ? (
                         <td>{`${formatAwgCurrency(getSellerOrderInvoiceTotalAwg(order))} AWG`}</td>
                       ) : null}
                       <td className="table-actions-cell">
-                        {order.items.length > 0 ? (
+                        {hasSaleOrGiftOrderLines(order.items, order.giftItems) ? (
                           <div className="table-action-group">
                             {!hideDefaultViewButton ? (
                               <button
@@ -5726,6 +5804,8 @@ export default function App() {
   const [invoiceChangeOrder, setInvoiceChangeOrder] = useState<SellerOrderRecord | null>(null);
   const [invoiceChangeItemDraft, setInvoiceChangeItemDraft] = useState<Record<string, InvoiceChangeLineDraft>>({});
   const [invoiceChangeOriginalItems, setInvoiceChangeOriginalItems] = useState<SellerOrderRecord["items"]>([]);
+  const [invoiceChangeGiftDrafts, setInvoiceChangeGiftDrafts] = useState<InvoiceChangeGiftDraft[]>([]);
+  const [invoiceChangeOriginalGifts, setInvoiceChangeOriginalGifts] = useState<OrderGiftItemRecord[]>([]);
   const [invoiceChangeAddProductId, setInvoiceChangeAddProductId] = useState("");
   const [invoiceChangeNotes, setInvoiceChangeNotes] = useState("");
   const [invoiceChangeOriginalInternalNotes, setInvoiceChangeOriginalInternalNotes] = useState("");
@@ -6738,6 +6818,7 @@ export default function App() {
         && Number(invoiceChangeNumberDraft.trim() || 0) >= MIN_INVOICE_NUMBER
       )
       || String(invoiceChangeNotes) !== String(invoiceChangeOriginalInternalNotes)
+      || serializeInvoiceChangeGifts(invoiceChangeGiftDrafts) !== serializeInvoiceChangeGifts(invoiceChangeOriginalGifts)
     ),
   );
   const pendingInvoiceChangeOrderIds = new Set(
@@ -14851,6 +14932,8 @@ export default function App() {
     setInvoiceChangeItemDraft(
       Object.fromEntries(order.items.map((item) => [item.productId, buildInvoiceChangeLineDraft(item)])),
     );
+    setInvoiceChangeGiftDrafts(mapOrderGiftsToInvoiceChangeDrafts(order.giftItems));
+    setInvoiceChangeOriginalGifts((order.giftItems ?? []).map((item) => ({ ...item })));
     setInvoiceChangeAddProductId("");
     setInvoiceChangeNotes(String(order.internalOrderNotes ?? ""));
     setInvoiceChangeOriginalInternalNotes(String(order.internalOrderNotes ?? ""));
@@ -14888,6 +14971,8 @@ export default function App() {
     setInvoiceChangeOrder(null);
     setInvoiceChangeItemDraft({});
     setInvoiceChangeOriginalItems([]);
+    setInvoiceChangeGiftDrafts([]);
+    setInvoiceChangeOriginalGifts([]);
     setInvoiceChangeAddProductId("");
     setInvoiceChangeNotes("");
     setInvoiceChangeOriginalInternalNotes("");
@@ -14952,6 +15037,59 @@ export default function App() {
       },
     }));
     setInvoiceChangeAddProductId("");
+    setInvoiceChangeStatus(null);
+  }
+
+  function addInvoiceChangeGift(productId: string) {
+    if (!invoiceChangeOrder) {
+      return;
+    }
+
+    const normalizedProductId = productId.trim();
+
+    if (!normalizedProductId) {
+      setInvoiceChangeStatus({ tone: "error", message: "Selecciona un producto para agregarlo como obsequio." });
+      return;
+    }
+
+    if (invoiceChangeGiftDrafts.some((gift) => gift.productId === normalizedProductId)) {
+      setInvoiceChangeStatus({ tone: "error", message: "Ese obsequio ya esta en la correccion de factura." });
+      return;
+    }
+
+    const productOption = productOptionsById.get(normalizedProductId);
+
+    if (!productOption) {
+      setInvoiceChangeStatus({ tone: "error", message: "No se encontro el producto seleccionado." });
+      return;
+    }
+
+    setInvoiceChangeGiftDrafts((current) => ([
+      ...current,
+      {
+        key: `${normalizedProductId}-new-${Date.now()}`,
+        productId: normalizedProductId,
+        stockRowId: "",
+        quantity: "1",
+        productName: productOption.label,
+        productSku: productOption.sku,
+        productDescription: String(productOption.description ?? "").trim(),
+        notes: "",
+      },
+    ]));
+    setInvoiceChangeAddProductId("");
+    setInvoiceChangeStatus(null);
+  }
+
+  function handleInvoiceChangeGiftQuantity(giftKey: string, quantity: string) {
+    setInvoiceChangeGiftDrafts((current) => current.map((gift) => (
+      gift.key === giftKey ? { ...gift, quantity } : gift
+    )));
+    setInvoiceChangeStatus(null);
+  }
+
+  function removeInvoiceChangeGift(giftKey: string) {
+    setInvoiceChangeGiftDrafts((current) => current.filter((gift) => gift.key !== giftKey));
     setInvoiceChangeStatus(null);
   }
 
@@ -15108,8 +15246,17 @@ export default function App() {
       })
       .filter((item) => Number.isFinite(item.quantity) && item.quantity > 0);
 
-    if (nextItems.length === 0) {
-      setInvoiceChangeStatus({ tone: "error", message: "La factura debe conservar al menos un producto con cantidad mayor a cero." });
+    const nextGiftItems = invoiceChangeGiftDrafts
+      .map((gift) => ({
+        productId: gift.productId,
+        quantity: Number(gift.quantity),
+        stockRowId: gift.stockRowId,
+        notes: gift.notes,
+      }))
+      .filter((item) => Number.isFinite(item.quantity) && item.quantity > 0);
+
+    if (nextItems.length === 0 && nextGiftItems.length === 0) {
+      setInvoiceChangeStatus({ tone: "error", message: "La factura debe conservar al menos un producto o un obsequio con cantidad mayor a cero." });
       return;
     }
 
@@ -15146,12 +15293,7 @@ export default function App() {
           requestedByUserId: sessionUser.id,
           requestedByUserName: sessionUser.name,
           items: nextItems,
-          giftItems: (invoiceChangeOrder.giftItems ?? []).map((item) => ({
-            productId: item.productId,
-            quantity: item.quantity,
-            stockRowId: item.stockRowId,
-            notes: item.notes,
-          })),
+          giftItems: nextGiftItems,
           internalOrderNotes: invoiceChangeNotes,
           ...(proposedInvoiceNumber && proposedInvoiceNumber >= MIN_INVOICE_NUMBER
             ? { invoiceNumber: proposedInvoiceNumber }
@@ -20372,7 +20514,6 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         </tr>
                       ) : sellerOrders.length > 0 ? (
                         sellerOrders.map((order) => {
-                          const totalUnits = order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
                           const isDeletingOrder = deletingSellerOrderId === order._id;
 
                           return (
@@ -20389,9 +20530,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               <td>{order.storeName}</td>
                               <td>{order.deliveryZone}</td>
                               <td>{formatSellerOrderStatus(order.status)}</td>
-                              <td>{`${order.items.length} producto${order.items.length === 1 ? "" : "s"} / ${totalUnits} und`}</td>
+                              <td>{formatOrderLineCountLabel(order, "long")}</td>
                               <td>
-                                {order.items.length > 0 ? (
+                                {hasSaleOrGiftOrderLines(order.items, order.giftItems) ? (
                                   <button
                                     className="seller-order-detail-trigger"
                                     type="button"
@@ -21025,7 +21166,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         <p>{`${selectedWarehouseOrderDetail.routeName} · ${formatRouteDayLabel(selectedWarehouseOrderDetail.routeDay as RouteDayKey)}`}</p>
                       </div>
                       <p className="management-table-meta">
-                        {selectedWarehouseOrderDetail.items.length} producto{selectedWarehouseOrderDetail.items.length === 1 ? "" : "s"}
+                        {formatOrderLineCountLabel(selectedWarehouseOrderDetail, "long")}
                       </p>
                     </div>
 
@@ -27742,19 +27883,15 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               </tr>
                             </thead>
                             <tbody>
-                              {storeSummary.orders.map((order) => {
-                                const totalUnits = order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-
-                                return (
+                              {storeSummary.orders.map((order) => (
                                   <tr key={order._id}>
                                     <td>{formatSellerOrderDate(order.createdAt)}</td>
                                     <td>{order.salesRepName}</td>
                                     <td>{`${order.routeName} · ${formatRouteDayLabel(order.routeDay as RouteDayKey)}`}</td>
                                     <td>{formatSellerOrderStatus(order.status)}</td>
-                                    <td>{`${order.items.length} prod / ${totalUnits} und`}</td>
+                                    <td>{formatOrderLineCountLabel(order)}</td>
                                   </tr>
-                                );
-                              })}
+                              ))}
                             </tbody>
                           </table>
                         </div>
@@ -30873,7 +31010,6 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </tr>
                     ) : filteredWarehouseCompletedOrders.length > 0 ? (
                       filteredWarehouseCompletedOrders.map((order) => {
-                        const totalUnits = order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
                         const isDeletingOrder = deletingWarehouseOrderId === order._id;
                         const isVoidingOrder = voidingWarehouseOrderId === order._id;
                         const canVoidOrder = !order.invoiceVoided
@@ -30889,7 +31025,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             <td>{formatInvoiceNumberLabel(order)}</td>
                             <td>{order.storeName}</td>
                             <td className="warehouse-order-notes-cell">{order.internalOrderNotes?.trim() || "-"}</td>
-                            <td>{`${order.items.length} producto${order.items.length === 1 ? "" : "s"} / ${totalUnits} und`}</td>
+                            <td>{formatOrderLineCountLabel(order, "long")}</td>
                             <td>{`${formatAwgCurrency(getSellerOrderInvoiceTotalAwg(order))} AWG`}</td>
                             <td className="table-actions-cell">
                               {!order.invoiceVoided ? (
@@ -31368,6 +31504,14 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 >
                   + Agregar
                 </button>
+                <button
+                  className="secondary-action-button"
+                  type="button"
+                  disabled={!invoiceChangeAddProductId}
+                  onClick={() => addInvoiceChangeGift(invoiceChangeAddProductId)}
+                >
+                  + Agregar obsequio
+                </button>
               </div>
 
               <div className="table-wrap table-wrap--warehouse-items">
@@ -31384,7 +31528,15 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </tr>
                   </thead>
                   <tbody>
-                    {invoiceChangePricedItems.map((item) => {
+                    {invoiceChangePricedItems.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="empty-table-cell">
+                          {invoiceChangeGiftDrafts.length > 0
+                            ? "Esta factura solo tiene obsequios. Los productos de venta se agregan arriba."
+                            : "No hay productos de venta en esta factura."}
+                        </td>
+                      </tr>
+                    ) : invoiceChangePricedItems.map((item) => {
                       const draft = invoiceChangeItemDraft[item.productId];
 
                       return (
@@ -31442,6 +31594,58 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         </tr>
                       );
                     })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="table-wrap table-wrap--warehouse-items">
+                <table className="data-table data-table--warehouse-order-items">
+                  <thead>
+                    <tr>
+                      <th>SKU</th>
+                      <th>Obsequio</th>
+                      <th>Descripcion</th>
+                      <th>Cantidad</th>
+                      <th>Precio</th>
+                      <th>Total</th>
+                      <th>Quitar</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {invoiceChangeGiftDrafts.length > 0 ? (
+                      invoiceChangeGiftDrafts.map((gift) => (
+                        <tr key={`invoice-change-gift-${gift.key}`}>
+                          <td>{gift.productSku}</td>
+                          <td>{gift.productName}</td>
+                          <td>{gift.productDescription || "Obsequio a precio 0"}</td>
+                          <td>
+                            <input
+                              className="warehouse-order-qty-input"
+                              type="number"
+                              min="0"
+                              step="any"
+                              value={gift.quantity}
+                              onChange={(event) => handleInvoiceChangeGiftQuantity(gift.key, event.target.value)}
+                            />
+                          </td>
+                          <td>0</td>
+                          <td>0</td>
+                          <td>
+                            <button
+                              className="ghost-button warehouse-order-remove-item"
+                              type="button"
+                              onClick={() => removeInvoiceChangeGift(gift.key)}
+                            >
+                              Quitar
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={7} className="empty-table-cell">No hay obsequios en esta factura.</td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>

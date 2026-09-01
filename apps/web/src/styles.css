@@ -3275,7 +3275,7 @@ h1 {
 }
 
 .invoice-change-add-product {
-  grid-template-columns: minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
   margin-top: 8px;
 }
 
