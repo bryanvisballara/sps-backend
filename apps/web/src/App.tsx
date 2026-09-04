@@ -5826,6 +5826,8 @@ export default function App() {
   const [invoiceChangeReviewNotesDraft, setInvoiceChangeReviewNotesDraft] = useState<Record<string, string>>({});
   const [orderDeleteReviewNotesDraft, setOrderDeleteReviewNotesDraft] = useState<Record<string, string>>({});
   const [sellerOrderDraft, setSellerOrderDraft] = useState<SellerOrderDraft>({});
+  const [sellerOrderTotalDraft, setSellerOrderTotalDraft] = useState("");
+  const [isEditingSellerOrderTotal, setIsEditingSellerOrderTotal] = useState(false);
   const [sellerOrderCartProductIds, setSellerOrderCartProductIds] = useState<string[]>([]);
   const [editingStaffOrder, setEditingStaffOrder] = useState<SellerOrderRecord | null>(null);
   const [editingStaffInvoiceNumberDraft, setEditingStaffInvoiceNumberDraft] = useState("");
@@ -6171,6 +6173,7 @@ export default function App() {
   const visibleSidebarItems = sessionUser?.role === "colombia-ops" ? colombiaOpsSidebarItems : sidebarItems;
   const isStaffOrderComposerActive = activeSection === "create-order" || activeSection === "direct-invoice";
   const isDirectInvoiceComposer = activeSection === "direct-invoice";
+  const canEditStaffOrderPricing = canCreateStaffOrders(sessionUser?.role) && isStaffOrderComposerActive;
   const activeComposerRoutes = isStaffOrderComposerActive ? staffOrderRoutes : sellerRoutes;
   const selectedSellerRoute = activeComposerRoutes.find((route) => (route._id ?? route.code) === selectedSellerRouteId) ?? null;
   const selectedSellerDay = selectedSellerRoute?.days.find((day) => day.day === selectedSellerDayKey) ?? null;
@@ -6519,6 +6522,54 @@ export default function App() {
   const sellerOrderEstimatedTotal = sellerDraftedItems.reduce((sum, item) => (
     sum + roundCurrencyValue(Number(item.salePriceAwg ?? 0) * item.quantity)
   ), 0);
+
+  function applySellerOrderGrandTotal(nextTotal: number) {
+    const items = sellerDraftedItems;
+
+    if (items.length === 0 || !Number.isFinite(nextTotal) || nextTotal < 0) {
+      return;
+    }
+
+    const currentTotal = items.reduce((sum, item) => (
+      sum + roundCurrencyValue(Number(item.salePriceAwg ?? 0) * item.quantity)
+    ), 0);
+
+    setSellerOrderDraft((current) => {
+      const next = { ...current };
+      let allocated = 0;
+
+      items.forEach((item, index) => {
+        const product = sellerOrderCartProductSource.get(item.productId);
+
+        if (!product) {
+          return;
+        }
+
+        const existing = buildSellerOrderDraftEntry(product, current[item.productId]);
+        const quantity = Number(existing.quantity || item.quantity || 0);
+        const isLast = index === items.length - 1;
+        const currentLineTotal = roundCurrencyValue(Number(item.salePriceAwg ?? 0) * quantity);
+        const lineTotal = isLast
+          ? roundCurrencyValue(nextTotal - allocated)
+          : roundCurrencyValue(
+            currentTotal > 0.009
+              ? currentLineTotal * (nextTotal / currentTotal)
+              : nextTotal / items.length,
+          );
+        allocated += lineTotal;
+        next[item.productId] = {
+          ...existing,
+          lineSubtotalAwg: formatSellerDraftMoney(Math.max(0, lineTotal)),
+          salePriceAwg: quantity > 0
+            ? formatSellerDraftMoney(Math.max(0, lineTotal) / quantity)
+            : existing.salePriceAwg,
+        };
+      });
+
+      return next;
+    });
+  }
+
   const sellerGiftProductOptions = productOptions.filter((product) => product.shareWithAruba !== false);
   const inventoryRowsByProductId = inventoryRows.reduce((map, row) => {
     const current = map.get(row.productId);
@@ -9475,7 +9526,7 @@ export default function App() {
       .find((entry) => entry.productId === product.productId);
     const warehouseStock = Number(product.warehouseStock ?? catalogMatch?.warehouseStock ?? 0);
     const isRemoving = removingSellerProductId === product.productId;
-    const canEditLinePricing = isDirectInvoiceComposer && mode === "cart";
+    const canEditLinePricing = canEditStaffOrderPricing && mode === "cart";
     const isInCart = sellerOrderCartIdSet.has(product.productId);
     const productDescription = resolveVisibleProductDescription({
       name: product.name,
@@ -10172,7 +10223,7 @@ export default function App() {
               <p className="route-helper-text">
                 {isEditingReceivedOrder
                   ? "Modifica productos, cantidades, notas y fecha de entrega del pedido recibido. Al guardar, se actualiza el mismo pedido en bodega."
-                  : "Selecciona ruta, cliente y productos igual que en el portal del vendedor. El pedido queda a nombre del vendedor de la ruta."}
+                  : "Selecciona ruta, cliente y productos. Puedes cambiar el precio y el total solo de este pedido, sin modificar el catalogo."}
               </p>
             </div>
             <div className="management-table-header-actions">
@@ -10279,11 +10330,45 @@ export default function App() {
                     <span>Total del pedido</span>
                     <small>
                       {sellerDraftedItems.length > 0
-                        ? `${sellerDraftedItems.length} producto${sellerDraftedItems.length === 1 ? "" : "s"} con cantidad`
+                        ? canEditStaffOrderPricing
+                          ? "Puedes cambiar el total solo de este pedido"
+                          : `${sellerDraftedItems.length} producto${sellerDraftedItems.length === 1 ? "" : "s"} con cantidad`
                         : "Agrega cantidades para calcular el total"}
                     </small>
                   </div>
-                  <strong>{formatAwgCurrency(sellerOrderEstimatedTotal)} AWG</strong>
+                  {canEditStaffOrderPricing ? (
+                    <label className="seller-order-cart-total-edit">
+                      <input
+                        className="catalog-price-input seller-order-input seller-order-cart-total-input"
+                        type="text"
+                        inputMode="decimal"
+                        aria-label="Total del pedido en AWG"
+                        value={isEditingSellerOrderTotal
+                          ? sellerOrderTotalDraft
+                          : formatSellerDraftMoney(sellerOrderEstimatedTotal)}
+                        placeholder="0.00"
+                        disabled={sellerDraftedItems.length === 0}
+                        onFocus={() => {
+                          setIsEditingSellerOrderTotal(true);
+                          setSellerOrderTotalDraft(formatSellerDraftMoney(sellerOrderEstimatedTotal));
+                        }}
+                        onChange={(event) => {
+                          setIsEditingSellerOrderTotal(true);
+                          setSellerOrderTotalDraft(event.target.value);
+                        }}
+                        onBlur={() => {
+                          const nextTotal = parseDraftMoneyInput(sellerOrderTotalDraft);
+                          setIsEditingSellerOrderTotal(false);
+                          if (Number.isFinite(nextTotal) && nextTotal >= 0) {
+                            applySellerOrderGrandTotal(nextTotal);
+                          }
+                        }}
+                      />
+                      <strong>AWG</strong>
+                    </label>
+                  ) : (
+                    <strong>{formatAwgCurrency(sellerOrderEstimatedTotal)} AWG</strong>
+                  )}
                 </div>
               </>
             ) : (
@@ -17388,7 +17473,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
           next.salePriceAwg = formatSellerDraftMoney(subtotalValue / quantityValue);
         }
       } else if (field === "quantity") {
-        if (isDirectInvoiceComposer) {
+        if (canEditStaffOrderPricing) {
           // Always keep unit price as reference; subtotal follows price × quantity.
           const nextQuantity = Number(value || 0);
           const unitPrice = resolveSellerDraftUnitPrice(product, existing);
@@ -17397,7 +17482,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             resolveSellerDraftUnitPrice(product, next) * (Number.isFinite(nextQuantity) ? Math.max(0, nextQuantity) : 0),
           );
         }
-      } else if (isDirectInvoiceComposer && !next.salePriceAwg.trim()) {
+      } else if (canEditStaffOrderPricing && !next.salePriceAwg.trim()) {
         next.salePriceAwg = getDefaultSellerDraftSalePrice(product);
       }
 

@@ -3411,15 +3411,56 @@ function normalizeOrderEditActor(body, fallback) {
         source: resolveOrderEditSource(role),
     };
 }
-function formatOrderItemKey(item) {
-    return `${String(item.productId ?? "").trim()}::${String(item.stockRowId ?? "").trim()}`;
+function getOrderEditProductId(item) {
+    return String(item.productId ?? "").trim();
 }
-function formatOrderItemLabel(item, productNames) {
+function getOrderEditStockRowId(item) {
+    return String(item.stockRowId ?? "").trim();
+}
+function pairOrderItemsForEditLog(previousItems, nextItems) {
+    const previous = previousItems.map((item, index) => ({ item, index }));
+    const next = nextItems.map((item, index) => ({ item, index }));
+    const usedPrevious = new Set();
+    const usedNext = new Set();
+    const pairs = [];
+    const tryMatch = (predicate) => {
+        for (const candidate of next) {
+            if (usedNext.has(candidate.index)) {
+                continue;
+            }
+            const match = previous.find((entry) => (!usedPrevious.has(entry.index) && predicate(entry.item, candidate.item)));
+            if (!match) {
+                continue;
+            }
+            usedPrevious.add(match.index);
+            usedNext.add(candidate.index);
+            pairs.push({ previous: match.item, next: candidate.item });
+        }
+    };
+    tryMatch((previousItem, nextItem) => {
+        const previousLot = getOrderEditStockRowId(previousItem);
+        const nextLot = getOrderEditStockRowId(nextItem);
+        return getOrderEditProductId(previousItem) === getOrderEditProductId(nextItem)
+            && Boolean(previousLot)
+            && previousLot === nextLot;
+    });
+    tryMatch((previousItem, nextItem) => (getOrderEditProductId(previousItem) === getOrderEditProductId(nextItem)
+        && Number(previousItem.quantity ?? 0) === Number(nextItem.quantity ?? 0)));
+    tryMatch((previousItem, nextItem) => (getOrderEditProductId(previousItem) === getOrderEditProductId(nextItem)));
+    return {
+        pairs,
+        added: next.filter((entry) => !usedNext.has(entry.index)).map((entry) => entry.item),
+        removed: previous.filter((entry) => !usedPrevious.has(entry.index)).map((entry) => entry.item),
+    };
+}
+function formatOrderItemLabel(item, productNames, options) {
     const productId = String(item.productId ?? "").trim();
     const name = productNames.get(productId) || productId || "Producto";
     const quantity = Number(item.quantity ?? 0);
     const lot = String(item.stockRowId ?? "").trim();
-    return lot ? `${name} x ${quantity} (lote ${lot.slice(-6)})` : `${name} x ${quantity}`;
+    return options?.includeLot !== false && lot
+        ? `${name} x ${quantity} (lote ${lot.slice(-6)})`
+        : `${name} x ${quantity}`;
 }
 async function buildProductNameMap(productIds) {
     const uniqueIds = [...new Set(productIds.filter(Boolean))];
@@ -3438,40 +3479,60 @@ async function buildOrderItemsEditChanges(previousItems, nextItems, fieldLabel) 
         ...nextItems.map((item) => String(item.productId ?? "")),
     ];
     const productNames = await buildProductNameMap(productIds);
-    const previousMap = new Map(previousItems.map((item) => [formatOrderItemKey(item), item]));
-    const nextMap = new Map(nextItems.map((item) => [formatOrderItemKey(item), item]));
+    const { pairs, added, removed } = pairOrderItemsForEditLog(previousItems, nextItems);
     const changes = [];
-    for (const [key, nextItem] of nextMap.entries()) {
-        const previousItem = previousMap.get(key);
-        if (!previousItem) {
-            changes.push({
-                field: fieldLabel,
-                summary: `Agrego ${formatOrderItemLabel(nextItem, productNames)}`,
-                before: "",
-                after: formatOrderItemLabel(nextItem, productNames),
-            });
-            continue;
-        }
-        const previousQty = Number(previousItem.quantity ?? 0);
-        const nextQty = Number(nextItem.quantity ?? 0);
-        if (previousQty !== nextQty) {
-            changes.push({
-                field: fieldLabel,
-                summary: `Cambio cantidad de ${formatOrderItemLabel(previousItem, productNames)} a ${formatOrderItemLabel(nextItem, productNames)}`,
-                before: formatOrderItemLabel(previousItem, productNames),
-                after: formatOrderItemLabel(nextItem, productNames),
-            });
-        }
+    for (const nextItem of added) {
+        changes.push({
+            field: fieldLabel,
+            summary: `Agrego ${formatOrderItemLabel(nextItem, productNames)}`,
+            before: "",
+            after: formatOrderItemLabel(nextItem, productNames),
+        });
     }
-    for (const [key, previousItem] of previousMap.entries()) {
-        if (nextMap.has(key)) {
-            continue;
-        }
+    for (const previousItem of removed) {
         changes.push({
             field: fieldLabel,
             summary: `Quito ${formatOrderItemLabel(previousItem, productNames)}`,
             before: formatOrderItemLabel(previousItem, productNames),
             after: "",
+        });
+    }
+    for (const { previous: previousItem, next: nextItem } of pairs) {
+        const previousQty = Number(previousItem.quantity ?? 0);
+        const nextQty = Number(nextItem.quantity ?? 0);
+        const previousLot = getOrderEditStockRowId(previousItem);
+        const nextLot = getOrderEditStockRowId(nextItem);
+        const quantityChanged = previousQty !== nextQty;
+        const lotChangedByUser = Boolean(previousLot) && previousLot !== nextLot;
+        if (!quantityChanged && !lotChangedByUser) {
+            continue;
+        }
+        const includeLot = lotChangedByUser;
+        const beforeLabel = formatOrderItemLabel(previousItem, productNames, { includeLot });
+        const afterLabel = formatOrderItemLabel(nextItem, productNames, { includeLot });
+        if (quantityChanged && lotChangedByUser) {
+            changes.push({
+                field: fieldLabel,
+                summary: `Cambio cantidad y lote de ${beforeLabel} a ${afterLabel}`,
+                before: beforeLabel,
+                after: afterLabel,
+            });
+            continue;
+        }
+        if (quantityChanged) {
+            changes.push({
+                field: fieldLabel,
+                summary: `Cambio cantidad de ${beforeLabel} a ${afterLabel}`,
+                before: beforeLabel,
+                after: afterLabel,
+            });
+            continue;
+        }
+        changes.push({
+            field: fieldLabel,
+            summary: `Cambio lote de ${beforeLabel} a ${afterLabel}`,
+            before: beforeLabel,
+            after: afterLabel,
         });
     }
     return changes;
