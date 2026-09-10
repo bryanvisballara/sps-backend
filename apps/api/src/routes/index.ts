@@ -1466,7 +1466,7 @@ async function createSubmittedSalesOrder(payload: ReturnType<typeof normalizeSal
   const [store, salesRep, products, catalogSalePriceByProductId] = await Promise.all([
     Store.findById(payload.storeId).lean(),
     User.findById(payload.salesRepId).lean(),
-    Product.find({ _id: { $in: payload.items.map((item) => item.productId) }, active: { $ne: false } }).select({ _id: 1, salePrice: 1 }).lean(),
+    Product.find({ _id: { $in: payload.items.map((item) => item.productId) }, active: { $ne: false } }).select({ _id: 1, salePrice: 1, description: 1 }).lean(),
     getClientCatalogProductSalePrices(payload.storeId),
   ]);
 
@@ -1505,12 +1505,16 @@ async function createSubmittedSalesOrder(payload: ReturnType<typeof normalizeSal
   const items = payload.items.map((item) => {
     const payloadSalePrice = Number(item.salePriceAwg ?? NaN);
     const catalogSalePrice = catalogSalePriceByProductId.get(item.productId);
+    const product = productsById.get(item.productId);
+    const description = String(item.description ?? "").trim()
+      || String(product?.description ?? "").trim();
 
     // Prefer an explicit line price from the payload (direct invoice / staff edits).
     if (Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0) {
       return {
         ...item,
         salePriceAwg: Math.round(payloadSalePrice * 100) / 100,
+        ...(description ? { description } : {}),
       };
     }
 
@@ -1518,16 +1522,18 @@ async function createSubmittedSalesOrder(payload: ReturnType<typeof normalizeSal
       return {
         ...item,
         salePriceAwg: catalogSalePrice,
+        ...(description ? { description } : {}),
       };
     }
 
-    const productSalePrice = Number(productsById.get(item.productId)?.salePrice ?? 0);
+    const productSalePrice = Number(product?.salePrice ?? 0);
 
     return {
       ...item,
       ...(Number.isFinite(productSalePrice) && productSalePrice >= 0
         ? { salePriceAwg: Math.round(productSalePrice * 100) / 100 }
         : {}),
+      ...(description ? { description } : {}),
     };
   });
 
@@ -3725,7 +3731,7 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
       ...giftItems.map((item) => item.productId),
     ]));
     const [products, catalogSalePriceByProductId] = await Promise.all([
-      Product.find({ _id: { $in: productIds }, active: { $ne: false } }).select({ _id: 1, salePrice: 1 }).lean(),
+      Product.find({ _id: { $in: productIds }, active: { $ne: false } }).select({ _id: 1, salePrice: 1, description: 1 }).lean(),
       getClientCatalogProductSalePrices(String(order.storeId ?? "")),
     ]);
     const availableProductIds = new Set(products.map((product) => String(product._id)));
@@ -3734,8 +3740,12 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
     );
     const productsById = new Map(products.map((product) => [String(product._id), product]));
     const pricedItems = items.map((item) => {
+      const description = String(item.description ?? "").trim()
+        || String(productsById.get(item.productId)?.description ?? "").trim();
+      const withDescription = description ? { ...item, description } : item;
+
       if (existingItemIds.has(item.productId) && Number.isFinite(Number(item.salePriceAwg))) {
-        return item;
+        return withDescription;
       }
 
       const isCatalogClient = catalogSalePriceByProductId.size > 0;
@@ -3746,8 +3756,8 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
       });
 
       return resolvedSalePrice === undefined
-        ? item
-        : { ...item, salePriceAwg: resolvedSalePrice };
+        ? withDescription
+        : { ...withDescription, salePriceAwg: resolvedSalePrice };
     });
 
     if (productIds.some((productId) => !availableProductIds.has(productId))) {
@@ -4798,6 +4808,7 @@ function mergeOrderItemPrices<T extends { productId: string }>(
 ) {
   const priceByProductId = new Map<string, number>();
   const stockRowIdByProductId = new Map<string, string>();
+  const descriptionByProductId = new Map<string, string>();
 
   if (Array.isArray(rawItems)) {
     rawItems.forEach((entry) => {
@@ -4805,10 +4816,11 @@ function mergeOrderItemPrices<T extends { productId: string }>(
         return;
       }
 
-      const row = entry as { productId?: unknown; salePriceAwg?: unknown; stockRowId?: unknown };
+      const row = entry as { productId?: unknown; salePriceAwg?: unknown; stockRowId?: unknown; description?: unknown };
       const productId = typeof row.productId === "string" ? row.productId.trim() : "";
       const salePriceAwg = Number(row.salePriceAwg ?? NaN);
       const stockRowId = typeof row.stockRowId === "string" ? row.stockRowId.trim() : "";
+      const description = typeof row.description === "string" ? row.description.trim() : "";
 
       if (productId && Number.isFinite(salePriceAwg) && salePriceAwg >= 0) {
         priceByProductId.set(productId, Math.round(salePriceAwg * 100) / 100);
@@ -4817,6 +4829,10 @@ function mergeOrderItemPrices<T extends { productId: string }>(
       if (productId && stockRowId) {
         stockRowIdByProductId.set(productId, stockRowId);
       }
+
+      if (productId && description) {
+        descriptionByProductId.set(productId, description);
+      }
     });
   }
 
@@ -4824,7 +4840,12 @@ function mergeOrderItemPrices<T extends { productId: string }>(
     const productId = String(item.productId);
     const nextPrice = priceByProductId.get(productId);
     const stockRowId = stockRowIdByProductId.get(productId);
-    const nextItem = stockRowId ? { ...item, stockRowId } : item;
+    const nextDescription = descriptionByProductId.get(productId);
+    const nextItem = {
+      ...item,
+      ...(stockRowId ? { stockRowId } : {}),
+      ...(nextDescription ? { description: nextDescription } : {}),
+    };
 
     if (nextPrice !== undefined) {
       return { ...nextItem, salePriceAwg: nextPrice };
@@ -5558,30 +5579,34 @@ async function completeWarehouseOrderById(orderId: string, body: Record<string, 
   const invoiceNumber = await resolveRequestedInvoiceNumber(body.invoiceNumber, order);
   const orderItems = Array.isArray(order.items) ? order.items : [];
   const catalogSalePriceByProductId = await getClientCatalogProductSalePrices(String(order.storeId ?? ""));
+  const productIds = Array.from(new Set(orderItems.map((item) => String(item.productId ?? "")).filter(Boolean)));
+  const products = productIds.length > 0
+    ? await Product.find({ _id: { $in: productIds } }).select({ _id: 1, description: 1 }).lean()
+    : [];
+  const productDescriptionById = new Map(products.map((product) => [String(product._id), String(product.description ?? "").trim()]));
   const itemsWithPrices = mergeOrderItemPrices(orderItems, body.items).map((item) => {
     const productId = String(item.productId ?? "");
     const currentPrice = Number(item.salePriceAwg ?? NaN);
     const catalogSalePrice = catalogSalePriceByProductId.get(productId);
+    const description = String(item.description ?? "").trim()
+      || (productDescriptionById.get(productId) ?? "");
+    const withDescription = description ? { ...item, description } : item;
+
+    if (Number.isFinite(currentPrice) && currentPrice >= 0) {
+      return {
+        ...withDescription,
+        salePriceAwg: Math.round(currentPrice * 100) / 100,
+      };
+    }
 
     if (catalogSalePrice !== undefined) {
-      if (Number.isFinite(currentPrice) && currentPrice >= 0 && currentPrice <= catalogSalePrice + 0.009) {
-        return {
-          ...item,
-          salePriceAwg: Math.round(currentPrice * 100) / 100,
-        };
-      }
-
       return {
-        ...item,
+        ...withDescription,
         salePriceAwg: catalogSalePrice,
       };
     }
 
-    if (Number.isFinite(currentPrice) && currentPrice >= 0) {
-      return item;
-    }
-
-    return item;
+    return withDescription;
   });
 
   await applyOrderInventoryDeduction({

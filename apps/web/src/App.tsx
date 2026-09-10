@@ -891,7 +891,7 @@ function mapOrderItemsToSellerClientProducts(order: Pick<SellerOrderRecord, "ite
     sku: item.productSku ?? "",
     name: item.productName ?? "",
     category: "",
-    description: item.productDescription || item.description || "",
+    description: item.description || item.productDescription || "",
     imageUrl: "",
     salePrice: Number(item.salePriceAwg ?? 0),
     warehouseStock: 0,
@@ -926,7 +926,7 @@ function buildStaffOrderEditDraft(order: SellerOrderRecord): SellerOrderDraft {
         quantity: String(item.quantity ?? ""),
         notes: item.notes ?? "",
         salePriceAwg: item.salePriceAwg === null || item.salePriceAwg === undefined ? "" : String(item.salePriceAwg),
-        description: item.description ?? "",
+        description: String(item.description ?? "").trim() || String(item.productDescription ?? "").trim(),
         lineSubtotalAwg: "",
       },
     ]),
@@ -5280,14 +5280,27 @@ function resolveVisibleProductDescription(params: {
   productOption?: Pick<ProductOption, "description" | "displaysPerBox" | "unitsPerBox" | "unitsPerBoxUnit"> | null;
 }) {
   return resolveProductInvoiceDescription({
-    description: String(params.productOption?.description ?? "").trim()
-      || String(params.productDescription ?? "").trim()
-      || String(params.lineDescription ?? "").trim(),
+    description: String(params.lineDescription ?? "").trim()
+      || String(params.productOption?.description ?? "").trim()
+      || String(params.productDescription ?? "").trim(),
     name: params.name,
     displaysPerBox: params.productOption?.displaysPerBox ?? params.displaysPerBox,
     unitsPerBox: params.productOption?.unitsPerBox ?? params.unitsPerBox,
     unitsPerBoxUnit: params.productOption?.unitsPerBoxUnit ?? params.unitsPerBoxUnit,
   });
+}
+
+function resolvePersistedLineDescription(params: {
+  name?: string;
+  lineDescription?: string;
+  productDescription?: string;
+  displaysPerBox?: number;
+  unitsPerBox?: number;
+  unitsPerBoxUnit?: string;
+  productOption?: Pick<ProductOption, "description" | "displaysPerBox" | "unitsPerBox" | "unitsPerBoxUnit"> | null;
+}) {
+  const resolved = resolveVisibleProductDescription(params);
+  return resolved === "-" ? "" : resolved;
 }
 
 function renderProductNameWithDescription(name: string, description: string) {
@@ -6463,7 +6476,7 @@ export default function App() {
       quantity,
       notes: existing?.notes ?? "",
       salePriceAwg,
-      description: existing?.description ?? (isDirectInvoiceComposer ? defaultDescription : ""),
+      description: existing?.description ?? defaultDescription,
       // Keep the typed subtotal while editing. Only seed from price × qty when absent.
       lineSubtotalAwg: existing
         ? String(existing.lineSubtotalAwg ?? "")
@@ -6706,7 +6719,9 @@ export default function App() {
         item.productId,
         selectedStockRowId,
       );
-      const catalogSalePrice = Number(item.catalogSalePriceAwg ?? NaN) >= 0 && item.catalogSalePriceAwg !== undefined
+      const catalogSalePrice = selectedWarehouseOrderDetail.status === "delivered" && hasFrozenPrice
+        ? null
+        : Number(item.catalogSalePriceAwg ?? NaN) >= 0 && item.catalogSalePriceAwg !== undefined
         ? roundCurrencyValue(Number(item.catalogSalePriceAwg))
         : selectedCatalogId && openCatalogItem
           ? roundCurrencyValue(Number(openCatalogItem.salePrice ?? 0))
@@ -8625,10 +8640,10 @@ export default function App() {
           const catalogPrice = Number(item.catalogSalePriceAwg ?? 0);
           const productOption = productOptions.find((option) => option.value === item.productId);
           const invRow = inventoryRows.find((row) => row.productId === item.productId);
-          const fallbackPrice = catalogPrice > 0
-            ? catalogPrice
-            : storedPrice > 0
-              ? storedPrice
+          const fallbackPrice = storedPrice > 0
+            ? storedPrice
+            : catalogPrice > 0
+              ? catalogPrice
             : Number(invRow?.salePrice ?? productOption?.salePrice ?? 0);
 
           return [item.productId, fallbackPrice > 0 ? String(roundCurrencyValue(fallbackPrice)) : ""];
@@ -9530,6 +9545,7 @@ export default function App() {
     const isInCart = sellerOrderCartIdSet.has(product.productId);
     const productDescription = resolveVisibleProductDescription({
       name: product.name,
+      lineDescription: mode === "cart" ? draft.description : undefined,
       productDescription: product.description,
       displaysPerBox: product.displaysPerBox,
       unitsPerBox: product.unitsPerBox,
@@ -12844,12 +12860,14 @@ export default function App() {
 
       return {
         productLabel: item.productName,
-        description: resolveProductInvoiceDescription({
-          description: productOption?.description,
+        description: resolveVisibleProductDescription({
           name: item.productName,
-          displaysPerBox: productOption?.displaysPerBox,
-          unitsPerBox: productOption?.unitsPerBox,
-          unitsPerBoxUnit: productOption?.unitsPerBoxUnit,
+          lineDescription: item.description,
+          productDescription: item.productDescription,
+          displaysPerBox: item.displaysPerBox,
+          unitsPerBox: item.unitsPerBox,
+          unitsPerBoxUnit: item.unitsPerBoxUnit,
+          productOption,
         }),
         quantity: item.quantity,
         rate: item.resolvedSalePrice,
@@ -12861,12 +12879,13 @@ export default function App() {
 
         return {
           productLabel: item.productName,
-          description: resolveProductInvoiceDescription({
-            description: productOption?.description,
+          description: resolveVisibleProductDescription({
             name: item.productName,
-            displaysPerBox: productOption?.displaysPerBox,
-            unitsPerBox: productOption?.unitsPerBox,
-            unitsPerBoxUnit: productOption?.unitsPerBoxUnit,
+            productDescription: item.productDescription,
+            displaysPerBox: item.displaysPerBox,
+            unitsPerBox: item.unitsPerBox,
+            unitsPerBoxUnit: item.unitsPerBoxUnit,
+            productOption,
           }),
           quantity: item.quantity,
           rate: 0,
@@ -13189,6 +13208,15 @@ export default function App() {
           quantity,
           stockRowId: warehouseOrderLotDraft[item.productId] || item.stockRowId || "",
         notes: item.notes,
+          description: resolvePersistedLineDescription({
+            name: item.productName,
+            lineDescription: item.description,
+            productDescription: item.productDescription,
+            displaysPerBox: item.displaysPerBox,
+            unitsPerBox: item.unitsPerBox,
+            unitsPerBoxUnit: item.unitsPerBoxUnit,
+            productOption: productOptionsById.get(item.productId),
+          }),
           ...(Number.isFinite(Number(item.salePriceAwg)) && Number(item.salePriceAwg) >= 0
             ? { salePriceAwg: roundCurrencyValue(Number(item.salePriceAwg)) }
             : {}),
@@ -13485,6 +13513,15 @@ export default function App() {
         quantity,
         stockRowId: warehouseOrderLotDraft[item.productId] || item.stockRowId || "",
         notes: item.notes,
+        description: resolvePersistedLineDescription({
+          name: item.productName,
+          lineDescription: item.description,
+          productDescription: item.productDescription,
+          displaysPerBox: item.displaysPerBox,
+          unitsPerBox: item.unitsPerBox,
+          unitsPerBoxUnit: item.unitsPerBoxUnit,
+          productOption: productOptionsById.get(item.productId),
+        }),
         salePriceAwg,
       };
     }).filter((item) => Number.isFinite(item.quantity) && item.quantity > 0);
@@ -13630,6 +13667,15 @@ export default function App() {
               || selectedWarehouseOrderDetail.items.find((orderItem) => orderItem.productId === item.productId)?.stockRowId
               || "",
             salePriceAwg: item.resolvedSalePrice,
+            description: resolvePersistedLineDescription({
+              name: item.productName,
+              lineDescription: item.description,
+              productDescription: item.productDescription,
+              displaysPerBox: item.displaysPerBox,
+              unitsPerBox: item.unitsPerBox,
+              unitsPerBoxUnit: item.unitsPerBoxUnit,
+              productOption: productOptionsById.get(item.productId),
+            }),
           })),
         }),
       });
@@ -13833,6 +13879,15 @@ export default function App() {
               || selectedWarehouseOrderDetail.items.find((orderItem) => orderItem.productId === item.productId)?.stockRowId
               || "",
             salePriceAwg: item.resolvedSalePrice,
+            description: resolvePersistedLineDescription({
+              name: item.productName,
+              lineDescription: item.description,
+              productDescription: item.productDescription,
+              displaysPerBox: item.displaysPerBox,
+              unitsPerBox: item.unitsPerBox,
+              unitsPerBoxUnit: item.unitsPerBoxUnit,
+              productOption: productOptionsById.get(item.productId),
+            }),
           })),
           creditCollections: warehouseSelectedCreditCollections.map((draft) => ({
             carteraEntryId: draft.carteraEntryId,
@@ -15000,8 +15055,15 @@ export default function App() {
       ?? 0,
     ));
     const quantity = Number(item.quantity ?? 0);
-    const description = String(item.description ?? "").trim()
-      || String(productOption?.description ?? "").trim();
+    const description = resolvePersistedLineDescription({
+      name: item.productName,
+      lineDescription: item.description,
+      productDescription: item.productDescription,
+      displaysPerBox: item.displaysPerBox,
+      unitsPerBox: item.unitsPerBox,
+      unitsPerBoxUnit: item.unitsPerBoxUnit,
+      productOption,
+    });
 
     return {
       quantity: String(item.quantity ?? ""),
@@ -15094,7 +15156,14 @@ export default function App() {
     const fallbackPrice = Number(invRow?.salePrice ?? productOption.salePrice ?? 0);
     const unitPrice = await fetchClientCatalogUnitPrice(invoiceChangeOrder.storeId, normalizedProductId, fallbackPrice);
     const usesCatalogPrice = isStoreAssignedToAnyCatalog(invoiceChangeOrder.storeId);
-    const description = String(productOption.description ?? "").trim();
+    const description = resolvePersistedLineDescription({
+      name: productOption.label,
+      productDescription: productOption.description,
+      displaysPerBox: productOption.displaysPerBox,
+      unitsPerBox: productOption.unitsPerBox,
+      unitsPerBoxUnit: productOption.unitsPerBoxUnit,
+      productOption,
+    });
     const newItem: SellerOrderRecord["items"][number] = {
       productId: normalizedProductId,
       stockCurrent: null,
@@ -21287,6 +21356,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         </p>
                       </div>
 
+                      {selectedWarehouseOrderDetail.status === "delivered" ? null : (
                       <div className="warehouse-order-summary-card">
                         <p className="section-label">Catálogo semanal (opcional)</p>
                         <label className="field warehouse-order-catalog-field">
@@ -21308,6 +21378,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             : "Solo para frutas, verduras o refrigerados con precios que cambian cada semana. Sin catálogo, se usa el precio de venta del producto."}
                         </p>
                       </div>
+                      )}
 
                       <div className="warehouse-order-summary-card">
                         <p className="section-label">Factura</p>
@@ -21402,7 +21473,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           </div>
                         ) : null}
                         <p>
-                          {!selectedCatalogId
+                          {selectedWarehouseOrderDetail.status === "delivered"
+                            ? "Total segun los precios guardados de la factura. Los cambios de precio o descripcion se aplican a la reimpresion."
+                            : !selectedCatalogId
                             ? "Total calculado con el precio de venta de cada producto."
                             : warehouseFallbackPriceCount > 0
                             ? `${warehouseFallbackPriceCount} producto${warehouseFallbackPriceCount === 1 ? " usa" : "s usan"} precio base del producto fuera del catálogo.`
@@ -21575,9 +21648,25 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               </td>
                               <td>
                                 {canAccountingAdjustDispatchPricing ? (
-                                  <span className="warehouse-order-derived-price">
-                                    {item.quantity > 0 ? formatAwgCurrency(item.resolvedSalePrice) : "-"}
-                                  </span>
+                                  <input
+                                    className="warehouse-order-qty-input"
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={accountingOrderUnitPriceDraft[item.productId] ?? String(item.resolvedSalePrice)}
+                                    onChange={(event) => {
+                                      setAccountingOrderUnitPriceDraft((current) => ({
+                                        ...current,
+                                        [item.productId]: event.target.value,
+                                      }));
+                                      setAccountingOrderLineTotalManual((current) => ({
+                                        ...current,
+                                        [item.productId]: false,
+                                      }));
+                                      setWarehouseOrderEditStatus(null);
+                                      setAccountingOrderPriceStatus(null);
+                                    }}
+                                  />
                                 ) : item.hasLotPromotion ? (
                                   <span className="promo-price-stack">
                                     <s>{formatAwgCurrency(item.originalSalePrice ?? item.resolvedSalePrice)} AWG</s>

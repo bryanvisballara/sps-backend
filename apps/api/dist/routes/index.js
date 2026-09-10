@@ -1080,7 +1080,7 @@ async function createSubmittedSalesOrder(payload) {
     const [store, salesRep, products, catalogSalePriceByProductId] = await Promise.all([
         Store.findById(payload.storeId).lean(),
         User.findById(payload.salesRepId).lean(),
-        Product.find({ _id: { $in: payload.items.map((item) => item.productId) }, active: { $ne: false } }).select({ _id: 1, salePrice: 1 }).lean(),
+        Product.find({ _id: { $in: payload.items.map((item) => item.productId) }, active: { $ne: false } }).select({ _id: 1, salePrice: 1, description: 1 }).lean(),
         getClientCatalogProductSalePrices(payload.storeId),
     ]);
     if (!store) {
@@ -1110,25 +1110,31 @@ async function createSubmittedSalesOrder(payload) {
     const items = payload.items.map((item) => {
         const payloadSalePrice = Number(item.salePriceAwg ?? NaN);
         const catalogSalePrice = catalogSalePriceByProductId.get(item.productId);
+        const product = productsById.get(item.productId);
+        const description = String(item.description ?? "").trim()
+            || String(product?.description ?? "").trim();
         // Prefer an explicit line price from the payload (direct invoice / staff edits).
         if (Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0) {
             return {
                 ...item,
                 salePriceAwg: Math.round(payloadSalePrice * 100) / 100,
+                ...(description ? { description } : {}),
             };
         }
         if (catalogSalePrice !== undefined) {
             return {
                 ...item,
                 salePriceAwg: catalogSalePrice,
+                ...(description ? { description } : {}),
             };
         }
-        const productSalePrice = Number(productsById.get(item.productId)?.salePrice ?? 0);
+        const productSalePrice = Number(product?.salePrice ?? 0);
         return {
             ...item,
             ...(Number.isFinite(productSalePrice) && productSalePrice >= 0
                 ? { salePriceAwg: Math.round(productSalePrice * 100) / 100 }
                 : {}),
+            ...(description ? { description } : {}),
         };
     });
     const invoiceNumber = await resolveNewOrderInvoiceNumber(payload.invoiceNumber);
@@ -2839,15 +2845,18 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
             ...giftItems.map((item) => item.productId),
         ]));
         const [products, catalogSalePriceByProductId] = await Promise.all([
-            Product.find({ _id: { $in: productIds }, active: { $ne: false } }).select({ _id: 1, salePrice: 1 }).lean(),
+            Product.find({ _id: { $in: productIds }, active: { $ne: false } }).select({ _id: 1, salePrice: 1, description: 1 }).lean(),
             getClientCatalogProductSalePrices(String(order.storeId ?? "")),
         ]);
         const availableProductIds = new Set(products.map((product) => String(product._id)));
         const existingItemIds = new Set((Array.isArray(order.items) ? order.items : []).map((item) => String(item.productId)));
         const productsById = new Map(products.map((product) => [String(product._id), product]));
         const pricedItems = items.map((item) => {
+            const description = String(item.description ?? "").trim()
+                || String(productsById.get(item.productId)?.description ?? "").trim();
+            const withDescription = description ? { ...item, description } : item;
             if (existingItemIds.has(item.productId) && Number.isFinite(Number(item.salePriceAwg))) {
-                return item;
+                return withDescription;
             }
             const isCatalogClient = catalogSalePriceByProductId.size > 0;
             const resolvedSalePrice = resolveAddedOrderItemSalePrice({
@@ -2856,8 +2865,8 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
                 productSalePrice: Number(productsById.get(item.productId)?.salePrice ?? NaN),
             });
             return resolvedSalePrice === undefined
-                ? item
-                : { ...item, salePriceAwg: resolvedSalePrice };
+                ? withDescription
+                : { ...withDescription, salePriceAwg: resolvedSalePrice };
         });
         if (productIds.some((productId) => !availableProductIds.has(productId))) {
             response.status(400).json({ message: "Uno o varios productos del pedido ya no estan disponibles." });
@@ -3638,6 +3647,7 @@ async function resolveRequestedInvoiceNumber(requested, order) {
 function mergeOrderItemPrices(orderItems, rawItems) {
     const priceByProductId = new Map();
     const stockRowIdByProductId = new Map();
+    const descriptionByProductId = new Map();
     if (Array.isArray(rawItems)) {
         rawItems.forEach((entry) => {
             if (typeof entry !== "object" || entry === null) {
@@ -3647,11 +3657,15 @@ function mergeOrderItemPrices(orderItems, rawItems) {
             const productId = typeof row.productId === "string" ? row.productId.trim() : "";
             const salePriceAwg = Number(row.salePriceAwg ?? NaN);
             const stockRowId = typeof row.stockRowId === "string" ? row.stockRowId.trim() : "";
+            const description = typeof row.description === "string" ? row.description.trim() : "";
             if (productId && Number.isFinite(salePriceAwg) && salePriceAwg >= 0) {
                 priceByProductId.set(productId, Math.round(salePriceAwg * 100) / 100);
             }
             if (productId && stockRowId) {
                 stockRowIdByProductId.set(productId, stockRowId);
+            }
+            if (productId && description) {
+                descriptionByProductId.set(productId, description);
             }
         });
     }
@@ -3659,7 +3673,12 @@ function mergeOrderItemPrices(orderItems, rawItems) {
         const productId = String(item.productId);
         const nextPrice = priceByProductId.get(productId);
         const stockRowId = stockRowIdByProductId.get(productId);
-        const nextItem = stockRowId ? { ...item, stockRowId } : item;
+        const nextDescription = descriptionByProductId.get(productId);
+        const nextItem = {
+            ...item,
+            ...(stockRowId ? { stockRowId } : {}),
+            ...(nextDescription ? { description: nextDescription } : {}),
+        };
         if (nextPrice !== undefined) {
             return { ...nextItem, salePriceAwg: nextPrice };
         }
@@ -4192,26 +4211,31 @@ async function completeWarehouseOrderById(orderId, body = {}) {
     const invoiceNumber = await resolveRequestedInvoiceNumber(body.invoiceNumber, order);
     const orderItems = Array.isArray(order.items) ? order.items : [];
     const catalogSalePriceByProductId = await getClientCatalogProductSalePrices(String(order.storeId ?? ""));
+    const productIds = Array.from(new Set(orderItems.map((item) => String(item.productId ?? "")).filter(Boolean)));
+    const products = productIds.length > 0
+        ? await Product.find({ _id: { $in: productIds } }).select({ _id: 1, description: 1 }).lean()
+        : [];
+    const productDescriptionById = new Map(products.map((product) => [String(product._id), String(product.description ?? "").trim()]));
     const itemsWithPrices = mergeOrderItemPrices(orderItems, body.items).map((item) => {
         const productId = String(item.productId ?? "");
         const currentPrice = Number(item.salePriceAwg ?? NaN);
         const catalogSalePrice = catalogSalePriceByProductId.get(productId);
-        if (catalogSalePrice !== undefined) {
-            if (Number.isFinite(currentPrice) && currentPrice >= 0 && currentPrice <= catalogSalePrice + 0.009) {
-                return {
-                    ...item,
-                    salePriceAwg: Math.round(currentPrice * 100) / 100,
-                };
-            }
+        const description = String(item.description ?? "").trim()
+            || (productDescriptionById.get(productId) ?? "");
+        const withDescription = description ? { ...item, description } : item;
+        if (Number.isFinite(currentPrice) && currentPrice >= 0) {
             return {
-                ...item,
+                ...withDescription,
+                salePriceAwg: Math.round(currentPrice * 100) / 100,
+            };
+        }
+        if (catalogSalePrice !== undefined) {
+            return {
+                ...withDescription,
                 salePriceAwg: catalogSalePrice,
             };
         }
-        if (Number.isFinite(currentPrice) && currentPrice >= 0) {
-            return item;
-        }
-        return item;
+        return withDescription;
     });
     await applyOrderInventoryDeduction({
         _id: order._id,
