@@ -2555,10 +2555,10 @@ apiRouter.put("/sales/orders/:id", async (request, response) => {
         const pricedItems = payload.items.map((item) => {
             const payloadSalePrice = Number(item.salePriceAwg ?? NaN);
             const catalogSalePrice = catalogSalePriceByProductId.get(item.productId);
+            if (Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0) {
+                return { ...item, salePriceAwg: Math.round(payloadSalePrice * 100) / 100 };
+            }
             if (catalogSalePrice !== undefined) {
-                if (Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0 && payloadSalePrice <= catalogSalePrice + 0.009) {
-                    return { ...item, salePriceAwg: Math.round(payloadSalePrice * 100) / 100 };
-                }
                 return { ...item, salePriceAwg: catalogSalePrice };
             }
             return item;
@@ -3696,21 +3696,17 @@ function resolveFrozenOrderItemSalePrice(item, productSalePrice = 0, catalogSale
     return Math.round(Math.max(0, Number(productSalePrice ?? 0)) * 100) / 100;
 }
 function resolveAddedOrderItemSalePrice(params) {
-    const catalogSalePrice = Number(params.catalogSalePrice ?? NaN);
-    if (Number.isFinite(catalogSalePrice) && catalogSalePrice >= 0) {
-        const payloadSalePrice = Number(params.payloadSalePrice ?? NaN);
-        if (Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0 && payloadSalePrice <= catalogSalePrice + 0.009) {
-            return Math.round(payloadSalePrice * 100) / 100;
-        }
-        return Math.round(catalogSalePrice * 100) / 100;
-    }
     const payloadSalePrice = Number(params.payloadSalePrice ?? NaN);
     if (Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0) {
         return Math.round(payloadSalePrice * 100) / 100;
     }
     const productSalePrice = Number(params.productSalePrice ?? NaN);
-    return Number.isFinite(productSalePrice) && productSalePrice >= 0
-        ? Math.round(productSalePrice * 100) / 100
+    if (Number.isFinite(productSalePrice) && productSalePrice >= 0) {
+        return Math.round(productSalePrice * 100) / 100;
+    }
+    const catalogSalePrice = Number(params.catalogSalePrice ?? NaN);
+    return Number.isFinite(catalogSalePrice) && catalogSalePrice >= 0
+        ? Math.round(catalogSalePrice * 100) / 100
         : undefined;
 }
 async function buildWarehouseInvoiceDocumentLines(order) {

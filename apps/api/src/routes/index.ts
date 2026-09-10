@@ -3385,11 +3385,11 @@ apiRouter.put("/sales/orders/:id", async (request, response) => {
       const payloadSalePrice = Number(item.salePriceAwg ?? NaN);
       const catalogSalePrice = catalogSalePriceByProductId.get(item.productId);
 
-      if (catalogSalePrice !== undefined) {
-        if (Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0 && payloadSalePrice <= catalogSalePrice + 0.009) {
-          return { ...item, salePriceAwg: Math.round(payloadSalePrice * 100) / 100 };
-        }
+      if (Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0) {
+        return { ...item, salePriceAwg: Math.round(payloadSalePrice * 100) / 100 };
+      }
 
+      if (catalogSalePrice !== undefined) {
         return { ...item, salePriceAwg: catalogSalePrice };
       }
 
@@ -4878,18 +4878,6 @@ function resolveAddedOrderItemSalePrice(params: {
   catalogSalePrice?: number;
   productSalePrice?: number;
 }) {
-  const catalogSalePrice = Number(params.catalogSalePrice ?? NaN);
-
-  if (Number.isFinite(catalogSalePrice) && catalogSalePrice >= 0) {
-    const payloadSalePrice = Number(params.payloadSalePrice ?? NaN);
-
-    if (Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0 && payloadSalePrice <= catalogSalePrice + 0.009) {
-      return Math.round(payloadSalePrice * 100) / 100;
-    }
-
-    return Math.round(catalogSalePrice * 100) / 100;
-  }
-
   const payloadSalePrice = Number(params.payloadSalePrice ?? NaN);
 
   if (Number.isFinite(payloadSalePrice) && payloadSalePrice >= 0) {
@@ -4897,8 +4885,15 @@ function resolveAddedOrderItemSalePrice(params: {
   }
 
   const productSalePrice = Number(params.productSalePrice ?? NaN);
-  return Number.isFinite(productSalePrice) && productSalePrice >= 0
-    ? Math.round(productSalePrice * 100) / 100
+
+  if (Number.isFinite(productSalePrice) && productSalePrice >= 0) {
+    return Math.round(productSalePrice * 100) / 100;
+  }
+
+  const catalogSalePrice = Number(params.catalogSalePrice ?? NaN);
+
+  return Number.isFinite(catalogSalePrice) && catalogSalePrice >= 0
+    ? Math.round(catalogSalePrice * 100) / 100
     : undefined;
 }
 

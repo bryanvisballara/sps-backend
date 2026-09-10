@@ -3693,6 +3693,39 @@ function normalizeClientPaymentTerms(value?: string) {
   return DEFAULT_QUICKBOOKS_PAYMENT_TERM;
 }
 
+function resolveCurrentProductSalePrice(params: {
+  productSalePrice?: number | null;
+  inventorySalePrice?: number | null;
+  lotSalePrice?: number | null;
+  liveCatalogSalePrice?: number | null;
+}) {
+  const liveCatalogSalePrice = Number(params.liveCatalogSalePrice ?? NaN);
+
+  if (Number.isFinite(liveCatalogSalePrice) && liveCatalogSalePrice >= 0) {
+    return roundCurrencyValue(liveCatalogSalePrice);
+  }
+
+  const productSalePrice = Number(params.productSalePrice ?? NaN);
+
+  if (Number.isFinite(productSalePrice) && productSalePrice > 0) {
+    return roundCurrencyValue(productSalePrice);
+  }
+
+  const inventorySalePrice = Number(params.inventorySalePrice ?? NaN);
+
+  if (Number.isFinite(inventorySalePrice) && inventorySalePrice > 0) {
+    return roundCurrencyValue(inventorySalePrice);
+  }
+
+  const lotSalePrice = Number(params.lotSalePrice ?? NaN);
+
+  if (Number.isFinite(lotSalePrice) && lotSalePrice > 0) {
+    return roundCurrencyValue(lotSalePrice);
+  }
+
+  return 0;
+}
+
 function getAccountingLinePricing(params: {
   productId: string;
   quantity: number;
@@ -13002,13 +13035,14 @@ export default function App() {
     }
 
     const selectedLot = lots.find((lot) => lot.stockRowId === selectedStockRowId);
-    const fallbackPrice = Number(selectedLot?.salePrice ?? product.salePrice ?? 0);
-    const unitPrice = await fetchClientCatalogUnitPrice(
-      selectedWarehouseOrderDetail.storeId,
-      product.value,
-      fallbackPrice,
-    );
-    const usesCatalogPrice = isStoreAssignedToAnyCatalog(selectedWarehouseOrderDetail.storeId);
+    const liveCatalogItem = selectedWarehouseOrderDetail.status !== "delivered" && selectedCatalogId
+      ? findCatalogPreviewItem(catalogPreviewItems, product.value, selectedStockRowId)
+      : null;
+    const unitPrice = resolveCurrentProductSalePrice({
+      productSalePrice: product.salePrice,
+      lotSalePrice: selectedLot?.salePrice,
+      liveCatalogSalePrice: liveCatalogItem ? Number(liveCatalogItem.salePrice ?? NaN) : null,
+    });
     const newItem = {
       productId: product.value,
       stockCurrent: null,
@@ -13016,7 +13050,6 @@ export default function App() {
       stockRowId: selectedStockRowId,
       notes: "",
       salePriceAwg: unitPrice,
-      ...(usesCatalogPrice ? { catalogSalePriceAwg: unitPrice } : {}),
       productName: product.label,
       productSku: product.sku,
     };
@@ -15153,9 +15186,10 @@ export default function App() {
       return;
     }
 
-    const fallbackPrice = Number(invRow?.salePrice ?? productOption.salePrice ?? 0);
-    const unitPrice = await fetchClientCatalogUnitPrice(invoiceChangeOrder.storeId, normalizedProductId, fallbackPrice);
-    const usesCatalogPrice = isStoreAssignedToAnyCatalog(invoiceChangeOrder.storeId);
+    const unitPrice = resolveCurrentProductSalePrice({
+      productSalePrice: productOption.salePrice,
+      inventorySalePrice: invRow?.salePrice,
+    });
     const description = resolvePersistedLineDescription({
       name: productOption.label,
       productDescription: productOption.description,
@@ -15171,7 +15205,6 @@ export default function App() {
       notes: "",
       description,
       salePriceAwg: unitPrice,
-      ...(usesCatalogPrice ? { catalogSalePriceAwg: unitPrice } : {}),
       productName: productOption.label,
       productSku: productOption.sku,
     };
