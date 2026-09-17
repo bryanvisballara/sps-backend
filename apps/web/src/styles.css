@@ -40,13 +40,15 @@ html:has(.login-shell) body {
 }
 
 html:has(.login-shell) #root,
-html:has(.portal-shell--management) #root {
+html:has(.portal-shell--management) #root,
+html:has(.portal-shell--seller) #root {
   width: 100%;
   min-height: 100dvh;
   transform: none;
 }
 
-html:has(.portal-shell--management) body::before {
+html:has(.portal-shell--management) body::before,
+html:has(.portal-shell--seller) body::before {
   display: none;
 }
 
@@ -4207,6 +4209,16 @@ h1 {
   margin-top: 10px;
 }
 
+.table-pagination-controls--server {
+  align-items: center;
+}
+
+.table-pagination-status {
+  font-size: 0.86rem;
+  color: rgba(17, 17, 17, 0.68);
+  white-space: nowrap;
+}
+
 .table-pagination-button {
   min-width: 34px;
   height: 34px;
@@ -6292,13 +6304,14 @@ h1 {
   .table-wrap--cards .data-table--inventory td:nth-child(7)::before { content: "Caducidad"; }
   .table-wrap--cards .data-table--inventory td:nth-child(8)::before { content: "Acción"; }
 
-  .table-wrap--cards .data-table--seller-orders td:nth-child(1)::before { content: "Fecha"; }
-  .table-wrap--cards .data-table--seller-orders td:nth-child(2)::before { content: "Cliente"; }
-  .table-wrap--cards .data-table--seller-orders td:nth-child(3)::before { content: "Zona"; }
-  .table-wrap--cards .data-table--seller-orders td:nth-child(4)::before { content: "Estado"; }
-  .table-wrap--cards .data-table--seller-orders td:nth-child(5)::before { content: "Productos"; }
-  .table-wrap--cards .data-table--seller-orders td:nth-child(6)::before { content: "Detalle"; }
-  .table-wrap--cards .data-table--seller-orders td:nth-child(7)::before { content: "Acción"; }
+  .table-wrap--cards .data-table--seller-orders td:nth-child(1)::before { content: "Entrega"; }
+  .table-wrap--cards .data-table--seller-orders td:nth-child(2)::before { content: "Registro"; }
+  .table-wrap--cards .data-table--seller-orders td:nth-child(3)::before { content: "Cliente"; }
+  .table-wrap--cards .data-table--seller-orders td:nth-child(4)::before { content: "Zona"; }
+  .table-wrap--cards .data-table--seller-orders td:nth-child(5)::before { content: "Estado"; }
+  .table-wrap--cards .data-table--seller-orders td:nth-child(6)::before { content: "Productos"; }
+  .table-wrap--cards .data-table--seller-orders td:nth-child(7)::before { content: "Total"; }
+  .table-wrap--cards .data-table--seller-orders td:nth-child(8)::before { content: "Acción"; }
 
   .table-wrap--cards .data-table--seller-submissions td:nth-child(1)::before { content: "Fecha"; }
   .table-wrap--cards .data-table--seller-submissions td:nth-child(2)::before { content: "Hora"; }
@@ -6311,7 +6324,10 @@ h1 {
   .table-wrap--cards .data-table--order-items td:nth-child(3)::before { content: "Stock actual"; }
   .table-wrap--cards .data-table--order-items td:nth-child(4)::before { content: "Cantidad"; }
   .table-wrap--cards .data-table--order-items td:nth-child(5)::before { content: "Notas"; }
-  .table-wrap--cards .data-table--seller-order-edit td:nth-child(6)::before { content: "Acción"; }
+  .table-wrap--cards .data-table--seller-order-edit td:nth-child(5)::before { content: "Precio"; }
+  .table-wrap--cards .data-table--seller-order-edit td:nth-child(6)::before { content: "Total"; }
+  .table-wrap--cards .data-table--seller-order-edit td:nth-child(7)::before { content: "Notas"; }
+  .table-wrap--cards .data-table--seller-order-edit td:nth-child(8)::before { content: "Acción"; }
 
   .table-wrap--cards .data-table--warehouse-orders td:nth-child(1)::before { content: "Fecha"; }
   .table-wrap--cards .data-table--warehouse-orders td:nth-child(2)::before { content: "Vendedor"; }

@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
+import type { FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
@@ -810,6 +811,71 @@ type SellerAssignedStoreResponse = {
 };
 
 type SellerActiveSection = "routes" | "orders" | "clients" | "performance";
+type SellerOrderSourcePanel = "habitual" | "expiring" | "catalog" | "gifts";
+
+type SellerOrderDockFrame = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
+const SELLER_ORDER_DOCK_FRAME_KEY = "spste.seller.orderDockFrame";
+
+function getDefaultSellerOrderDockFrame(): SellerOrderDockFrame {
+  const width = Math.min(380, Math.max(280, window.innerWidth - 24));
+  const height = Math.min(560, Math.max(280, Math.round(window.innerHeight * 0.68)));
+  return {
+    left: Math.max(12, window.innerWidth - width - 20),
+    top: Math.max(12, window.innerHeight - height - 24),
+    width,
+    height,
+  };
+}
+
+function clampSellerOrderDockFrame(frame: SellerOrderDockFrame): SellerOrderDockFrame {
+  const minWidth = 280;
+  const minHeight = 220;
+  const maxWidth = Math.max(minWidth, window.innerWidth - 16);
+  const maxHeight = Math.max(minHeight, window.innerHeight - 16);
+  const width = Math.min(maxWidth, Math.max(minWidth, frame.width));
+  const height = Math.min(maxHeight, Math.max(minHeight, frame.height));
+  return {
+    width,
+    height,
+    left: Math.min(window.innerWidth - width - 8, Math.max(8, frame.left)),
+    top: Math.min(window.innerHeight - height - 8, Math.max(8, frame.top)),
+  };
+}
+
+function readStoredSellerOrderDockFrame(): SellerOrderDockFrame {
+  try {
+    const raw = localStorage.getItem(SELLER_ORDER_DOCK_FRAME_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<SellerOrderDockFrame>;
+      if ([parsed.left, parsed.top, parsed.width, parsed.height].every((value) => Number.isFinite(Number(value)))) {
+        return clampSellerOrderDockFrame({
+          left: Number(parsed.left),
+          top: Number(parsed.top),
+          width: Number(parsed.width),
+          height: Number(parsed.height),
+        });
+      }
+    }
+  } catch {
+    // ignore invalid stored frames
+  }
+
+  return getDefaultSellerOrderDockFrame();
+}
+
+function persistSellerOrderDockFrame(frame: SellerOrderDockFrame) {
+  try {
+    localStorage.setItem(SELLER_ORDER_DOCK_FRAME_KEY, JSON.stringify(frame));
+  } catch {
+    // ignore quota / private mode
+  }
+}
 
 type SellerOrderDraft = Record<string, {
   stockCurrent: string;
@@ -1464,6 +1530,7 @@ function resolveApiBaseUrl(): string {
 
 const apiBaseUrl = resolveApiBaseUrl();
 const sellerCatalogPageSize = 30;
+const sellerSourceListPageSize = 20;
 const cloudinaryCloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME as string | undefined;
 const cloudinaryUploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET as string | undefined;
 const sessionStorageKey = "spste-session-user";
@@ -2845,6 +2912,8 @@ function getUserInitials(name: string) {
 function SellerIcon({ name }: { name: "routes" | "clients" | "orders" | "performance" | "search" | "bell" | "chevron" | "calendar" | "map" | "filter" | "help" | "gift" | "send" | "box" | "clock" | "logout" | "check" }) {
   const common = {
     viewBox: "0 0 24 24",
+    width: 20,
+    height: 20,
     fill: "none",
     stroke: "currentColor",
     strokeWidth: 1.8,
@@ -3615,6 +3684,37 @@ function getSellerOrderInvoiceTotalAwg(order: Pick<SellerOrderRecord, "items">) 
   }, 0));
 }
 
+function getSellerOrderEditItemUnitPriceAwg(
+  item: Pick<SellerOrderEditItemDraft, "salePriceAwg">,
+  fallbackPrice?: number,
+) {
+  const stored = Number(item.salePriceAwg);
+  if (item.salePriceAwg != null && Number.isFinite(stored) && stored >= 0) {
+    return stored;
+  }
+
+  const fallback = Number(fallbackPrice ?? 0);
+  return Number.isFinite(fallback) && fallback >= 0 ? fallback : 0;
+}
+
+function getSellerOrderEditItemLineTotalAwg(
+  item: Pick<SellerOrderEditItemDraft, "quantity" | "salePriceAwg">,
+  fallbackPrice?: number,
+) {
+  const quantity = Number(item.quantity ?? 0);
+  const unitPrice = getSellerOrderEditItemUnitPriceAwg(item, fallbackPrice);
+
+  if (!Number.isFinite(quantity) || quantity <= 0 || unitPrice < 0) {
+    return 0;
+  }
+
+  return roundCurrencyValue(quantity * unitPrice);
+}
+
+function formatSellerInvoiceAmountLabel(value: number) {
+  return `${formatAwgCurrency(value)} AWG`;
+}
+
 function formatOrderItemNotes(order: Pick<SellerOrderRecord, "items">) {
   const notes = (order.items ?? [])
     .map((item) => {
@@ -3973,6 +4073,48 @@ type WarehouseOrderListProps = {
   onToggleSelectAll?: (selected: boolean) => void;
   selectAllDisabled?: boolean;
 };
+
+const WAREHOUSE_ORDERS_PAGE_SIZE = 10;
+
+function WarehouseOrdersPagination({
+  page,
+  pageSize,
+  total,
+  onPageChange,
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  onPageChange: (nextPage: number) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  if (total <= pageSize) {
+    return null;
+  }
+
+  return (
+    <div className="table-pagination-controls table-pagination-controls--server">
+      <button
+        type="button"
+        className="table-pagination-button"
+        disabled={page <= 1}
+        onClick={() => onPageChange(page - 1)}
+      >
+        Anterior
+      </button>
+      <span className="table-pagination-status">Página {page} de {totalPages}</span>
+      <button
+        type="button"
+        className="table-pagination-button"
+        disabled={page >= totalPages}
+        onClick={() => onPageChange(page + 1)}
+      >
+        Siguiente
+      </button>
+    </div>
+  );
+}
 
 function WarehouseOrderList({
   orders,
@@ -4491,6 +4633,24 @@ function matchesSellerClientProductSearch(product: SellerClientProduct, query: s
     ].join(" "),
     query,
   );
+}
+
+function mapSellerCatalogProductToClient(product: SellerCatalogProduct): SellerClientProduct {
+  return {
+    productId: product.productId,
+    sku: product.sku,
+    name: product.name,
+    category: product.category,
+    imageUrl: product.imageUrl,
+    salePrice: product.salePrice,
+    originalSalePrice: product.originalSalePrice,
+    promotion: product.promotion,
+    warehouseStock: product.warehouseStock,
+    displaysPerBox: product.displaysPerBox,
+    unitsPerBox: product.unitsPerBox,
+    unitsPerBoxUnit: product.unitsPerBoxUnit,
+    productWeightKg: product.productWeightKg,
+  };
 }
 
 function matchesCatalogDirectProductSearch(
@@ -5707,6 +5867,7 @@ export default function App() {
   const [selectedSellerRouteId, setSelectedSellerRouteId] = useState("");
   const [selectedSellerDayKey, setSelectedSellerDayKey] = useState<RouteDayKey | "">("");
   const [selectedSellerStoreId, setSelectedSellerStoreId] = useState("");
+  const [isSellerStorePickerOpen, setIsSellerStorePickerOpen] = useState(true);
   const [sellerRouteStoreSearch, setSellerRouteStoreSearch] = useState("");
   const [selectedSellerClientId, setSelectedSellerClientId] = useState("");
   const [sellerClientAssignmentDraft, setSellerClientAssignmentDraft] = useState<string[]>([]);
@@ -5725,6 +5886,9 @@ export default function App() {
   const [sellerCatalogSearchQuery, setSellerCatalogSearchQuery] = useState("");
   const [sellerAssignedProductsSearchQuery, setSellerAssignedProductsSearchQuery] = useState("");
   const [sellerCatalogPage, setSellerCatalogPage] = useState(1);
+  const [sellerHabitualListPage, setSellerHabitualListPage] = useState(1);
+  const [sellerExpiringListPage, setSellerExpiringListPage] = useState(1);
+  const [sellerGiftListPage, setSellerGiftListPage] = useState(1);
   const [sellerOrders, setSellerOrders] = useState<SellerOrderRecord[]>([]);
   const [selectedSellerOrderDetail, setSelectedSellerOrderDetail] = useState<SellerOrderRecord | null>(null);
   const [selectedSellerOrderEdit, setSelectedSellerOrderEdit] = useState<SellerOrderRecord | null>(null);
@@ -5736,6 +5900,7 @@ export default function App() {
   const [sellerOrderEditItems, setSellerOrderEditItems] = useState<SellerOrderEditItemDraft[]>([]);
   const [sellerOrderEditNotes, setSellerOrderEditNotes] = useState("");
   const [sellerOrderEditInternalNotes, setSellerOrderEditInternalNotes] = useState("");
+  const [isSellerOrderEditDetailsOpen, setIsSellerOrderEditDetailsOpen] = useState(false);
   const [sellerOrderEditAddProductId, setSellerOrderEditAddProductId] = useState("");
   const [sellerOrderEditStatus, setSellerOrderEditStatus] = useState<CreationStatus | null>(null);
   const [isSavingSellerOrderEdit, setIsSavingSellerOrderEdit] = useState(false);
@@ -5744,6 +5909,10 @@ export default function App() {
   const [warehouseOrders, setWarehouseOrders] = useState<SellerOrderRecord[]>([]);
   const [warehouseOrdersError, setWarehouseOrdersError] = useState("");
   const [isLoadingWarehouseOrders, setIsLoadingWarehouseOrders] = useState(false);
+  const [warehouseIncomingPage, setWarehouseIncomingPage] = useState(1);
+  const [warehouseCompletedPage, setWarehouseCompletedPage] = useState(1);
+  const [warehouseIncomingTotal, setWarehouseIncomingTotal] = useState(0);
+  const [warehouseCompletedTotal, setWarehouseCompletedTotal] = useState(0);
   const [completedOrdersStartDate, setCompletedOrdersStartDate] = useState(() => getBusinessMonthStartDateKey());
   const [completedOrdersEndDate, setCompletedOrdersEndDate] = useState(() => getBusinessDateKey());
   const [isDownloadingQuickBooksExport, setIsDownloadingQuickBooksExport] = useState(false);
@@ -5887,6 +6056,15 @@ export default function App() {
   } | null>(null);
   const [sellerGiftDraftItems, setSellerGiftDraftItems] = useState<SellerGiftDraftItem[]>([]);
   const [sellerGiftDraft, setSellerGiftDraft] = useState({ productId: "", stockRowId: "", quantity: "1" });
+  const [sellerOrderSourcePanel, setSellerOrderSourcePanel] = useState<SellerOrderSourcePanel | "">("");
+  const [isSellerOrderDockOpen, setIsSellerOrderDockOpen] = useState(false);
+  const [isSellerOrderDockMinimized, setIsSellerOrderDockMinimized] = useState(false);
+  const [isSellerOrderDockDetailsOpen, setIsSellerOrderDockDetailsOpen] = useState(false);
+  const [sellerOrderDockFrame, setSellerOrderDockFrame] = useState<SellerOrderDockFrame | null>(null);
+  const sellerOrderDockFrameRef = useRef<SellerOrderDockFrame | null>(null);
+  const [sellerGiftSearchQuery, setSellerGiftSearchQuery] = useState("");
+  const [sellerExpiringSearchQuery, setSellerExpiringSearchQuery] = useState("");
+  const [sellerGiftPickerQuantities, setSellerGiftPickerQuantities] = useState<Record<string, number>>({});
   const [sellerOrderNotesDraft, setSellerOrderNotesDraft] = useState("");
   const [sellerInternalOrderNotesDraft, setSellerInternalOrderNotesDraft] = useState("");
   const [sellerOrderAttachmentsDraft, setSellerOrderAttachmentsDraft] = useState<OrderAttachment[]>([]);
@@ -6446,6 +6624,8 @@ export default function App() {
     }
 
     setSelectedSellerStoreId(store.storeId);
+    setIsSellerStorePickerOpen(false);
+    setSellerRouteStoreSearch("");
   }
 
   function getDefaultSellerDraftSalePrice(product: Pick<SellerClientProduct, "salePrice" | "promotion">) {
@@ -6934,15 +7114,7 @@ export default function App() {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
-  const filteredWarehouseIncomingOrders = normalizedWarehouseIncomingClientFilter
-    ? warehouseIncomingOrders.filter((order) => (
-        order.storeName
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .toLowerCase()
-          .includes(normalizedWarehouseIncomingClientFilter)
-      ))
-    : warehouseIncomingOrders;
+  const filteredWarehouseIncomingOrders = warehouseIncomingOrders;
   const warehouseDispatchOrders = warehouseOrders.filter((order) => order.status === "dispatched");
   const filteredWarehouseDispatchOrders = warehouseDispatchOrders.filter((order) => {
     const deliveryDate = getOrderDeliveryDateKey(order);
@@ -6960,34 +7132,7 @@ export default function App() {
     selectedIncomingOrderIds.has(String(order._id))
   )).length;
   const warehouseCompletedOrders = warehouseOrders.filter((order) => order.status === "delivered");
-  const normalizedWarehouseCompletedClientFilter = warehouseCompletedClientFilter
-    .trim()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-  const normalizedWarehouseCompletedInvoiceFilter = warehouseCompletedInvoiceFilter
-    .trim()
-    .replace(/^#/, "")
-    .toLowerCase();
-  const filteredWarehouseCompletedOrders = sortOrdersByCreatedAtDesc(
-    warehouseCompletedOrders.filter((order) => {
-      const dateKey = getOrderDeliveryDateKey(order);
-      const startDate = completedOrdersStartDate || "0000-01-01";
-      const endDate = completedOrdersEndDate || "9999-12-31";
-      const matchesDate = dateKey >= startDate && dateKey <= endDate;
-      const invoiceLabel = order.invoiceNumber ? String(order.invoiceNumber) : "";
-      const storeName = String(order.storeName ?? "")
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toLowerCase();
-      const matchesClient = !normalizedWarehouseCompletedClientFilter
-        || storeName.includes(normalizedWarehouseCompletedClientFilter);
-      const matchesInvoice = !normalizedWarehouseCompletedInvoiceFilter
-        || invoiceLabel.toLowerCase().includes(normalizedWarehouseCompletedInvoiceFilter);
-
-      return matchesDate && matchesClient && matchesInvoice;
-    }),
-  );
+  const filteredWarehouseCompletedOrders = sortOrdersByCreatedAtDesc(warehouseCompletedOrders);
   const printableWarehouseCompletedOrders = filteredWarehouseCompletedOrders.filter((order) => !order.invoiceVoided);
   const areAllFilteredCompletedOrdersSelected = printableWarehouseCompletedOrders.length > 0
     && printableWarehouseCompletedOrders.every((order) => selectedCompletedOrderIds.has(String(order._id)));
@@ -8463,8 +8608,22 @@ export default function App() {
       return;
     }
 
-    void refreshWarehouseOrders();
-  }, [activeSection, sessionUser]);
+    const timer = window.setTimeout(() => {
+      void refreshWarehouseOrders();
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    activeSection,
+    sessionUser,
+    warehouseIncomingPage,
+    warehouseCompletedPage,
+    warehouseIncomingClientFilter,
+    warehouseCompletedClientFilter,
+    warehouseCompletedInvoiceFilter,
+    completedOrdersStartDate,
+    completedOrdersEndDate,
+  ]);
 
   useEffect(() => {
     if (sessionUser?.role !== "management" && sessionUser?.role !== "contabilidad") {
@@ -8590,6 +8749,8 @@ export default function App() {
       setWarehouseActiveSection("inventory");
       setWarehouseOrders([]);
       setWarehouseOrdersError("");
+      setWarehouseIncomingTotal(0);
+      setWarehouseCompletedTotal(0);
       return;
     }
 
@@ -8598,8 +8759,35 @@ export default function App() {
       return;
     }
 
-    void refreshWarehouseOrders();
-  }, [sessionUser, warehouseActiveSection]);
+    const timer = window.setTimeout(() => {
+      void refreshWarehouseOrders();
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    sessionUser,
+    warehouseActiveSection,
+    warehouseIncomingPage,
+    warehouseCompletedPage,
+    warehouseIncomingClientFilter,
+    warehouseCompletedClientFilter,
+    warehouseCompletedInvoiceFilter,
+    completedOrdersStartDate,
+    completedOrdersEndDate,
+  ]);
+
+  useEffect(() => {
+    setWarehouseIncomingPage(1);
+  }, [warehouseIncomingClientFilter]);
+
+  useEffect(() => {
+    setWarehouseCompletedPage(1);
+  }, [
+    completedOrdersStartDate,
+    completedOrdersEndDate,
+    warehouseCompletedClientFilter,
+    warehouseCompletedInvoiceFilter,
+  ]);
 
   useEffect(() => {
     if (!canUseWarehousePortalFeatures(sessionUser?.role) || !selectedWarehouseOrderDetail) {
@@ -8888,8 +9076,33 @@ export default function App() {
   }, [selectedSellerRoute, editingStaffOrder]);
 
   useEffect(() => {
+    sellerOrderDockFrameRef.current = sellerOrderDockFrame;
+  }, [sellerOrderDockFrame]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    setSellerOrderDockFrame(readStoredSellerOrderDockFrame());
+
+    const handleWindowResize = () => {
+      setSellerOrderDockFrame((current) => clampSellerOrderDockFrame(current ?? getDefaultSellerOrderDockFrame()));
+    };
+
+    window.addEventListener("resize", handleWindowResize);
+    return () => window.removeEventListener("resize", handleWindowResize);
+  }, []);
+
+  useEffect(() => {
     setSellerRouteStoreSearch("");
   }, [selectedSellerRouteId]);
+
+  useEffect(() => {
+    if (!selectedSellerStoreId) {
+      setIsSellerStorePickerOpen(true);
+    }
+  }, [selectedSellerStoreId]);
 
   useEffect(() => {
     if (editingStaffOrder?.storeId) {
@@ -8941,6 +9154,12 @@ export default function App() {
       setSellerOrderCartProductIds([]);
       setSellerGiftDraftItems([]);
       setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
+      setSellerOrderSourcePanel("");
+      setIsSellerOrderDockOpen(false);
+      setIsSellerOrderDockMinimized(false);
+      setSellerGiftSearchQuery("");
+      setSellerExpiringSearchQuery("");
+      setSellerGiftPickerQuantities({});
       return;
     }
 
@@ -8949,6 +9168,12 @@ export default function App() {
       setSellerOrderCartProductIds([]);
       setSellerGiftDraftItems([]);
       setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
+      setSellerOrderSourcePanel(sessionUser?.role === "sales-rep-aruba" && sellerActiveSection === "routes" ? "habitual" : "");
+      setIsSellerOrderDockOpen(false);
+      setIsSellerOrderDockMinimized(false);
+      setSellerGiftSearchQuery("");
+      setSellerExpiringSearchQuery("");
+      setSellerGiftPickerQuantities({});
     }
     void refreshSellerClientProducts(activeStoreId);
   }, [selectedSellerStoreId, selectedSellerClientId, sellerActiveSection, sessionUser, isSellerOrderFlowActive, editingStaffOrder]);
@@ -8977,6 +9202,18 @@ export default function App() {
   useEffect(() => {
     setSellerCatalogPage(1);
   }, [sellerCatalogSearchQuery, selectedSellerStoreId, selectedSellerClientId, sellerActiveSection]);
+
+  useEffect(() => {
+    setSellerHabitualListPage(1);
+  }, [sellerAssignedProductsSearchQuery, selectedSellerStoreId, selectedSellerClientId, sellerActiveSection]);
+
+  useEffect(() => {
+    setSellerExpiringListPage(1);
+  }, [sellerExpiringSearchQuery, selectedSellerStoreId, sellerActiveSection]);
+
+  useEffect(() => {
+    setSellerGiftListPage(1);
+  }, [sellerGiftSearchQuery, selectedSellerStoreId, sellerActiveSection]);
 
   useEffect(() => {
     setSellerAssignedProductsSearchQuery("");
@@ -9038,25 +9275,84 @@ export default function App() {
     }
   }
 
+  async function fetchWarehouseOrdersPage(params: {
+    status: string;
+    page: number;
+    startDate?: string;
+    endDate?: string;
+    client?: string;
+    invoice?: string;
+  }) {
+    const search = new URLSearchParams({
+      status: params.status,
+      page: String(params.page),
+      pageSize: String(WAREHOUSE_ORDERS_PAGE_SIZE),
+    });
+
+    if (params.startDate) {
+      search.set("startDate", params.startDate);
+    }
+
+    if (params.endDate) {
+      search.set("endDate", params.endDate);
+    }
+
+    if (params.client) {
+      search.set("client", params.client);
+    }
+
+    if (params.invoice) {
+      search.set("invoice", params.invoice);
+    }
+
+    const response = await fetch(`${apiBaseUrl}/warehouse/orders?${search.toString()}`);
+    const data = (await response.json()) as {
+      orders?: SellerOrderRecord[];
+      total?: number;
+      message?: string;
+    };
+
+    if (!response.ok || !Array.isArray(data.orders)) {
+      throw new Error(data.message ?? "No fue posible cargar los pedidos de bodega.");
+    }
+
+    return {
+      orders: data.orders.map((order) => ({
+        ...order,
+        items: Array.isArray(order.items) ? order.items : [],
+        giftItems: Array.isArray(order.giftItems) ? order.giftItems : [],
+      })),
+      total: Number(data.total ?? data.orders.length),
+    };
+  }
+
   async function refreshWarehouseOrders() {
     try {
       setIsLoadingWarehouseOrders(true);
       setWarehouseOrdersError("");
-      const response = await fetch(`${apiBaseUrl}/warehouse/orders`);
-      const data = (await response.json()) as SellerOrderRecord[] | { message?: string };
+      const [incoming, completed] = await Promise.all([
+        fetchWarehouseOrdersPage({
+          status: "submitted,dispatched",
+          page: warehouseIncomingPage,
+          client: warehouseIncomingClientFilter.trim() || undefined,
+        }),
+        fetchWarehouseOrdersPage({
+          status: "delivered",
+          page: warehouseCompletedPage,
+          startDate: completedOrdersStartDate || undefined,
+          endDate: completedOrdersEndDate || undefined,
+          client: warehouseCompletedClientFilter.trim() || undefined,
+          invoice: warehouseCompletedInvoiceFilter.trim().replace(/^#/, "") || undefined,
+        }),
+      ]);
 
-      if (!response.ok || !Array.isArray(data)) {
-        setWarehouseOrdersError(Array.isArray(data) ? "No fue posible cargar los pedidos de bodega." : data.message ?? "No fue posible cargar los pedidos de bodega.");
-        return;
-      }
-
-      setWarehouseOrders(data.map((order) => ({
-        ...order,
-        items: Array.isArray(order.items) ? order.items : [],
-        giftItems: Array.isArray(order.giftItems) ? order.giftItems : [],
-      })));
-    } catch {
-      setWarehouseOrdersError("No fue posible conectar con el backend.");
+      setWarehouseIncomingTotal(incoming.total);
+      setWarehouseCompletedTotal(completed.total);
+      setWarehouseOrders([...incoming.orders, ...completed.orders]);
+    } catch (error) {
+      setWarehouseOrdersError(error instanceof Error && error.message !== "Failed to fetch"
+        ? error.message
+        : "No fue posible conectar con el backend.");
     } finally {
       setIsLoadingWarehouseOrders(false);
     }
@@ -9289,6 +9585,121 @@ export default function App() {
     return activeSection === "create-order" || activeSection === "direct-invoice";
   }
 
+  function openSellerOrderDock() {
+    setIsSellerOrderDockOpen(true);
+    setIsSellerOrderDockMinimized(false);
+  }
+
+  function applySellerOrderDockFrameToNode(node: HTMLElement, frame: SellerOrderDockFrame) {
+    node.style.left = `${frame.left}px`;
+    node.style.top = `${frame.top}px`;
+    if (node.classList.contains("seller-order-dock")) {
+      node.style.width = `${frame.width}px`;
+      node.style.height = `${frame.height}px`;
+    }
+  }
+
+  function beginSellerOrderDockDrag(event: ReactPointerEvent<HTMLElement>, onShortClick?: () => void) {
+    if ((event.target as HTMLElement).closest("button, input, textarea, select, a, label")) {
+      return;
+    }
+
+    const node = event.currentTarget.closest(".seller-order-dock, .seller-order-dock-fab") as HTMLElement | null;
+    if (!node) {
+      return;
+    }
+
+    event.preventDefault();
+    const origin = sellerOrderDockFrameRef.current ?? getDefaultSellerOrderDockFrame();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let moved = false;
+    const previousUserSelect = document.body.style.userSelect;
+
+    node.classList.add("is-dragging");
+    document.body.style.userSelect = "none";
+
+    const onMove = (moveEvent: PointerEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      const deltaY = moveEvent.clientY - startY;
+      if (!moved && Math.abs(deltaX) + Math.abs(deltaY) < 6) {
+        return;
+      }
+
+      moved = true;
+      const nextFrame = clampSellerOrderDockFrame({
+        ...origin,
+        left: origin.left + deltaX,
+        top: origin.top + deltaY,
+      });
+      sellerOrderDockFrameRef.current = nextFrame;
+      applySellerOrderDockFrameToNode(node, nextFrame);
+    };
+
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      node.classList.remove("is-dragging");
+      document.body.style.userSelect = previousUserSelect;
+      const latest = sellerOrderDockFrameRef.current;
+      if (latest && moved) {
+        applySellerOrderDockFrameToNode(node, latest);
+        setSellerOrderDockFrame(latest);
+        persistSellerOrderDockFrame(latest);
+      }
+      if (!moved) {
+        onShortClick?.();
+      }
+    };
+
+    window.addEventListener("pointermove", onMove, { passive: true });
+    window.addEventListener("pointerup", onUp);
+  }
+
+  function beginSellerOrderDockResize(event: ReactPointerEvent<HTMLElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const node = event.currentTarget.closest(".seller-order-dock") as HTMLElement | null;
+    if (!node) {
+      return;
+    }
+
+    const origin = sellerOrderDockFrameRef.current ?? getDefaultSellerOrderDockFrame();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const previousUserSelect = document.body.style.userSelect;
+
+    node.classList.add("is-resizing");
+    document.body.style.userSelect = "none";
+
+    const onMove = (moveEvent: PointerEvent) => {
+      const nextFrame = clampSellerOrderDockFrame({
+        ...origin,
+        width: origin.width + (moveEvent.clientX - startX),
+        height: origin.height + (moveEvent.clientY - startY),
+      });
+      sellerOrderDockFrameRef.current = nextFrame;
+      applySellerOrderDockFrameToNode(node, nextFrame);
+      node.classList.toggle("is-wide", nextFrame.width >= 560);
+    };
+
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      node.classList.remove("is-resizing");
+      document.body.style.userSelect = previousUserSelect;
+      const latest = sellerOrderDockFrameRef.current;
+      if (latest) {
+        applySellerOrderDockFrameToNode(node, latest);
+        setSellerOrderDockFrame(latest);
+        persistSellerOrderDockFrame(latest);
+      }
+    };
+
+    window.addEventListener("pointermove", onMove, { passive: true });
+    window.addEventListener("pointerup", onUp);
+  }
+
   function addProductToSellerOrderCart(productId: string) {
     if (!productId) {
       return;
@@ -9297,12 +9708,39 @@ export default function App() {
     setSellerOrderCartProductIds((current) => (
       current.includes(productId) ? current : [...current, productId]
     ));
+    openSellerOrderDock();
 
     const storeId = selectedSellerStoreId || selectedSellerClientId;
     const assignedProduct = sellerClientProducts.find((product) => product.productId === productId);
     const catalogProduct = [...sellerProductCatalog.expiringSoon, ...sellerProductCatalog.products]
       .find((product) => product.productId === productId);
     const fallbackPrice = Number(assignedProduct?.promotion?.promotionSalePrice ?? assignedProduct?.salePrice ?? catalogProduct?.salePrice ?? 0);
+    const fallbackDescription = String(assignedProduct?.description ?? "").trim();
+
+    setSellerOrderDraft((current) => {
+      const existing = current[productId];
+      const hasQuantity = String(existing?.quantity ?? "").trim() !== "" && Number(existing?.quantity || 0) > 0;
+      const quantity = hasQuantity ? String(existing?.quantity) : "1";
+      const quantityValue = Number(quantity || 0);
+      const salePriceAwg = String(existing?.salePriceAwg ?? "").trim() !== ""
+        ? String(existing?.salePriceAwg)
+        : formatSellerDraftMoney(fallbackPrice);
+      const unitPrice = Number(salePriceAwg);
+
+      return {
+        ...current,
+        [productId]: {
+          stockCurrent: existing?.stockCurrent ?? "",
+          quantity,
+          notes: existing?.notes ?? "",
+          salePriceAwg,
+          description: existing?.description ?? fallbackDescription,
+          lineSubtotalAwg: formatSellerDraftMoney(
+            (Number.isFinite(unitPrice) ? unitPrice : fallbackPrice) * (Number.isFinite(quantityValue) ? Math.max(0, quantityValue) : 0),
+          ),
+        },
+      };
+    });
 
     if (storeId && isStoreAssignedToAnyCatalog(storeId)) {
       void fetchClientCatalogUnitPrice(storeId, productId, fallbackPrice).then((unitPrice) => {
@@ -9318,10 +9756,10 @@ export default function App() {
             ...current,
             [productId]: {
               stockCurrent: existing?.stockCurrent ?? "",
-              quantity: existing?.quantity ?? "",
+              quantity: existing?.quantity ?? "1",
               notes: existing?.notes ?? "",
               salePriceAwg: formatSellerDraftMoney(unitPrice),
-              description: existing?.description ?? "",
+              description: existing?.description ?? fallbackDescription,
               lineSubtotalAwg: formatSellerDraftMoney(
                 unitPrice * (Number.isFinite(quantityValue) ? Math.max(0, quantityValue) : 0),
               ),
@@ -9360,6 +9798,9 @@ export default function App() {
     try {
       setAddingSellerProductId(productId);
       setSellerProductOfferStatus(null);
+      if (shouldUseSellerOrderCart()) {
+        addProductToSellerOrderCart(productId);
+      }
       const response = await fetch(`${apiBaseUrl}/sales/stores/${storeId}/assigned-products/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -9410,6 +9851,128 @@ export default function App() {
     }
   }
 
+  function renderSellerQuantityStepper(options: {
+    value: string | number;
+    disabledDecrease?: boolean;
+    onDecrease: () => void;
+    onIncrease: () => void;
+    onChange: (value: string) => void;
+    decreaseLabel: string;
+    increaseLabel: string;
+  }) {
+    const quantityValue = Number(options.value || 0);
+
+    return (
+      <div className="seller-quantity-stepper">
+        <button
+          className="seller-quantity-stepper-btn"
+          type="button"
+          aria-label={options.decreaseLabel}
+          disabled={options.disabledDecrease ?? (!Number.isFinite(quantityValue) || quantityValue <= 0)}
+          onClick={options.onDecrease}
+        >
+          −
+        </button>
+        <input
+          className="catalog-price-input seller-order-input"
+          type="number"
+          min="0"
+          step="any"
+          value={options.value}
+          placeholder="0"
+          onChange={(event) => options.onChange(event.target.value)}
+        />
+        <button
+          className="seller-quantity-stepper-btn"
+          type="button"
+          aria-label={options.increaseLabel}
+          onClick={options.onIncrease}
+        >
+          +
+        </button>
+      </div>
+    );
+  }
+
+  function getSellerPickerQuantity(
+    product: Pick<SellerClientProduct, "productId" | "salePrice" | "description" | "promotion">,
+  ) {
+    const quantityValue = Number(getSellerOrderDraftForProduct(product).quantity || 0);
+    return Number.isFinite(quantityValue) && quantityValue > 0 ? quantityValue : 1;
+  }
+
+  function setSellerPickerQuantity(
+    product: Pick<SellerClientProduct, "productId" | "salePrice" | "description" | "promotion">,
+    nextQuantity: number | string,
+  ) {
+    const parsed = Number(nextQuantity);
+    const quantity = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+    handleSellerOrderDraftChange(product, "quantity", String(quantity));
+  }
+
+  function adjustSellerPickerQuantity(
+    product: Pick<SellerClientProduct, "productId" | "salePrice" | "description" | "promotion">,
+    delta: number,
+  ) {
+    setSellerPickerQuantity(product, getSellerPickerQuantity(product) + delta);
+  }
+
+  function renderSellerInlineAddControls(
+    product: Pick<SellerClientProduct, "productId" | "salePrice" | "description" | "promotion">,
+    _lineTotal: number,
+    options?: {
+      addButton?: {
+        label: string;
+        busy?: boolean;
+        disabled?: boolean;
+        onClick: () => void;
+      };
+    },
+  ) {
+    const quantityValue = getSellerPickerQuantity(product);
+
+    return (
+      <div className="seller-inline-add-controls">
+        <label className="seller-product-catalog-field seller-product-catalog-field-quantity">
+          <span>Cantidad</span>
+          {renderSellerQuantityStepper({
+            value: quantityValue,
+            disabledDecrease: quantityValue <= 1,
+            decreaseLabel: "Disminuir cantidad",
+            increaseLabel: "Aumentar cantidad",
+            onDecrease: () => adjustSellerPickerQuantity(product, -1),
+            onIncrease: () => adjustSellerPickerQuantity(product, 1),
+            onChange: (value) => setSellerPickerQuantity(product, value),
+          })}
+        </label>
+        {options?.addButton ? (
+          <button
+            className="ghost-button ghost-button--accent"
+            type="button"
+            disabled={options.addButton.disabled || options.addButton.busy}
+            onClick={options.addButton.onClick}
+          >
+            {options.addButton.busy ? "Agregando..." : options.addButton.label}
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderSellerRunningSubtotal(unitPrice: number, quantity: number, options?: { gift?: boolean }) {
+    const safeQuantity = Number.isFinite(quantity) && quantity > 0 ? quantity : 0;
+
+    if (safeQuantity <= 1 || options?.gift) {
+      return null;
+    }
+
+    return (
+      <strong className="seller-product-subtotal">
+        Subtotal: {formatAwgCurrency(roundCurrencyValue(unitPrice * safeQuantity))} AWG
+      </strong>
+    );
+  }
+
   function renderPromotionPrice(product: { salePrice: number; originalSalePrice?: number | null; promotion?: SellerProductPromotion | null }) {
     if (!product.promotion) {
       return <span>Precio: {formatAwgCurrency(product.salePrice)} AWG</span>;
@@ -9430,6 +9993,14 @@ export default function App() {
 
   function renderSellerCatalogProductRow(product: SellerCatalogProduct, storeId: string) {
     const isAdding = addingSellerProductId === product.productId;
+    const clientProduct = sellerClientProducts.find((entry) => entry.productId === product.productId)
+      ?? mapSellerCatalogProductToClient(product);
+    const draft = getSellerOrderDraftForProduct(clientProduct);
+    const pickerQuantity = getSellerPickerQuantity(clientProduct);
+    const unitPrice = resolveSellerDraftUnitPrice(clientProduct, draft);
+    const derivedLineTotal = roundCurrencyValue(unitPrice * pickerQuantity);
+    const isInCart = sellerOrderCartIdSet.has(product.productId);
+    const useOrderCart = shouldUseSellerOrderCart();
     const productDescription = resolveVisibleProductDescription({
       name: product.name,
       displaysPerBox: product.displaysPerBox,
@@ -9440,7 +10011,7 @@ export default function App() {
 
     return (
       <article
-        className={`seller-product-catalog-row ${product.isExpiringSoon ? "is-expiring" : ""} ${product.isAssigned ? "is-assigned" : ""}`}
+        className={`seller-product-catalog-row ${product.isExpiringSoon ? "is-expiring" : ""} ${product.isAssigned && !isInCart ? "is-assigned" : ""} ${isInCart ? "is-in-cart" : ""}`}
         key={`seller-catalog-${storeId}-${product.productId}`}
       >
         <div className="seller-product-catalog-product">
@@ -9459,6 +10030,7 @@ export default function App() {
         </div>
         <div className="seller-product-catalog-meta">
           {renderPromotionPrice(product)}
+          {useOrderCart ? renderSellerRunningSubtotal(unitPrice, pickerQuantity) : null}
           <strong>Stock: {product.warehouseStock} uds.</strong>
           <small className="seller-product-catalog-expiration">
             {product.nearestExpirationDate
@@ -9466,20 +10038,36 @@ export default function App() {
               : "Sin fecha de vencimiento"}
           </small>
         </div>
-        <button
-          className="ghost-button ghost-button--accent"
-          type="button"
-          disabled={product.isAssigned || isAdding || !storeId}
-          onClick={() => void handleAddProductToSellerClient(storeId, product.productId)}
-        >
-          {product.isAssigned
-            ? "Asignado"
-            : isAdding
-              ? "Agregando..."
-              : shouldUseSellerOrderCart()
-                ? "+ Agregar al pedido"
+        {useOrderCart ? (
+          renderSellerInlineAddControls(clientProduct, derivedLineTotal, isInCart ? undefined : {
+            addButton: {
+              label: "+ Agregar",
+              busy: isAdding,
+              disabled: !storeId,
+              onClick: () => {
+                if (product.isAssigned) {
+                  addProductToSellerOrderCart(product.productId);
+                  return;
+                }
+
+                void handleAddProductToSellerClient(storeId, product.productId);
+              },
+            },
+          })
+        ) : (
+          <button
+            className="ghost-button ghost-button--accent"
+            type="button"
+            disabled={product.isAssigned || isAdding || !storeId}
+            onClick={() => void handleAddProductToSellerClient(storeId, product.productId)}
+          >
+            {product.isAssigned
+              ? "Asignado"
+              : isAdding
+                ? "Agregando..."
                 : "+ Agregar al cliente"}
-        </button>
+          </button>
+        )}
       </article>
     );
   }
@@ -9632,17 +10220,16 @@ export default function App() {
         </div>
         <div className="seller-product-catalog-meta">
           {canEditLinePricing ? null : renderPromotionPrice(product)}
+          {mode === "picker" ? renderSellerRunningSubtotal(unitPrice, getSellerPickerQuantity(product)) : null}
           <strong>Stock bodega: {warehouseStock} uds.</strong>
         </div>
         {mode === "picker" ? (
-          <button
-            className={`ghost-button ghost-button--accent ${isInCart ? "is-muted" : ""}`}
-            type="button"
-            disabled={isInCart}
-            onClick={() => addProductToSellerOrderCart(product.productId)}
-          >
-            {isInCart ? "En el pedido" : "+ Agregar al pedido"}
-          </button>
+          renderSellerInlineAddControls(product, derivedLineTotal, isInCart ? undefined : {
+            addButton: {
+              label: "+ Agregar",
+              onClick: () => addProductToSellerOrderCart(product.productId),
+            },
+          })
         ) : null}
         {mode === "cart" ? (
           <div className="seller-product-catalog-order-fields">
@@ -9805,11 +10392,14 @@ export default function App() {
     );
   }
 
-  function renderSellerRouteOrderExtras() {
+  function renderSellerRouteOrderExtras(options?: { includeGifts?: boolean; includeActions?: boolean }) {
+    const includeGifts = options?.includeGifts ?? true;
+    const includeActions = options?.includeActions ?? true;
     const giftQuantityValue = Number(sellerGiftDraft.quantity || 0);
 
     return (
       <>
+        {includeGifts ? (
         <section className="seller-product-catalog-section seller-gifts-section">
           <div className="seller-product-catalog-section-header">
             <div className="seller-panel-icon is-orange">
@@ -9950,6 +10540,7 @@ export default function App() {
             </div>
           ) : null}
         </section>
+        ) : null}
 
         <div className="seller-order-footer seller-order-footer-inline">
           <div className="seller-order-footer-main">
@@ -10041,6 +10632,7 @@ export default function App() {
                   </select>
                 </label>
               ) : null}
+              {includeActions ? (
               <div className="seller-order-actions">
                 <p className="seller-order-hint">
                   {sellerDraftedItems.length > 0
@@ -10060,6 +10652,7 @@ export default function App() {
                   </div>
                 )}
               </div>
+              ) : null}
             </div>
           </div>
         </div>
@@ -10604,6 +11197,618 @@ export default function App() {
           </>
         )}
       </article>
+    );
+  }
+
+  function toggleSellerOrderSourcePanel(panel: SellerOrderSourcePanel) {
+    setSellerOrderSourcePanel((current) => (current === panel ? "" : panel));
+  }
+
+  function paginateSellerSourceList<T>(items: T[], page: number) {
+    const totalPages = Math.max(1, Math.ceil(items.length / sellerSourceListPageSize));
+    const currentPage = Math.min(Math.max(1, page), totalPages);
+    const start = (currentPage - 1) * sellerSourceListPageSize;
+
+    return {
+      pageItems: items.slice(start, start + sellerSourceListPageSize),
+      totalPages,
+      currentPage,
+      totalItems: items.length,
+    };
+  }
+
+  function renderSellerSourcePagination(options: {
+    totalItems: number;
+    currentPage: number;
+    totalPages: number;
+    onPageChange: (page: number) => void;
+  }) {
+    if (options.totalItems <= sellerSourceListPageSize) {
+      return null;
+    }
+
+    return (
+      <div className="seller-catalog-pagination seller-source-pagination">
+        <button
+          className="seller-catalog-pagination-button"
+          type="button"
+          disabled={options.currentPage <= 1}
+          onClick={() => options.onPageChange(options.currentPage - 1)}
+        >
+          Anterior
+        </button>
+        <span className="seller-source-pagination-meta">
+          Página {options.currentPage} de {options.totalPages}
+        </span>
+        <button
+          className="seller-catalog-pagination-button"
+          type="button"
+          disabled={options.currentPage >= options.totalPages}
+          onClick={() => options.onPageChange(options.currentPage + 1)}
+        >
+          Siguiente
+        </button>
+      </div>
+    );
+  }
+
+  function renderSellerGiftPickerRow(product: ProductOption) {
+    const existingGift = sellerGiftDraftItems.find((item) => item.productId === product.value);
+    const catalogMatch = [...sellerProductCatalog.expiringSoon, ...sellerProductCatalog.products]
+      .find((entry) => entry.productId === product.value);
+
+    return (
+      <article className={`seller-product-catalog-row ${existingGift ? "is-in-cart" : ""}`} key={`seller-gift-picker-${product.value}`}>
+        <div className="seller-product-catalog-product">
+          {catalogMatch?.imageUrl ? (
+            <img className="seller-product-thumb" src={catalogMatch.imageUrl} alt={product.label} />
+          ) : (
+            <div className="seller-product-thumb seller-product-thumb-placeholder">SIN IMAGEN</div>
+          )}
+          <div>
+            <strong>{product.label}</strong>
+            <small>SKU {product.sku}{getProductArubaCategory(product) ? ` · ${getProductArubaCategory(product)}` : ""}</small>
+          </div>
+        </div>
+        <div className="seller-product-catalog-meta">
+          <span>Precio: 0 AWG</span>
+          {renderSellerRunningSubtotal(0, existingGift?.quantity ?? sellerGiftPickerQuantities[product.value] ?? 1, { gift: true })}
+          {catalogMatch ? <strong>Stock: {catalogMatch.warehouseStock} uds.</strong> : null}
+        </div>
+        <div className="seller-inline-add-controls">
+          <label className="seller-product-catalog-field seller-product-catalog-field-quantity">
+            <span>Cantidad</span>
+            {renderSellerQuantityStepper({
+              value: existingGift?.quantity ?? sellerGiftPickerQuantities[product.value] ?? 1,
+              disabledDecrease: (existingGift?.quantity ?? sellerGiftPickerQuantities[product.value] ?? 1) <= 1,
+              decreaseLabel: "Disminuir cantidad de obsequio",
+              increaseLabel: "Aumentar cantidad de obsequio",
+              onDecrease: () => {
+                if (existingGift) {
+                  adjustSellerGiftDraftQuantity(product.value, -1);
+                  return;
+                }
+
+                setSellerGiftPickerQuantities((current) => ({
+                  ...current,
+                  [product.value]: Math.max(1, (current[product.value] ?? 1) - 1),
+                }));
+              },
+              onIncrease: () => {
+                if (existingGift) {
+                  adjustSellerGiftDraftQuantity(product.value, 1);
+                  return;
+                }
+
+                setSellerGiftPickerQuantities((current) => ({
+                  ...current,
+                  [product.value]: (current[product.value] ?? 1) + 1,
+                }));
+              },
+              onChange: (value) => {
+                const parsed = Number(value);
+                const nextQuantity = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+
+                if (existingGift) {
+                  setSellerGiftDraftQuantity(product.value, String(nextQuantity));
+                  return;
+                }
+
+                setSellerGiftPickerQuantities((current) => ({
+                  ...current,
+                  [product.value]: nextQuantity,
+                }));
+              },
+            })}
+          </label>
+          {existingGift ? (
+            <div className="seller-inline-add-total">
+              <span>Total</span>
+              <strong>0 AWG</strong>
+            </div>
+          ) : (
+            <button
+              className="ghost-button ghost-button--accent"
+              type="button"
+              onClick={() => addSellerGiftProductQuick(product.value, sellerGiftPickerQuantities[product.value] ?? 1)}
+            >
+              + Agregar
+            </button>
+          )}
+        </div>
+      </article>
+    );
+  }
+
+  function renderSellerRouteOrderComposer(storeId: string) {
+    const assignedProducts = sellerAssignedStore?.id === storeId ? sellerClientProducts : [];
+    const filteredAssignedProducts = assignedProducts.filter((product) => (
+      matchesSellerClientProductSearch(product, sellerAssignedProductsSearchQuery)
+    ));
+    const expiringProductIds = new Set(sellerProductCatalog.expiringSoon.map((product) => product.productId));
+    const expiringSoonProducts = sellerProductCatalog.expiringSoon.filter((product) => (
+      matchesSellerCatalogSearch(product, sellerExpiringSearchQuery)
+    ));
+    const allCatalogProducts = sellerProductCatalog.products.filter((product) => (
+      !expiringProductIds.has(product.productId) && matchesSellerCatalogSearch(product, sellerCatalogSearchQuery)
+    ));
+    const filteredGiftProducts = sellerGiftProductOptions.filter((product) => (
+      matchesCatalogDirectProductSearch(product, sellerGiftSearchQuery)
+    ));
+    const habitualPage = paginateSellerSourceList(filteredAssignedProducts, sellerHabitualListPage);
+    const expiringPage = paginateSellerSourceList(expiringSoonProducts, sellerExpiringListPage);
+    const catalogPage = paginateSellerSourceList(allCatalogProducts, sellerCatalogPage);
+    const giftPage = paginateSellerSourceList(filteredGiftProducts, sellerGiftListPage);
+
+    return (
+      <div className="seller-order-composer">
+        {sellerProductOfferStatus ? <p className={`form-feedback ${sellerProductOfferStatus.tone}`}>{sellerProductOfferStatus.message}</p> : null}
+        {sellerProductCatalogError ? <p className="form-feedback error">{sellerProductCatalogError}</p> : null}
+        {sellerClientProductsError ? <p className="form-feedback error">{sellerClientProductsError}</p> : null}
+
+        <div className="seller-source-boxes">
+          <button
+            className={`seller-source-box is-habitual ${sellerOrderSourcePanel === "habitual" ? "is-open" : ""}`}
+            type="button"
+            onClick={() => toggleSellerOrderSourcePanel("habitual")}
+          >
+            <div className="seller-panel-icon">
+              <SellerIcon name="orders" />
+            </div>
+            <div>
+              <p className="section-label">Habituales</p>
+              <h4>Pedidos habituales</h4>
+              <p>{assignedProducts.length} producto{assignedProducts.length === 1 ? "" : "s"} del cliente</p>
+            </div>
+          </button>
+          <button
+            className={`seller-source-box is-catalog ${sellerOrderSourcePanel === "catalog" ? "is-open" : ""}`}
+            type="button"
+            onClick={() => toggleSellerOrderSourcePanel("catalog")}
+          >
+            <div className="seller-panel-icon is-green">
+              <SellerIcon name="box" />
+            </div>
+            <div>
+              <p className="section-label">Catálogo</p>
+              <h4>Todos los productos</h4>
+              <p>{allCatalogProducts.length} producto{allCatalogProducts.length === 1 ? "" : "s"} en bodega</p>
+            </div>
+          </button>
+          <button
+            className={`seller-source-box is-gifts ${sellerOrderSourcePanel === "gifts" ? "is-open" : ""}`}
+            type="button"
+            onClick={() => toggleSellerOrderSourcePanel("gifts")}
+          >
+            <div className="seller-panel-icon is-orange">
+              <SellerIcon name="gift" />
+            </div>
+            <div>
+              <p className="section-label">Regalos</p>
+              <h4>Productos de regalo</h4>
+              <p>
+                {sellerGiftDraftItems.length > 0
+                  ? `${sellerGiftDraftItems.length} obsequio${sellerGiftDraftItems.length === 1 ? "" : "s"} en el pedido`
+                  : "Salen a precio 0 en la factura"}
+              </p>
+            </div>
+          </button>
+          <button
+            className={`seller-source-box is-expiring ${sellerOrderSourcePanel === "expiring" ? "is-open" : ""}`}
+            type="button"
+            onClick={() => toggleSellerOrderSourcePanel("expiring")}
+          >
+            <div className="seller-panel-icon is-orange">
+              <SellerIcon name="clock" />
+            </div>
+            <div>
+              <p className="section-label">Prioridad</p>
+              <h4>Próximos a vencer</h4>
+              <p>{sellerProductCatalog.expiringSoon.length} producto{sellerProductCatalog.expiringSoon.length === 1 ? "" : "s"} con fecha cercana</p>
+            </div>
+          </button>
+        </div>
+
+        {sellerOrderSourcePanel === "habitual" ? (
+          <section className="seller-source-panel">
+            <div className="seller-source-panel-header">
+              <h4>Pedidos habituales del cliente</h4>
+              <p>Elige un producto y agrégalo. Verás la cantidad y el total de inmediato.</p>
+            </div>
+            {assignedProducts.length > 0 ? (
+              <div className="seller-product-catalog-filters">
+                <label className="field field-full">
+                  <span>Buscar producto</span>
+                  <input
+                    type="search"
+                    value={sellerAssignedProductsSearchQuery}
+                    placeholder="NOMBRE, SKU O CATEGORÍA"
+                    onChange={(event) => setSellerAssignedProductsSearchQuery(event.target.value)}
+                  />
+                </label>
+              </div>
+            ) : null}
+            {isLoadingSellerClientProducts ? (
+              <p className="route-empty-state">Cargando productos habituales...</p>
+            ) : assignedProducts.length > 0 ? (
+              filteredAssignedProducts.length > 0 ? (
+                <>
+                  <div className="seller-product-catalog-list seller-source-panel-list">
+                    {habitualPage.pageItems.map((product) => renderSellerAssignedProductRow(
+                      product,
+                      storeId,
+                      { mode: "picker" },
+                    ))}
+                  </div>
+                  {renderSellerSourcePagination({
+                    totalItems: habitualPage.totalItems,
+                    currentPage: habitualPage.currentPage,
+                    totalPages: habitualPage.totalPages,
+                    onPageChange: setSellerHabitualListPage,
+                  })}
+                </>
+              ) : (
+                <p className="route-empty-state">No hay productos que coincidan con la búsqueda.</p>
+              )
+            ) : (
+              <p className="route-empty-state">Este cliente aún no tiene productos habituales. Ábrelos desde Todos los productos.</p>
+            )}
+          </section>
+        ) : null}
+
+        {sellerOrderSourcePanel === "expiring" ? (
+          <section className="seller-source-panel seller-source-panel--expiring">
+            <div className="seller-source-panel-header">
+              <h4>Próximos a vencer</h4>
+              <p>Prioriza estos productos para mover inventario antes de la fecha de vencimiento.</p>
+            </div>
+            <div className="seller-product-catalog-filters">
+              <label className="field field-full">
+                <span>Buscar producto</span>
+                <input
+                  type="search"
+                  value={sellerExpiringSearchQuery}
+                  placeholder="NOMBRE, SKU O CATEGORÍA"
+                  onChange={(event) => setSellerExpiringSearchQuery(event.target.value)}
+                />
+              </label>
+            </div>
+            {isLoadingSellerProductCatalog ? (
+              <p className="route-empty-state">Cargando productos próximos a vencer...</p>
+            ) : expiringPage.totalItems > 0 ? (
+              <>
+                <div className="seller-product-catalog-list seller-source-panel-list">
+                  {expiringPage.pageItems.map((product) => renderSellerCatalogProductRow(product, storeId))}
+                </div>
+                {renderSellerSourcePagination({
+                  totalItems: expiringPage.totalItems,
+                  currentPage: expiringPage.currentPage,
+                  totalPages: expiringPage.totalPages,
+                  onPageChange: setSellerExpiringListPage,
+                })}
+              </>
+            ) : (
+              <p className="route-empty-state">
+                {sellerExpiringSearchQuery.trim()
+                  ? "No hay productos que coincidan con la búsqueda."
+                  : "No hay productos próximos a vencer con stock en bodega."}
+              </p>
+            )}
+          </section>
+        ) : null}
+
+        {sellerOrderSourcePanel === "catalog" ? (
+          <section className="seller-source-panel seller-source-panel--catalog">
+            <div className="seller-source-panel-header">
+              <h4>Todos los productos</h4>
+              <p>Catálogo de bodega. Al agregar, se suma al pedido con cantidad y total.</p>
+            </div>
+            <div className="seller-product-catalog-filters">
+              <label className="field field-full">
+                <span>Buscar producto</span>
+                <input
+                  type="search"
+                  value={sellerCatalogSearchQuery}
+                  placeholder="NOMBRE, SKU O CATEGORÍA"
+                  onChange={(event) => setSellerCatalogSearchQuery(event.target.value)}
+                />
+              </label>
+            </div>
+            {isLoadingSellerProductCatalog ? (
+              <p className="route-empty-state">Cargando catálogo de bodega...</p>
+            ) : catalogPage.totalItems > 0 ? (
+              <>
+                <div className="seller-product-catalog-list seller-source-panel-list">
+                  {catalogPage.pageItems.map((product) => renderSellerCatalogProductRow(product, storeId))}
+                </div>
+                {renderSellerSourcePagination({
+                  totalItems: catalogPage.totalItems,
+                  currentPage: catalogPage.currentPage,
+                  totalPages: catalogPage.totalPages,
+                  onPageChange: setSellerCatalogPage,
+                })}
+              </>
+            ) : (
+              <p className="route-empty-state">
+                {sellerCatalogSearchQuery.trim()
+                  ? "No hay productos que coincidan con la búsqueda."
+                  : "No hay productos disponibles en bodega."}
+              </p>
+            )}
+          </section>
+        ) : null}
+
+        {sellerOrderSourcePanel === "gifts" ? (
+          <section className="seller-source-panel seller-source-panel--gifts">
+            <div className="seller-source-panel-header">
+              <h4>Productos de regalo</h4>
+              <p>Se facturan a 0 y se descuentan del inventario. También puedes enviar un pedido solo de obsequios.</p>
+            </div>
+            <div className="seller-product-catalog-filters">
+              <label className="field field-full">
+                <span>Buscar obsequio</span>
+                <input
+                  type="search"
+                  value={sellerGiftSearchQuery}
+                  placeholder="NOMBRE, SKU O CATEGORÍA"
+                  onChange={(event) => setSellerGiftSearchQuery(event.target.value)}
+                />
+              </label>
+            </div>
+            {giftPage.totalItems > 0 ? (
+              <>
+                <div className="seller-product-catalog-list seller-source-panel-list">
+                  {giftPage.pageItems.map((product) => renderSellerGiftPickerRow(product))}
+                </div>
+                {renderSellerSourcePagination({
+                  totalItems: giftPage.totalItems,
+                  currentPage: giftPage.currentPage,
+                  totalPages: giftPage.totalPages,
+                  onPageChange: setSellerGiftListPage,
+                })}
+              </>
+            ) : (
+              <p className="route-empty-state">No hay productos que coincidan con la búsqueda.</p>
+            )}
+          </section>
+        ) : null}
+
+        {!sellerOrderSourcePanel ? (
+          <p className="seller-source-hint">Selecciona una de las 4 cajas para ver los productos y agregarlos al pedido.</p>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderSellerOrderDock() {
+    if (sessionUser?.role !== "sales-rep-aruba" || sellerActiveSection !== "routes" || !selectedSellerStoreId) {
+      return null;
+    }
+
+    const saleItemCount = sellerDraftedItems.length;
+    const giftItemCount = sellerGiftDraftItems.length;
+    const pendingItemCount = sellerOrderCartProductIds.length;
+    const itemCount = saleItemCount + giftItemCount;
+    const hasItems = pendingItemCount > 0 || giftItemCount > 0;
+
+    if (!hasItems && !isSellerOrderDockOpen) {
+      return null;
+    }
+
+    const dockFrame = sellerOrderDockFrame ?? (
+      typeof window === "undefined"
+        ? { left: 12, top: 12, width: 360, height: 480 }
+        : getDefaultSellerOrderDockFrame()
+    );
+    const dockFrameStyle = {
+      left: dockFrame.left,
+      top: dockFrame.top,
+    };
+
+    if (!isSellerOrderDockOpen || isSellerOrderDockMinimized) {
+      if (!hasItems) {
+        return null;
+      }
+
+      return createPortal(
+        <button
+          className="seller-order-dock-fab"
+          type="button"
+          onClick={openSellerOrderDock}
+        >
+          <span className="seller-order-dock-fab-copy">
+            <SellerIcon name="orders" />
+            <span>
+              Pedido · {selectedSellerStore?.storeName || "Cliente"} · {itemCount || pendingItemCount} ítem{(itemCount || pendingItemCount) === 1 ? "" : "s"}
+            </span>
+          </span>
+          <strong>{formatAwgCurrency(sellerOrderEstimatedTotal)} AWG</strong>
+        </button>,
+        document.body,
+      );
+    }
+
+    return createPortal(
+      <aside
+        className={`seller-order-dock ${dockFrame.width >= 560 ? "is-wide" : ""}`}
+        role="dialog"
+        aria-label="Pedido actual"
+        style={{
+          ...dockFrameStyle,
+          width: dockFrame.width,
+          height: dockFrame.height,
+        }}
+      >
+        <div className="seller-order-dock-header" title="Arrastra para mover" onPointerDown={beginSellerOrderDockDrag}>
+          <div>
+            <p className="section-label">Pedido de hoy</p>
+            <h3>{selectedSellerStore?.storeName || "Cliente"}</h3>
+            <p>
+              {itemCount > 0
+                ? `${saleItemCount} producto${saleItemCount === 1 ? "" : "s"}${giftItemCount > 0 ? ` · ${giftItemCount} obsequio${giftItemCount === 1 ? "" : "s"}` : ""}`
+                : "Agrega productos desde las cajas"}
+            </p>
+          </div>
+          <div className="seller-order-dock-header-actions">
+            <button
+              className="seller-order-dock-icon-btn"
+              type="button"
+              onClick={() => {
+                setIsSellerOrderDockDetailsOpen(false);
+                setIsSellerOrderDockMinimized(true);
+              }}
+            >
+              Minimizar
+            </button>
+          </div>
+        </div>
+
+        <div className="seller-order-dock-body">
+          <div className="seller-order-dock-main">
+          {sellerOrderCartProducts.length > 0 ? (
+            <div className="seller-order-dock-list">
+              {sellerOrderCartProducts.map((product) => {
+                const draft = getSellerOrderDraftForProduct(product);
+                const quantityValue = getSellerPickerQuantity(product);
+                const unitPrice = resolveSellerDraftUnitPrice(product, draft);
+                const lineTotal = roundCurrencyValue(unitPrice * quantityValue);
+
+                return (
+                  <article className="seller-order-dock-item" key={`seller-dock-${product.productId}`}>
+                    <div className="seller-order-dock-item-copy">
+                      <strong>{product.name}</strong>
+                      <small>
+                        {formatAwgCurrency(unitPrice)} AWG
+                        {quantityValue > 1 ? ` · ${formatAwgCurrency(lineTotal)}` : ""}
+                      </small>
+                    </div>
+                    {renderSellerQuantityStepper({
+                      value: quantityValue,
+                      disabledDecrease: quantityValue <= 1,
+                      decreaseLabel: "Disminuir cantidad",
+                      increaseLabel: "Aumentar cantidad",
+                      onDecrease: () => adjustSellerPickerQuantity(product, -1),
+                      onIncrease: () => adjustSellerPickerQuantity(product, 1),
+                      onChange: (value) => setSellerPickerQuantity(product, value),
+                    })}
+                    <button
+                      className="seller-assigned-product-remove"
+                      type="button"
+                      aria-label={`Quitar ${product.name} del pedido`}
+                      onClick={() => removeProductFromSellerOrderCart(product.productId)}
+                    >
+                      ×
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {sellerGiftDraftItems.length > 0 ? (
+            <div className="seller-order-dock-list seller-order-dock-list--gifts">
+              {sellerGiftDraftItems.map((gift) => {
+                const product = sellerGiftProductOptions.find((entry) => entry.value === gift.productId);
+
+                return (
+                  <article className="seller-order-dock-item is-gift" key={gift.key}>
+                    <div className="seller-order-dock-item-copy">
+                      <strong>{product?.label ?? "Obsequio"}</strong>
+                      <small>Regalo · 0 AWG</small>
+                    </div>
+                    {renderSellerQuantityStepper({
+                      value: gift.quantity,
+                      disabledDecrease: gift.quantity <= 1,
+                      decreaseLabel: "Disminuir cantidad de obsequio",
+                      increaseLabel: "Aumentar cantidad de obsequio",
+                      onDecrease: () => adjustSellerGiftDraftQuantity(gift.productId, -1),
+                      onIncrease: () => adjustSellerGiftDraftQuantity(gift.productId, 1),
+                      onChange: (value) => setSellerGiftDraftQuantity(gift.productId, value),
+                    })}
+                    <button
+                      className="seller-assigned-product-remove"
+                      type="button"
+                      aria-label="Quitar obsequio del pedido"
+                      onClick={() => removeSellerGiftDraftItem(gift.key)}
+                    >
+                      ×
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {sellerOrderCartProducts.length === 0 && sellerGiftDraftItems.length === 0 ? (
+            <p className="route-empty-state">Todavía no hay productos en este pedido.</p>
+          ) : null}
+
+          </div>
+        </div>
+        <div className="seller-order-dock-footer">
+          <div className="seller-order-dock-total">
+            <span>Total estimado</span>
+            <strong>{formatAwgCurrency(sellerOrderEstimatedTotal)} AWG</strong>
+          </div>
+          {sellerOrderStatus ? <p className={`form-feedback ${sellerOrderStatus.tone}`}>{sellerOrderStatus.message}</p> : null}
+          <button
+            className={`seller-order-dock-details-btn${sellerOrderNotesDraft.trim() || sellerInternalOrderNotesDraft.trim() || sellerOrderAttachmentsDraft.length > 0 ? " is-filled" : ""}`}
+            type="button"
+            onClick={() => setIsSellerOrderDockDetailsOpen(true)}
+          >
+            Fecha, notas y adjunto
+          </button>
+          {renderStaffOrderSaveButton()}
+        </div>
+        <span className="seller-order-dock-resize" title="Arrastra para cambiar el tamaño" onPointerDown={beginSellerOrderDockResize} aria-hidden="true" />
+        {isSellerOrderDockDetailsOpen ? (
+          <AppModalOverlay
+            className="seller-order-dock-details-overlay"
+            onDismiss={() => setIsSellerOrderDockDetailsOpen(false)}
+          >
+            <div
+              className="modal-card seller-order-dock-details-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Datos del pedido"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="modal-header">
+                <div>
+                  <p className="section-label">Pedido de hoy</p>
+                  <h2>Fecha, notas y adjunto</h2>
+                </div>
+                <button className="modal-close-button" type="button" onClick={() => setIsSellerOrderDockDetailsOpen(false)}>Cerrar</button>
+              </div>
+              {renderSellerRouteOrderExtras({ includeGifts: false, includeActions: false })}
+              <button className="submit-button seller-order-submit" type="button" onClick={() => setIsSellerOrderDockDetailsOpen(false)}>
+                Listo
+              </button>
+            </div>
+          </AppModalOverlay>
+        ) : null}
+      </aside>,
+      document.body,
     );
   }
 
@@ -17684,6 +18889,76 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
     setSellerGiftDraft({ productId: "", stockRowId: "", quantity: "1" });
     setSellerOrderStatus(null);
+    openSellerOrderDock();
+  }
+
+  function addSellerGiftProductQuick(productId: string, quantity = 1) {
+    const product = sellerGiftProductOptions.find((entry) => entry.value === productId);
+
+    if (!product) {
+      setSellerOrderStatus({ tone: "error", message: "Selecciona un producto valido para el obsequio." });
+      return;
+    }
+
+    const giftQuantity = Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
+    const lots = inventoryLotsByProductId.get(product.value) ?? [];
+    const stockRowId = resolveSuggestedWarehouseLotId(product.value);
+
+    if (lots.length > 0 && !stockRowId) {
+      setSellerOrderStatus({ tone: "error", message: "Selecciona el lote del obsequio." });
+      return;
+    }
+
+    const key = buildOrderGiftItemKey(product.value, stockRowId);
+
+    setSellerGiftDraftItems((current) => {
+      const existingGift = current.find((item) => item.productId === product.value);
+
+      if (existingGift) {
+        return current.map((item) => (
+          item.productId === product.value
+            ? { ...item, quantity: item.quantity + giftQuantity }
+            : item
+        ));
+      }
+
+      return [...current, { key, productId: product.value, stockRowId, quantity: giftQuantity }];
+    });
+
+    setSellerOrderStatus(null);
+    openSellerOrderDock();
+  }
+
+  function adjustSellerGiftDraftQuantity(productId: string, delta: number) {
+    setSellerGiftDraftItems((current) => current.flatMap((item) => {
+      if (item.productId !== productId) {
+        return [item];
+      }
+
+      const nextQuantity = item.quantity + delta;
+
+      if (!Number.isFinite(nextQuantity) || nextQuantity <= 0) {
+        return [];
+      }
+
+      return [{ ...item, quantity: nextQuantity }];
+    }));
+  }
+
+  function setSellerGiftDraftQuantity(productId: string, rawValue: string) {
+    const nextQuantity = Number(rawValue);
+
+    setSellerGiftDraftItems((current) => current.flatMap((item) => {
+      if (item.productId !== productId) {
+        return [item];
+      }
+
+      if (!Number.isFinite(nextQuantity) || nextQuantity <= 0) {
+        return [];
+      }
+
+      return [{ ...item, quantity: nextQuantity }];
+    }));
   }
 
   function removeSellerGiftDraftItem(key: string) {
@@ -17697,19 +18972,29 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
     }
 
     setSellerOrderEditStatus(null);
-    setSellerOrderEditItems(order.items.map((item) => ({
-      productId: item.productId,
-      productSku: item.productSku,
-      productName: item.productName,
-      stockCurrent: item.stockCurrent === null || item.stockCurrent === undefined ? "" : String(item.stockCurrent),
-      quantity: String(item.quantity ?? ""),
-      notes: item.notes ?? "",
-      salePriceAwg: item.salePriceAwg,
-      stockRowId: item.stockRowId,
-      description: item.description,
-    })));
+    setSellerOrderEditItems(order.items.map((item) => {
+      const catalogProduct = productOptions.find((entry) => entry.value === item.productId);
+      const clientProduct = sellerClientProducts.find((entry) => entry.productId === item.productId);
+      const fallbackPrice = catalogProduct?.salePrice ?? clientProduct?.salePrice;
+      const salePriceAwg = typeof item.salePriceAwg === "number" && Number.isFinite(item.salePriceAwg)
+        ? item.salePriceAwg
+        : (typeof fallbackPrice === "number" && Number.isFinite(fallbackPrice) ? fallbackPrice : undefined);
+
+      return {
+        productId: item.productId,
+        productSku: item.productSku,
+        productName: item.productName,
+        stockCurrent: item.stockCurrent === null || item.stockCurrent === undefined ? "" : String(item.stockCurrent),
+        quantity: String(item.quantity ?? ""),
+        notes: item.notes ?? "",
+        salePriceAwg,
+        stockRowId: item.stockRowId,
+        description: item.description,
+      };
+    }));
     setSellerOrderEditNotes(order.orderNotes ?? "");
     setSellerOrderEditInternalNotes(order.internalOrderNotes ?? "");
+    setIsSellerOrderEditDetailsOpen(false);
     setSellerOrderEditAddProductId("");
     setSellerOrderEditDeliveryDate(order.deliveryDate || order.createdAt.slice(0, 10));
     setSelectedSellerOrderEdit(order);
@@ -17877,6 +19162,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
         await refreshSellerOrderEditLogs(String(selectedSellerOrderEdit._id), sessionUser.id);
       }
       setSelectedSellerOrderEdit(null);
+      setIsSellerOrderEditDetailsOpen(false);
       setSellerOrderEditItems([]);
       setSellerOrderEditNotes("");
       setSellerOrderEditInternalNotes("");
@@ -18208,9 +19494,18 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       setSellerCatalogSearchQuery("");
       setSellerAssignedProductsSearchQuery("");
       setSellerCatalogPage(1);
+      setSellerHabitualListPage(1);
+      setSellerExpiringListPage(1);
+      setSellerGiftListPage(1);
       setSellerProductOfferStatus(null);
       setSellerOrderStatus(null);
       setSelectedSellerStoreId("");
+      setSellerOrderSourcePanel("");
+      setIsSellerOrderDockOpen(false);
+      setIsSellerOrderDockMinimized(false);
+      setSellerGiftSearchQuery("");
+      setSellerExpiringSearchQuery("");
+      setSellerGiftPickerQuantities({});
       setSellerOrderSuccessNotice(data.message ?? "Pedido enviado a bodega correctamente.");
       await refreshSellerOrders(sessionUser.id);
     } catch {
@@ -20672,7 +21967,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                 <div className="management-table-header">
                   <div>
                     <h2>Pedidos enviados</h2>
-                    <p>Consulta cliente, fecha, estado y detalle de productos por pedido.</p>
+                    <p>Consulta cliente, fecha, estado y total de factura por pedido.</p>
                   </div>
                   <p className="management-table-meta">{sellerOrders.length} pedidos</p>
                 </div>
@@ -20690,7 +21985,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         <th>Zona</th>
                         <th>Estado</th>
                         <th>Productos</th>
-                        <th>Detalle</th>
+                        <th>Total</th>
                         <th>Accion</th>
                       </tr>
                     </thead>
@@ -20718,16 +22013,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               <td>{order.deliveryZone}</td>
                               <td>{formatSellerOrderStatus(order.status)}</td>
                               <td>{formatOrderLineCountLabel(order, "long")}</td>
-                              <td>
-                                {hasSaleOrGiftOrderLines(order.items, order.giftItems) ? (
-                                  <button
-                                    className="seller-order-detail-trigger"
-                                    type="button"
-                                    onClick={() => setSelectedSellerOrderDetail(order)}
-                                  >
-                                    Ver mas
-                                  </button>
-                                ) : "-"}
+                              <td className="seller-order-invoice-total-cell">
+                                {formatSellerInvoiceAmountLabel(getSellerOrderInvoiceTotalAwg(order))}
                               </td>
                               <td>
                                 <div className="table-action-group">
@@ -20852,49 +22139,24 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               ) : null}
 
               {selectedSellerOrderEdit ? (
-                <AppModalOverlay onDismiss={() => setSelectedSellerOrderEdit(null)}>
+                <AppModalOverlay onDismiss={() => {
+                  setIsSellerOrderEditDetailsOpen(false);
+                  setSelectedSellerOrderEdit(null);
+                }}>
                   <div className="modal-card modal-card--wide seller-order-detail-modal seller-order-edit-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
                     <div className="modal-header">
                       <div>
                         <p className="section-label">Modificar pedido</p>
                         <h2>{selectedSellerOrderEdit.storeName}</h2>
-                        <p>Puedes editar productos, cantidades, notas y fecha durante las primeras 6 horas después de crear el pedido.</p>
+                        <p>Puedes editar productos y cantidades durante las primeras 6 horas después de crear el pedido.</p>
                       </div>
-                      <button className="modal-close-button" type="button" onClick={() => setSelectedSellerOrderEdit(null)}>Cerrar</button>
+                      <button className="modal-close-button" type="button" onClick={() => {
+                        setIsSellerOrderEditDetailsOpen(false);
+                        setSelectedSellerOrderEdit(null);
+                      }}>Cerrar</button>
                     </div>
 
                     {sellerOrderEditStatus ? <p className={`form-feedback ${sellerOrderEditStatus.tone}`}>{sellerOrderEditStatus.message}</p> : null}
-
-                    <label className="field seller-order-delivery-date">
-                      <span>Fecha de entrega</span>
-                      <input
-                        type="date"
-                        min={getBusinessDateKey()}
-                        value={sellerOrderEditDeliveryDate}
-                        onChange={(event) => setSellerOrderEditDeliveryDate(event.target.value)}
-                      />
-                    </label>
-
-                    <div className="seller-order-edit-notes-grid">
-                      <label className="field">
-                        <span>Nota u observación del pedido en factura</span>
-                        <textarea
-                          rows={3}
-                          value={sellerOrderEditNotes}
-                          placeholder="Ejemplo: cliente pidió media paca de sal..."
-                          onChange={(event) => setSellerOrderEditNotes(event.target.value)}
-                        />
-                      </label>
-                      <label className="field">
-                        <span>Nota u observación del pedido interno</span>
-                        <textarea
-                          rows={3}
-                          value={sellerOrderEditInternalNotes}
-                          placeholder="Solo uso interno: instrucciones para bodega..."
-                          onChange={(event) => setSellerOrderEditInternalNotes(event.target.value)}
-                        />
-                      </label>
-                    </div>
 
                     <div className="seller-order-edit-add">
                       <label className="field field-full">
@@ -20927,12 +22189,21 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             <th>Producto</th>
                             <th>Stock actual</th>
                             <th>Cantidad</th>
+                            <th>Precio</th>
+                            <th>Total</th>
                             <th>Notas</th>
                             <th>Acción</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {sellerOrderEditItems.length > 0 ? sellerOrderEditItems.map((item) => (
+                          {sellerOrderEditItems.length > 0 ? sellerOrderEditItems.map((item) => {
+                            const catalogProduct = productOptions.find((entry) => entry.value === item.productId);
+                            const clientProduct = sellerClientProducts.find((entry) => entry.productId === item.productId);
+                            const fallbackPrice = catalogProduct?.salePrice ?? clientProduct?.salePrice;
+                            const unitPrice = getSellerOrderEditItemUnitPriceAwg(item, fallbackPrice);
+                            const lineTotal = getSellerOrderEditItemLineTotalAwg(item, fallbackPrice);
+
+                            return (
                             <tr key={`${selectedSellerOrderEdit._id}-${item.productId}`}>
                               <td>{item.productSku}</td>
                               <td>{item.productName}</td>
@@ -20961,6 +22232,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                   })}
                                 />
                               </td>
+                              <td className="seller-order-invoice-total-cell">
+                                {formatSellerInvoiceAmountLabel(unitPrice)}
+                              </td>
+                              <td className="seller-order-invoice-total-cell">
+                                {formatSellerInvoiceAmountLabel(lineTotal)}
+                              </td>
                               <td>
                                 <input
                                   className="seller-order-edit-notes-input"
@@ -20984,9 +22261,10 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                 </button>
                               </td>
                             </tr>
-                          )) : (
+                            );
+                          }) : (
                             <tr>
-                              <td colSpan={6} className="empty-table-cell">Agrega al menos un producto al pedido.</td>
+                              <td colSpan={8} className="empty-table-cell">Agrega al menos un producto al pedido.</td>
                             </tr>
                           )}
                         </tbody>
@@ -20994,11 +22272,87 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     </div>
 
                     <div className="seller-order-footer">
-                      <p>Los cambios reemplazarán el pedido original enviado a bodega.</p>
-                      <button className="submit-button seller-order-submit" type="button" onClick={() => void handleSellerOrderEditSubmit()} disabled={isSavingSellerOrderEdit}>
-                        {isSavingSellerOrderEdit ? "Guardando cambios..." : "Guardar cambios"}
-                      </button>
+                      <div className="seller-order-footer-copy">
+                        <p className="seller-order-invoice-total">
+                          Total factura: {formatSellerInvoiceAmountLabel(roundCurrencyValue(sellerOrderEditItems.reduce((sum, item) => {
+                            const catalogProduct = productOptions.find((entry) => entry.value === item.productId);
+                            const clientProduct = sellerClientProducts.find((entry) => entry.productId === item.productId);
+                            return sum + getSellerOrderEditItemLineTotalAwg(item, catalogProduct?.salePrice ?? clientProduct?.salePrice);
+                          }, 0)))}
+                        </p>
+                        <p>Los cambios reemplazarán el pedido original enviado a bodega.</p>
+                      </div>
+                      <div className="seller-order-edit-footer-actions">
+                        <button
+                          className={`seller-order-dock-details-btn${sellerOrderEditNotes.trim() || sellerOrderEditInternalNotes.trim() ? " is-filled" : ""}`}
+                          type="button"
+                          onClick={() => setIsSellerOrderEditDetailsOpen(true)}
+                        >
+                          Fecha y notas
+                        </button>
+                        <button className="submit-button seller-order-submit" type="button" onClick={() => void handleSellerOrderEditSubmit()} disabled={isSavingSellerOrderEdit}>
+                          {isSavingSellerOrderEdit ? "Guardando cambios..." : "Guardar cambios"}
+                        </button>
+                      </div>
                     </div>
+
+                    {isSellerOrderEditDetailsOpen ? (
+                      <AppModalOverlay
+                        className="seller-order-dock-details-overlay"
+                        onDismiss={() => setIsSellerOrderEditDetailsOpen(false)}
+                      >
+                        <div
+                          className="modal-card seller-order-dock-details-modal"
+                          role="dialog"
+                          aria-modal="true"
+                          aria-label="Fecha y notas del pedido"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <div className="modal-header">
+                            <div>
+                              <p className="section-label">Modificar pedido</p>
+                              <h2>Fecha y notas</h2>
+                            </div>
+                            <button className="modal-close-button" type="button" onClick={() => setIsSellerOrderEditDetailsOpen(false)}>Cerrar</button>
+                          </div>
+
+                          <label className="field seller-order-delivery-date">
+                            <span>Fecha de entrega</span>
+                            <input
+                              type="date"
+                              min={getBusinessDateKey()}
+                              value={sellerOrderEditDeliveryDate}
+                              onChange={(event) => setSellerOrderEditDeliveryDate(event.target.value)}
+                            />
+                          </label>
+
+                          <div className="seller-order-edit-notes-grid">
+                            <label className="field">
+                              <span>Nota u observación del pedido en factura</span>
+                              <textarea
+                                rows={3}
+                                value={sellerOrderEditNotes}
+                                placeholder="Ejemplo: cliente pidió media paca de sal..."
+                                onChange={(event) => setSellerOrderEditNotes(event.target.value)}
+                              />
+                            </label>
+                            <label className="field">
+                              <span>Nota u observación del pedido interno</span>
+                              <textarea
+                                rows={3}
+                                value={sellerOrderEditInternalNotes}
+                                placeholder="Solo uso interno: instrucciones para bodega..."
+                                onChange={(event) => setSellerOrderEditInternalNotes(event.target.value)}
+                              />
+                            </label>
+                          </div>
+
+                          <button className="submit-button seller-order-submit" type="button" onClick={() => setIsSellerOrderEditDetailsOpen(false)}>
+                            Listo
+                          </button>
+                        </div>
+                      </AppModalOverlay>
+                    ) : null}
                   </div>
                 </AppModalOverlay>
               ) : null}
@@ -21070,86 +22424,24 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             </section>
           ) : (
             <section className="routes-layout">
-              <article className="seller-hero">
-                <div>
-                  <p className="seller-hero-eyebrow">👋 ¡Hola! Bienvenido de nuevo · Tu agenda</p>
-                  <h2>Rutas asignadas por gerencia</h2>
-                  <p>Aquí solo verás las rutas asociadas a tu usuario y podrás preparar el pedido de cada cliente visitado.</p>
-                </div>
-                <div className="seller-hero-art" aria-hidden="true">
-                  <div className="seller-map-art">
-                    <div className="seller-map-art-path" />
-                    <div className="seller-map-art-pin" />
-                    <div className="seller-map-art-dot" />
-                    <div className="seller-map-art-dot" />
-                    <div className="seller-map-art-dot" />
-                  </div>
-                </div>
+              <article className="seller-hero seller-hero--compact">
+                <p className="seller-hero-eyebrow">👋 Tu agenda</p>
+                <h2>Rutas asignadas</h2>
               </article>
 
-              <article className="seller-panel">
-                <div className="seller-panel-header">
-                  <div className="seller-panel-header-main">
-                    <div className="seller-panel-icon">
-                      <SellerIcon name="routes" />
-                    </div>
-                    <div>
-                      <h2>Mis rutas</h2>
-                      <p>Selecciona una ruta para abrir sus días y clientes asignados.</p>
-                    </div>
+              {sellerRoutesError ? <p className="form-feedback error">{sellerRoutesError}</p> : null}
+
+              {isLoadingSellerRoutes ? (
+                <article className="route-summary-card is-loading" />
+              ) : sellerRoutes.length === 0 ? (
+                <div className="seller-empty-state">
+                  <div className="seller-empty-magnifier">
+                    <SellerIcon name="map" />
                   </div>
-                  <span className="seller-chip-count">
-                    {sellerRoutes.length} ruta{sellerRoutes.length === 1 ? "" : "s"}
-                  </span>
+                  <h3>Aún no tienes rutas asignadas</h3>
+                  <p>Cuando gerencia te asigne una ruta, aparecerá aquí lista para trabajar.</p>
                 </div>
-
-                {sellerRoutesError ? <p className="form-feedback error">{sellerRoutesError}</p> : null}
-
-                <div className="seller-route-list">
-                  {isLoadingSellerRoutes ? (
-                    <article className="route-summary-card is-loading" />
-                  ) : sellerRoutes.length > 0 ? (
-                    sellerRoutes.map((route) => {
-                      const routeKey = route._id ?? route.code;
-                      const isSelected = routeKey === selectedSellerRouteId;
-
-                      return (
-                        <button
-                          key={routeKey}
-                          className={`seller-route-list-item ${isSelected ? "is-active" : ""}`}
-                          type="button"
-                          onClick={() => setSelectedSellerRouteId(routeKey)}
-                        >
-                          <div className="seller-route-list-item-main">
-                            <div className="seller-route-list-icon">
-                              <SellerIcon name="calendar" />
-                            </div>
-                            <div>
-                              <p className="section-label">{route.weekLabel}</p>
-                              <strong>{route.name}</strong>
-                              <span>{route.days.length} días planeados</span>
-                            </div>
-                          </div>
-                          <span className="seller-route-list-meta">
-                            {route.plannedStops} tiendas
-                            <SellerIcon name="chevron" />
-                          </span>
-                        </button>
-                      );
-                    })
-                  ) : (
-                    <div className="seller-empty-state">
-                      <div className="seller-empty-magnifier">
-                        <SellerIcon name="map" />
-                      </div>
-                      <h3>Aún no tienes rutas asignadas</h3>
-                      <p>Cuando gerencia te asigne una ruta, aparecerá aquí lista para trabajar.</p>
-                    </div>
-                  )}
-                </div>
-              </article>
-
-              {selectedSellerRoute ? (
+              ) : selectedSellerRoute ? (
                 <article className="route-builder-card seller-route-workspace">
                   <div className="seller-route-active-header">
                     <div className="seller-route-active-header-main">
@@ -21162,11 +22454,32 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         <p>{selectedSellerRoute.weekLabel} · {selectedSellerRoute.salesRepName}</p>
                       </div>
                     </div>
-                    <span className="seller-chip-count is-green">
-                      {selectedSellerRoute.plannedStops} tiendas
-                    </span>
+                    <div className="seller-route-active-header-aside">
+                      {sellerRoutes.length > 1 ? (
+                        <label className="field seller-route-switcher">
+                          <span>Ruta</span>
+                          <select
+                            value={selectedSellerRouteId}
+                            onChange={(event) => setSelectedSellerRouteId(event.target.value)}
+                          >
+                            {sellerRoutes.map((route) => {
+                              const routeKey = route._id ?? route.code;
+                              return (
+                                <option key={routeKey} value={routeKey}>
+                                  {route.name}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </label>
+                      ) : null}
+                      <span className="seller-chip-count is-green">
+                        {selectedSellerRoute.plannedStops} tiendas
+                      </span>
+                    </div>
                   </div>
 
+                  {isSellerStorePickerOpen || !selectedSellerStoreId ? (
                   <div className="seller-route-day-tabs">
                     {selectedSellerRoute.days.map((day) => (
                       <button
@@ -21186,9 +22499,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       </button>
                     ))}
                   </div>
+                  ) : null}
 
                   {selectedSellerDay ? (
                     <>
+                      {isSellerStorePickerOpen || !selectedSellerStoreId ? (
                       <div className="seller-route-client-panel">
                         <div className="seller-store-toolbar">
                           <label className="field field-full">
@@ -21253,13 +22568,6 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           </div>
                         </div>
 
-                        {selectedSellerStore ? (
-                          <p className="seller-selected-store-banner">
-                            {selectedSellerStore.storeName}
-                            <small>{selectedSellerStore.address || "Sin dirección"}</small>
-                          </p>
-                        ) : null}
-
                         {!selectedSellerStoreId ? (
                           <div className="seller-empty-state">
                             <div className="seller-empty-magnifier">
@@ -21270,8 +22578,30 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           </div>
                         ) : null}
                       </div>
+                      ) : null}
 
-                      {renderSellerProductCatalogPanel(selectedSellerStoreId || null, { showOrderFields: true })}
+                      {selectedSellerStore ? (
+                        <div className="seller-selected-store-bar">
+                          <p className="seller-selected-store-banner">
+                            {selectedSellerStore.storeName}
+                            <small>
+                              {selectedSellerDayKey ? `${formatRouteDayLabel(selectedSellerDayKey)} · ` : ""}
+                              {selectedSellerStore.address || "Sin dirección"}
+                            </small>
+                          </p>
+                          {!isSellerStorePickerOpen ? (
+                            <button
+                              className="seller-change-store-btn"
+                              type="button"
+                              onClick={() => setIsSellerStorePickerOpen(true)}
+                            >
+                              Cambiar de tienda
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {selectedSellerStoreId ? renderSellerRouteOrderComposer(selectedSellerStoreId) : null}
                     </>
                   ) : (
                     <div className="seller-empty-state">
@@ -21287,6 +22617,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
             </section>
           )}
           </div>
+
+          {renderSellerOrderDock()}
 
           {sellerOrderSuccessNotice ? (
             <AppModalOverlay onDismiss={() => setSellerOrderSuccessNotice(null)}>
@@ -21980,7 +23312,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         <h2>Pedidos recibidos</h2>
                         <p>Pedidos agrupados por fecha de entrega programada por el vendedor.</p>
                       </div>
-                      <p className="management-table-meta">{filteredWarehouseIncomingOrders.length} pedidos</p>
+                      <p className="management-table-meta">{warehouseIncomingTotal} pedidos</p>
                     </div>
 
                     {warehouseOrdersError ? <p className="form-feedback error">{warehouseOrdersError}</p> : null}
@@ -22064,6 +23396,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         );
                       }}
                     />
+                    <WarehouseOrdersPagination
+                      page={warehouseIncomingPage}
+                      pageSize={WAREHOUSE_ORDERS_PAGE_SIZE}
+                      total={warehouseIncomingTotal}
+                      onPageChange={setWarehouseIncomingPage}
+                    />
                   </article>
 
                   <article className="database-card">
@@ -22072,7 +23410,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         <h2>Pedidos completados</h2>
                         <p>Pedidos ya facturados. Los mas recientes aparecen primero. Filtra por fecha, cliente o # de factura.</p>
                       </div>
-                      <p className="management-table-meta">{filteredWarehouseCompletedOrders.length} pedidos</p>
+                      <p className="management-table-meta">{warehouseCompletedTotal} pedidos</p>
                     </div>
 
                     <div className="filter-grid cartera-date-filter-grid">
@@ -22172,7 +23510,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       orders={filteredWarehouseCompletedOrders}
                       isLoading={isLoadingWarehouseOrders}
                       emptyMessage={
-                        warehouseCompletedOrders.length === 0
+                        warehouseCompletedTotal === 0
                           ? "Todavia no hay pedidos completados."
                           : "No hay pedidos completados con esos filtros."
                       }
@@ -22239,6 +23577,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         </>
                         );
                       }}
+                    />
+                    <WarehouseOrdersPagination
+                      page={warehouseCompletedPage}
+                      pageSize={WAREHOUSE_ORDERS_PAGE_SIZE}
+                      total={warehouseCompletedTotal}
+                      onPageChange={setWarehouseCompletedPage}
                     />
                   </article>
                 </>
@@ -31030,7 +32374,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <h2>Pedidos recibidos</h2>
                   <p>Pedidos pendientes de imprimir y facturar en bodega.</p>
                 </div>
-                <p className="management-table-meta">{filteredWarehouseIncomingOrders.length} pedidos</p>
+                <p className="management-table-meta">{warehouseIncomingTotal} pedidos</p>
               </div>
 
               {warehouseOrdersError ? <p className="form-feedback error">{warehouseOrdersError}</p> : null}
@@ -31091,6 +32435,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   );
                 }}
               />
+              <WarehouseOrdersPagination
+                page={warehouseIncomingPage}
+                pageSize={WAREHOUSE_ORDERS_PAGE_SIZE}
+                total={warehouseIncomingTotal}
+                onPageChange={setWarehouseIncomingPage}
+              />
             </article>
 
             <article className="database-card">
@@ -31111,12 +32461,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <button
                     className="ghost-button ghost-button--accent"
                     type="button"
-                    disabled={isDownloadingQuickBooksExport || filteredWarehouseCompletedOrders.length === 0}
+                    disabled={isDownloadingQuickBooksExport || warehouseCompletedTotal === 0}
                     onClick={() => void handleDownloadQuickBooksExport()}
                   >
                     {isDownloadingQuickBooksExport ? "Generando CSV..." : "Exportar QuickBooks"}
                   </button>
-                  <p className="management-table-meta">{filteredWarehouseCompletedOrders.length} pedidos</p>
+                  <p className="management-table-meta">{warehouseCompletedTotal} pedidos</p>
                 </div>
               </div>
 
@@ -31299,6 +32649,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   </tbody>
                 </table>
               </div>
+              <WarehouseOrdersPagination
+                page={warehouseCompletedPage}
+                pageSize={WAREHOUSE_ORDERS_PAGE_SIZE}
+                total={warehouseCompletedTotal}
+                onPageChange={setWarehouseCompletedPage}
+              />
             </article>
 
             {selectedWarehouseOrderDetail ? (

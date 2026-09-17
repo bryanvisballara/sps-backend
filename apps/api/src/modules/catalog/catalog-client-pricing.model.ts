@@ -27,5 +27,6 @@ const catalogClientPricingSchema = new Schema(
 );
 
 catalogClientPricingSchema.index({ catalogId: 1, clientId: 1 }, { unique: true });
+catalogClientPricingSchema.index({ clientId: 1, active: 1 });
 
 export const CatalogClientPricing = model("CatalogClientPricing", catalogClientPricingSchema);
