@@ -1254,18 +1254,63 @@ function mapOrderLineProductCatalog(product) {
         unitsPerBoxUnit: String(product?.unitsPerBoxUnit ?? "unidad"),
     };
 }
-async function mapWarehouseOrderRecord(order) {
-    const productIds = Array.from(new Set([
-        ...order.items.map((item) => String(item.productId)).filter(Boolean),
+function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+async function getClientCatalogProductSalePricesByClientIds(clientIds) {
+    const uniqueClientIds = Array.from(new Set(clientIds.map((clientId) => String(clientId ?? "").trim()).filter(Boolean)));
+    const pricingByClientId = new Map();
+    if (uniqueClientIds.length === 0) {
+        return pricingByClientId;
+    }
+    uniqueClientIds.forEach((clientId) => {
+        pricingByClientId.set(clientId, new Map());
+    });
+    const pricingRows = await CatalogClientPricing.find({
+        clientId: { $in: uniqueClientIds },
+        active: { $ne: false },
+    })
+        .sort({ updatedAt: -1, createdAt: -1 })
+        .select({ clientId: 1, items: 1 })
+        .lean();
+    pricingRows.forEach((pricingRow) => {
+        const clientId = String(pricingRow.clientId ?? "").trim();
+        const priceByProductId = pricingByClientId.get(clientId);
+        if (!priceByProductId || !Array.isArray(pricingRow.items)) {
+            return;
+        }
+        pricingRow.items.forEach((item) => {
+            const productId = String(item.productId ?? "").trim();
+            if (!productId || priceByProductId.has(productId)) {
+                return;
+            }
+            const salePrice = Number(item.salePrice ?? NaN);
+            if (!Number.isFinite(salePrice) || salePrice < 0) {
+                return;
+            }
+            priceByProductId.set(productId, Math.round(salePrice * 100) / 100);
+        });
+    });
+    return pricingByClientId;
+}
+async function mapWarehouseOrderRecords(orders) {
+    if (orders.length === 0) {
+        return [];
+    }
+    const productIds = Array.from(new Set(orders.flatMap((order) => ([
+        ...(Array.isArray(order.items) ? order.items.map((item) => String(item.productId)).filter(Boolean) : []),
         ...(Array.isArray(order.giftItems) ? order.giftItems.map((item) => String(item.productId)).filter(Boolean) : []),
-    ]));
-    const [products, catalogSalePriceByProductId] = await Promise.all([
+    ]))));
+    const [products, catalogSalePriceByClientId] = await Promise.all([
         productIds.length > 0
             ? Product.find({ _id: { $in: productIds } }).select(ORDER_PRODUCT_CATALOG_SELECT).lean()
             : Promise.resolve([]),
-        getClientCatalogProductSalePrices(String(order.storeId ?? "")),
+        getClientCatalogProductSalePricesByClientIds(orders.map((order) => String(order.storeId ?? ""))),
     ]);
     const productsById = new Map(products.map((product) => [String(product._id), product]));
+    return orders.map((order) => (buildWarehouseOrderRecord(order, productsById, catalogSalePriceByClientId.get(String(order.storeId ?? "")) ?? new Map())));
+}
+function buildWarehouseOrderRecord(order, productsById, catalogSalePriceByProductId) {
     return {
         _id: String(order._id),
         routeId: order.routeId ?? "",
@@ -1337,6 +1382,10 @@ async function mapWarehouseOrderRecord(order) {
             };
         }),
     };
+}
+async function mapWarehouseOrderRecord(order) {
+    const [mapped] = await mapWarehouseOrderRecords([order]);
+    return mapped;
 }
 function isDuplicateKeyError(error) {
     return (typeof error === "object" &&
@@ -2682,14 +2731,60 @@ apiRouter.get("/sales/orders/:id/edit-logs", async (request, response) => {
         sendCreationError(response, error);
     }
 });
-apiRouter.get("/warehouse/orders", async (_request, response) => {
+apiRouter.get("/warehouse/orders", async (request, response) => {
     try {
-        await ensureOrderDeliveryDates();
-        await syncOverdueDeliveryDates();
-        const orders = await Order.find()
-            .sort({ deliveryDate: 1, createdAt: 1 })
-            .lean();
-        response.json(await Promise.all(orders.map((order) => mapWarehouseOrderRecord(order))));
+        void ensureOrderDeliveryDates().catch(() => undefined);
+        void syncOverdueDeliveryDates().catch(() => undefined);
+        const page = Math.max(1, Number(request.query.page) || 1);
+        const pageSize = Math.min(50, Math.max(1, Number(request.query.pageSize) || 10));
+        const statuses = String(request.query.status ?? "")
+            .split(",")
+            .map((status) => status.trim())
+            .filter((status) => ["draft", "submitted", "picking", "dispatched", "delivered"].includes(status));
+        const startDate = typeof request.query.startDate === "string" ? request.query.startDate.trim() : "";
+        const endDate = typeof request.query.endDate === "string" ? request.query.endDate.trim() : "";
+        const client = typeof request.query.client === "string" ? request.query.client.trim() : "";
+        const invoice = typeof request.query.invoice === "string" ? request.query.invoice.trim().replace(/^#/, "") : "";
+        const filter = {};
+        if (statuses.length > 0) {
+            filter.status = { $in: statuses };
+        }
+        if (/^\d{4}-\d{2}-\d{2}$/.test(startDate) || /^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+            const deliveryDate = {};
+            if (/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+                deliveryDate.$gte = new Date(`${startDate}T00:00:00.000Z`);
+            }
+            if (/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+                deliveryDate.$lte = new Date(`${endDate}T23:59:59.999Z`);
+            }
+            filter.deliveryDate = deliveryDate;
+        }
+        if (client) {
+            filter.storeName = { $regex: escapeRegExp(client), $options: "i" };
+        }
+        if (invoice) {
+            const invoiceNumber = Number(invoice);
+            if (Number.isFinite(invoiceNumber) && invoiceNumber > 0) {
+                filter.invoiceNumber = invoiceNumber;
+            }
+        }
+        const sort = statuses.length === 1 && statuses[0] === "delivered"
+            ? { deliveryDate: -1, createdAt: -1 }
+            : { deliveryDate: 1, createdAt: 1 };
+        const [total, orders] = await Promise.all([
+            Order.countDocuments(filter),
+            Order.find(filter)
+                .sort(sort)
+                .skip((page - 1) * pageSize)
+                .limit(pageSize)
+                .lean(),
+        ]);
+        response.json({
+            orders: await mapWarehouseOrderRecords(orders),
+            total,
+            page,
+            pageSize,
+        });
     }
     catch (error) {
         sendCreationError(response, error);

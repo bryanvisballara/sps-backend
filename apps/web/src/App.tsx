@@ -4076,6 +4076,105 @@ type WarehouseOrderListProps = {
 
 const WAREHOUSE_ORDERS_PAGE_SIZE = 10;
 
+function normalizeWarehouseOrderRecord(order: SellerOrderRecord): SellerOrderRecord {
+  return {
+    ...order,
+    items: Array.isArray(order.items) ? order.items : [],
+    giftItems: Array.isArray(order.giftItems) ? order.giftItems : [],
+  };
+}
+
+function parseWarehouseOrdersResponse(data: unknown): {
+  orders: SellerOrderRecord[];
+  total: number;
+  legacy: boolean;
+} | null {
+  if (Array.isArray(data)) {
+    const orders = data.map((order) => normalizeWarehouseOrderRecord(order as SellerOrderRecord));
+    return { orders, total: orders.length, legacy: true };
+  }
+
+  if (data && typeof data === "object" && Array.isArray((data as { orders?: unknown }).orders)) {
+    const payload = data as { orders: SellerOrderRecord[]; total?: number };
+    const orders = payload.orders.map(normalizeWarehouseOrderRecord);
+    return { orders, total: Number(payload.total ?? orders.length), legacy: false };
+  }
+
+  return null;
+}
+
+function paginateWarehouseOrders(orders: SellerOrderRecord[], page: number) {
+  const start = (Math.max(1, page) - 1) * WAREHOUSE_ORDERS_PAGE_SIZE;
+  return orders.slice(start, start + WAREHOUSE_ORDERS_PAGE_SIZE);
+}
+
+function matchesWarehouseClientFilter(order: SellerOrderRecord, client?: string) {
+  if (!client) {
+    return true;
+  }
+
+  return String(order.storeName ?? "").toLowerCase().includes(client.toLowerCase());
+}
+
+function matchesWarehouseInvoiceFilter(order: SellerOrderRecord, invoice?: string) {
+  if (!invoice) {
+    return true;
+  }
+
+  return String(order.invoiceNumber ?? "").includes(invoice.replace(/^#/, ""));
+}
+
+function matchesWarehouseDateRange(order: SellerOrderRecord, startDate?: string, endDate?: string) {
+  if (!startDate && !endDate) {
+    return true;
+  }
+
+  const dateKey = getOrderDeliveryDateKey(order).slice(0, 10);
+
+  if (startDate && dateKey < startDate) {
+    return false;
+  }
+
+  if (endDate && dateKey > endDate) {
+    return false;
+  }
+
+  return true;
+}
+
+function sliceLegacyWarehouseOrders(
+  orders: SellerOrderRecord[],
+  incomingPage: number,
+  completedPage: number,
+  incomingClient?: string,
+  completed?: {
+    startDate?: string;
+    endDate?: string;
+    client?: string;
+    invoice?: string;
+  },
+) {
+  const incomingAll = orders.filter((order) => (
+    (order.status === "submitted" || order.status === "dispatched")
+    && matchesWarehouseClientFilter(order, incomingClient)
+  ));
+  const completedAll = sortOrdersByCreatedAtDesc(orders.filter((order) => (
+    order.status === "delivered"
+    && matchesWarehouseDateRange(order, completed?.startDate, completed?.endDate)
+    && matchesWarehouseClientFilter(order, completed?.client)
+    && matchesWarehouseInvoiceFilter(order, completed?.invoice)
+  )));
+
+  return {
+    incomingTotal: incomingAll.length,
+    completedTotal: completedAll.length,
+    orders: [
+      ...paginateWarehouseOrders(incomingAll, incomingPage),
+      ...paginateWarehouseOrders(completedAll, completedPage),
+    ],
+  };
+}
+
 function WarehouseOrdersPagination({
   page,
   pageSize,
@@ -5909,6 +6008,8 @@ export default function App() {
   const [warehouseOrders, setWarehouseOrders] = useState<SellerOrderRecord[]>([]);
   const [warehouseOrdersError, setWarehouseOrdersError] = useState("");
   const [isLoadingWarehouseOrders, setIsLoadingWarehouseOrders] = useState(false);
+  const warehouseOrdersLegacySnapshotRef = useRef<SellerOrderRecord[] | null>(null);
+  const warehouseApiIsPaginatedRef = useRef(false);
   const [warehouseIncomingPage, setWarehouseIncomingPage] = useState(1);
   const [warehouseCompletedPage, setWarehouseCompletedPage] = useState(1);
   const [warehouseIncomingTotal, setWarehouseIncomingTotal] = useState(0);
@@ -8609,7 +8710,7 @@ export default function App() {
     }
 
     const timer = window.setTimeout(() => {
-      void refreshWarehouseOrders();
+      void refreshWarehouseOrders({ reuseLegacySnapshot: true });
     }, 250);
 
     return () => window.clearTimeout(timer);
@@ -8760,7 +8861,7 @@ export default function App() {
     }
 
     const timer = window.setTimeout(() => {
-      void refreshWarehouseOrders();
+      void refreshWarehouseOrders({ reuseLegacySnapshot: true });
     }, 250);
 
     return () => window.clearTimeout(timer);
@@ -9306,49 +9407,125 @@ export default function App() {
     }
 
     const response = await fetch(`${apiBaseUrl}/warehouse/orders?${search.toString()}`);
-    const data = (await response.json()) as {
-      orders?: SellerOrderRecord[];
-      total?: number;
-      message?: string;
-    };
+    const data: unknown = await response.json();
+    const parsed = parseWarehouseOrdersResponse(data);
 
-    if (!response.ok || !Array.isArray(data.orders)) {
-      throw new Error(data.message ?? "No fue posible cargar los pedidos de bodega.");
+    if (!response.ok || !parsed) {
+      const message = data && typeof data === "object" && "message" in data
+        ? String((data as { message?: string }).message ?? "")
+        : "";
+      throw new Error(message || "No fue posible cargar los pedidos de bodega.");
     }
 
-    return {
-      orders: data.orders.map((order) => ({
-        ...order,
-        items: Array.isArray(order.items) ? order.items : [],
-        giftItems: Array.isArray(order.giftItems) ? order.giftItems : [],
-      })),
-      total: Number(data.total ?? data.orders.length),
-    };
+    return parsed;
   }
 
-  async function refreshWarehouseOrders() {
+  async function refreshWarehouseOrders(options?: { reuseLegacySnapshot?: boolean }) {
+    const incomingRequest = {
+      status: "submitted,dispatched",
+      page: warehouseIncomingPage,
+      client: warehouseIncomingClientFilter.trim() || undefined,
+    };
+    const completedRequest = {
+      status: "delivered",
+      page: warehouseCompletedPage,
+      startDate: completedOrdersStartDate || undefined,
+      endDate: completedOrdersEndDate || undefined,
+      client: warehouseCompletedClientFilter.trim() || undefined,
+      invoice: warehouseCompletedInvoiceFilter.trim().replace(/^#/, "") || undefined,
+    };
+
+    const applyLegacySnapshot = (snapshot: SellerOrderRecord[]) => {
+      const sliced = sliceLegacyWarehouseOrders(
+        snapshot,
+        warehouseIncomingPage,
+        warehouseCompletedPage,
+        incomingRequest.client,
+        completedRequest,
+      );
+      setWarehouseIncomingTotal(sliced.incomingTotal);
+      setWarehouseCompletedTotal(sliced.completedTotal);
+      setWarehouseOrders(sliced.orders);
+    };
+
+    const applyPageResult = (
+      incoming: { orders: SellerOrderRecord[]; total: number } | null,
+      completed: { orders: SellerOrderRecord[]; total: number } | null,
+      incomingError: Error | null,
+      completedError: Error | null,
+    ) => {
+      setWarehouseIncomingTotal(incoming?.total ?? 0);
+      setWarehouseCompletedTotal(completed?.total ?? 0);
+      setWarehouseOrders([...(incoming?.orders ?? []), ...(completed?.orders ?? [])]);
+
+      const firstError = incomingError ?? completedError;
+      if (!firstError) {
+        return;
+      }
+
+      setWarehouseOrdersError(firstError.message !== "Failed to fetch"
+        ? firstError.message
+        : "No fue posible conectar con el backend.");
+    };
+
     try {
       setIsLoadingWarehouseOrders(true);
       setWarehouseOrdersError("");
-      const [incoming, completed] = await Promise.all([
-        fetchWarehouseOrdersPage({
-          status: "submitted,dispatched",
-          page: warehouseIncomingPage,
-          client: warehouseIncomingClientFilter.trim() || undefined,
-        }),
-        fetchWarehouseOrdersPage({
-          status: "delivered",
-          page: warehouseCompletedPage,
-          startDate: completedOrdersStartDate || undefined,
-          endDate: completedOrdersEndDate || undefined,
-          client: warehouseCompletedClientFilter.trim() || undefined,
-          invoice: warehouseCompletedInvoiceFilter.trim().replace(/^#/, "") || undefined,
-        }),
-      ]);
 
-      setWarehouseIncomingTotal(incoming.total);
-      setWarehouseCompletedTotal(completed.total);
-      setWarehouseOrders([...incoming.orders, ...completed.orders]);
+      if (options?.reuseLegacySnapshot && warehouseOrdersLegacySnapshotRef.current) {
+        applyLegacySnapshot(warehouseOrdersLegacySnapshotRef.current);
+        return;
+      }
+
+      if (warehouseApiIsPaginatedRef.current) {
+        const [incomingResult, completedResult] = await Promise.allSettled([
+          fetchWarehouseOrdersPage(incomingRequest),
+          fetchWarehouseOrdersPage(completedRequest),
+        ]);
+        const incoming = incomingResult.status === "fulfilled" ? incomingResult.value : null;
+        const completed = completedResult.status === "fulfilled" ? completedResult.value : null;
+        applyPageResult(
+          incoming,
+          completed,
+          incomingResult.status === "rejected"
+            ? (incomingResult.reason instanceof Error ? incomingResult.reason : new Error("No fue posible cargar los pedidos de bodega."))
+            : null,
+          completedResult.status === "rejected"
+            ? (completedResult.reason instanceof Error ? completedResult.reason : new Error("No fue posible cargar los pedidos de bodega."))
+            : null,
+        );
+        return;
+      }
+
+      let incoming: Awaited<ReturnType<typeof fetchWarehouseOrdersPage>> | null = null;
+      let incomingError: Error | null = null;
+
+      try {
+        incoming = await fetchWarehouseOrdersPage(incomingRequest);
+      } catch (error) {
+        incomingError = error instanceof Error ? error : new Error("No fue posible cargar los pedidos de bodega.");
+      }
+
+      if (incoming?.legacy) {
+        warehouseOrdersLegacySnapshotRef.current = incoming.orders;
+        applyLegacySnapshot(incoming.orders);
+        return;
+      }
+
+      if (incoming) {
+        warehouseApiIsPaginatedRef.current = true;
+      }
+
+      let completed: Awaited<ReturnType<typeof fetchWarehouseOrdersPage>> | null = null;
+      let completedError: Error | null = null;
+
+      try {
+        completed = await fetchWarehouseOrdersPage(completedRequest);
+      } catch (error) {
+        completedError = error instanceof Error ? error : new Error("No fue posible cargar los pedidos de bodega.");
+      }
+
+      applyPageResult(incoming, completed, incomingError, completedError);
     } catch (error) {
       setWarehouseOrdersError(error instanceof Error && error.message !== "Failed to fetch"
         ? error.message

@@ -47,5 +47,9 @@ const orderSchema = new Schema({
     orderNotes: { type: String, trim: true, default: "" },
     internalOrderNotes: { type: String, trim: true, default: "" },
 }, { timestamps: true });
+orderSchema.index({ status: 1, deliveryDate: 1, createdAt: 1 });
+orderSchema.index({ status: 1, deliveryDate: -1, createdAt: -1 });
+orderSchema.index({ storeName: 1, status: 1 });
+orderSchema.index({ invoiceNumber: 1 });
 export const Order = model("Order", orderSchema);
 //# sourceMappingURL=order.model.js.map
