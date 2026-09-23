@@ -4108,6 +4108,21 @@ function paginateWarehouseOrders(orders: SellerOrderRecord[], page: number) {
   return orders.slice(start, start + WAREHOUSE_ORDERS_PAGE_SIZE);
 }
 
+function toggleWarehouseOrderSelectionRecords(
+  current: SellerOrderRecord[],
+  orders: SellerOrderRecord[],
+  selected: boolean,
+) {
+  const orderIds = new Set(orders.map((order) => String(order._id)));
+  const kept = current.filter((order) => !orderIds.has(String(order._id)));
+
+  if (!selected) {
+    return kept;
+  }
+
+  return [...kept, ...orders];
+}
+
 function matchesWarehouseClientFilter(order: SellerOrderRecord, client?: string) {
   if (!client) {
     return true;
@@ -6024,10 +6039,10 @@ export default function App() {
   const [dispatchEndDateFilter, setDispatchEndDateFilter] = useState("");
   const [selectedDispatchOrderIds, setSelectedDispatchOrderIds] = useState<Set<string>>(() => new Set());
   const [isPrintingSelectedDispatchOrders, setIsPrintingSelectedDispatchOrders] = useState(false);
-  const [selectedIncomingOrderIds, setSelectedIncomingOrderIds] = useState<Set<string>>(() => new Set());
+  const [selectedIncomingOrderRecords, setSelectedIncomingOrderRecords] = useState<SellerOrderRecord[]>([]);
   const [isPrintingSelectedIncomingOrders, setIsPrintingSelectedIncomingOrders] = useState(false);
   const [printingIncomingOrderId, setPrintingIncomingOrderId] = useState("");
-  const [selectedCompletedOrderIds, setSelectedCompletedOrderIds] = useState<Set<string>>(() => new Set());
+  const [selectedCompletedOrderRecords, setSelectedCompletedOrderRecords] = useState<SellerOrderRecord[]>([]);
   const [isPrintingSelectedCompletedOrders, setIsPrintingSelectedCompletedOrders] = useState(false);
   const [selectedWarehouseOrderDetail, setSelectedWarehouseOrderDetail] = useState<SellerOrderRecord | null>(null);
   const [warehouseOrderEditLogs, setWarehouseOrderEditLogs] = useState<OrderEditLogRecord[]>([]);
@@ -7227,19 +7242,17 @@ export default function App() {
   const selectedDispatchOrdersCount = warehouseDispatchOrders.filter((order) => (
     selectedDispatchOrderIds.has(String(order._id))
   )).length;
+  const selectedIncomingOrderIds = new Set(selectedIncomingOrderRecords.map((order) => String(order._id)));
   const areAllFilteredIncomingOrdersSelected = filteredWarehouseIncomingOrders.length > 0
     && filteredWarehouseIncomingOrders.every((order) => selectedIncomingOrderIds.has(String(order._id)));
-  const selectedIncomingOrdersCount = filteredWarehouseIncomingOrders.filter((order) => (
-    selectedIncomingOrderIds.has(String(order._id))
-  )).length;
+  const selectedIncomingOrdersCount = selectedIncomingOrderRecords.length;
   const warehouseCompletedOrders = warehouseOrders.filter((order) => order.status === "delivered");
   const filteredWarehouseCompletedOrders = sortOrdersByCreatedAtDesc(warehouseCompletedOrders);
   const printableWarehouseCompletedOrders = filteredWarehouseCompletedOrders.filter((order) => !order.invoiceVoided);
+  const selectedCompletedOrderIds = new Set(selectedCompletedOrderRecords.map((order) => String(order._id)));
   const areAllFilteredCompletedOrdersSelected = printableWarehouseCompletedOrders.length > 0
     && printableWarehouseCompletedOrders.every((order) => selectedCompletedOrderIds.has(String(order._id)));
-  const selectedCompletedOrdersCount = printableWarehouseCompletedOrders.filter((order) => (
-    selectedCompletedOrderIds.has(String(order._id))
-  )).length;
+  const selectedCompletedOrdersCount = selectedCompletedOrderRecords.length;
   const warehouseAllItemsChecked = warehousePricedItems.length === 0
     ? warehouseGiftPricedItems.length > 0
     : warehousePricedItems.every((item) => Boolean(warehouseOrderChecklist[item.productId]));
@@ -15439,41 +15452,24 @@ export default function App() {
   }
 
   function toggleCompletedOrderSelection(orderId: string, selected: boolean) {
-    setSelectedCompletedOrderIds((current) => {
-      const next = new Set(current);
+    const order = printableWarehouseCompletedOrders.find((entry) => String(entry._id) === orderId)
+      ?? selectedCompletedOrderRecords.find((entry) => String(entry._id) === orderId);
 
-      if (selected) {
-        next.add(orderId);
-      } else {
-        next.delete(orderId);
-      }
-
-      return next;
-    });
+    setSelectedCompletedOrderRecords((current) => (
+      selected && order
+        ? toggleWarehouseOrderSelectionRecords(current, [order], true)
+        : current.filter((entry) => String(entry._id) !== orderId)
+    ));
   }
 
   function toggleAllFilteredCompletedOrders(selected: boolean) {
-    setSelectedCompletedOrderIds((current) => {
-      const next = new Set(current);
-
-      printableWarehouseCompletedOrders.forEach((order) => {
-        const orderId = String(order._id);
-
-        if (selected) {
-          next.add(orderId);
-        } else {
-          next.delete(orderId);
-        }
-      });
-
-      return next;
-    });
+    setSelectedCompletedOrderRecords((current) => (
+      toggleWarehouseOrderSelectionRecords(current, printableWarehouseCompletedOrders, selected)
+    ));
   }
 
   async function handlePrintSelectedCompletedOrders() {
-    const selectedOrders = printableWarehouseCompletedOrders.filter((order) => (
-      selectedCompletedOrderIds.has(String(order._id))
-    ));
+    const selectedOrders = selectedCompletedOrderRecords;
 
     if (selectedOrders.length === 0) {
       setWarehouseOrderCompletionStatus({
@@ -15534,7 +15530,7 @@ export default function App() {
       openPdfInNewTab(pdf, fileName);
 
       await Promise.all(selectedOrders.map((order) => logWarehouseOrderReprint(String(order._id))));
-      setSelectedCompletedOrderIds(new Set());
+      setSelectedCompletedOrderRecords([]);
 
       if (selectedWarehouseOrderDetail
         && selectedOrders.some((order) => String(order._id) === String(selectedWarehouseOrderDetail._id))) {
@@ -15657,35 +15653,20 @@ export default function App() {
   }
 
   function toggleIncomingOrderSelection(orderId: string, selected: boolean) {
-    setSelectedIncomingOrderIds((current) => {
-      const next = new Set(current);
+    const order = filteredWarehouseIncomingOrders.find((entry) => String(entry._id) === orderId)
+      ?? selectedIncomingOrderRecords.find((entry) => String(entry._id) === orderId);
 
-      if (selected) {
-        next.add(orderId);
-      } else {
-        next.delete(orderId);
-      }
-
-      return next;
-    });
+    setSelectedIncomingOrderRecords((current) => (
+      selected && order
+        ? toggleWarehouseOrderSelectionRecords(current, [order], true)
+        : current.filter((entry) => String(entry._id) !== orderId)
+    ));
   }
 
   function toggleAllFilteredIncomingOrders(selected: boolean) {
-    setSelectedIncomingOrderIds((current) => {
-      const next = new Set(current);
-
-      filteredWarehouseIncomingOrders.forEach((order) => {
-        const orderId = String(order._id);
-
-        if (selected) {
-          next.add(orderId);
-        } else {
-          next.delete(orderId);
-        }
-      });
-
-      return next;
-    });
+    setSelectedIncomingOrderRecords((current) => (
+      toggleWarehouseOrderSelectionRecords(current, filteredWarehouseIncomingOrders, selected)
+    ));
   }
 
   async function fetchWarehouseDispatchDocument(order: SellerOrderRecord): Promise<CommercialInvoiceDocumentInput> {
@@ -15800,7 +15781,7 @@ export default function App() {
     const { pdf, fileName } = await buildCommercialInvoiceBatchPdf(documents);
     const openedInTab = openPdfInNewTab(pdf, fileName, { previewWindow: options?.previewWindow });
     await refreshWarehouseOrders();
-    setSelectedIncomingOrderIds(new Set());
+    setSelectedIncomingOrderRecords([]);
     setSelectedWarehouseOrderDetail(null);
     setWarehouseOrderCompletionStatus({
       tone: "success",
@@ -15815,9 +15796,7 @@ export default function App() {
   }
 
   async function handlePrintSelectedIncomingOrders() {
-    const selectedOrders = filteredWarehouseIncomingOrders.filter((order) => (
-      selectedIncomingOrderIds.has(String(order._id))
-    ));
+    const selectedOrders = selectedIncomingOrderRecords;
 
     // Open while still in the click gesture so the browser allows the PDF tab later.
     const previewWindow = selectedOrders.length > 0
