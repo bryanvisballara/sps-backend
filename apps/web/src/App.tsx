@@ -3634,6 +3634,63 @@ function downloadDataTableExcel({
   XLSX.writeFile(workbook, `${fileName}.xlsx`);
 }
 
+const PRODUCT_MIGRATION_TEMPLATE_COLUMNS = [
+  "SKU",
+  "PRODUCTO",
+  "DESCRIPCION",
+  "CATEGORIA",
+  "PROVEEDOR",
+  "PRESENTACION",
+  "TIPO CONTENEDOR",
+  "PRECIO DE VENTA",
+  "PRECIO_VARIABLE",
+  "COSTO",
+  "COSTO_COMPRA_ARUBA_USD",
+  "TASA_USD_AWG",
+  "PESO KG",
+  "DISPLAY",
+  "UNIDADES",
+  "UNIDAD_CAJA",
+  "LARGO",
+  "ANCHO",
+  "ALTO",
+  "ALERTA INVENTARIO",
+  "COMPARTIR_ARUBA",
+  "ACTIVO",
+] as const;
+
+function downloadProductMigrationTemplate() {
+  const emptyRow = Object.fromEntries(PRODUCT_MIGRATION_TEMPLATE_COLUMNS.map((column) => [column, ""]));
+  const productsSheet = XLSX.utils.json_to_sheet(
+    Array.from({ length: 12 }, () => ({ ...emptyRow })),
+    { header: [...PRODUCT_MIGRATION_TEMPLATE_COLUMNS] },
+  );
+  productsSheet["!cols"] = PRODUCT_MIGRATION_TEMPLATE_COLUMNS.map((column) => ({
+    wch: Math.max(18, column.length + 4),
+  }));
+
+  const instructionsSheet = XLSX.utils.json_to_sheet([
+    { Campo: "SKU", Uso: "Codigo unico. Si ya existe, se actualiza el producto." },
+    { Campo: "PRODUCTO", Uso: "Nombre del producto. Obligatorio." },
+    { Campo: "DESCRIPCION", Uso: "Texto de factura, por ejemplo CAJA X 12 UN." },
+    { Campo: "CATEGORIA", Uso: "Obligatorio. Si no existe, se crea automaticamente." },
+    { Campo: "PROVEEDOR", Uso: "Si se deja vacio, se usa IMPORTADO SPS ARUBA." },
+    { Campo: "PRESENTACION", Uso: "kg, lb, unidad, paquete o caja." },
+    { Campo: "TIPO CONTENEDOR", Uso: "seco o refrigerado. Obligatorio." },
+    { Campo: "PRECIO DE VENTA", Uso: "Precio en AWG. Obligatorio." },
+    { Campo: "PRECIO_VARIABLE", Uso: "si o no." },
+    { Campo: "DISPLAY / UNIDADES / UNIDAD_CAJA", Uso: "Empaque. UNIDAD_CAJA: kg, lb, unidad o paquete." },
+    { Campo: "COMPARTIR_ARUBA / ACTIVO", Uso: "si o no." },
+    { Campo: "LARGO / ANCHO / ALTO", Uso: "Medidas de caja en centimetros." },
+  ]);
+  instructionsSheet["!cols"] = [{ wch: 36 }, { wch: 72 }];
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, productsSheet, "Productos");
+  XLSX.utils.book_append_sheet(workbook, instructionsSheet, "Instrucciones");
+  XLSX.writeFile(workbook, "plantilla-migracion-productos.xlsx");
+}
+
 function buildOrderGiftItemKey(productId: string, stockRowId: string) {
   return `${productId}::${stockRowId || "sin-lote"}`;
 }
@@ -25226,6 +25283,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <button className="ghost-button action-secondary-button" type="button" onClick={openProductImportPage}>
                         Importar desde Excel
                       </button>
+                      <button className="ghost-button action-secondary-button" type="button" onClick={downloadProductMigrationTemplate}>
+                        Plantilla migración
+                      </button>
                     </div>
                   </>
                 ) : (
@@ -31514,6 +31574,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                   <p className="product-import-note">
                     Si el Excel trae encabezados equivalentes en español o inglés, el backend intenta reconocerlos también.
                   </p>
+                  <button className="ghost-button action-secondary-button" type="button" onClick={downloadProductMigrationTemplate}>
+                    Plantilla migración
+                  </button>
                 </div>
 
                 <div className="product-import-card">
