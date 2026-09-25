@@ -6514,6 +6514,7 @@ export default function App() {
   const isStaffOrderComposerActive = activeSection === "create-order" || activeSection === "direct-invoice";
   const isDirectInvoiceComposer = activeSection === "direct-invoice";
   const canEditStaffOrderPricing = canCreateStaffOrders(sessionUser?.role) && isStaffOrderComposerActive;
+  const canEditStaffOrderGrandTotal = canEditStaffOrderPricing && (isDirectInvoiceComposer || Boolean(editingStaffOrder));
   const activeComposerRoutes = isStaffOrderComposerActive ? staffOrderRoutes : sellerRoutes;
   const selectedSellerRoute = activeComposerRoutes.find((route) => (route._id ?? route.code) === selectedSellerRouteId) ?? null;
   const selectedSellerDay = selectedSellerRoute?.days.find((day) => day.day === selectedSellerDayKey) ?? null;
@@ -6784,17 +6785,36 @@ export default function App() {
     return Number.isFinite(parsed) ? parsed : NaN;
   }
 
+  function resolveSellerDraftDescription(
+    product: Pick<SellerClientProduct, "productId"> & Partial<Pick<SellerClientProduct, "name" | "description" | "displaysPerBox" | "unitsPerBox" | "unitsPerBoxUnit">>,
+    existingDescription?: string,
+  ) {
+    const stored = String(existingDescription ?? "").trim();
+
+    if (stored) {
+      return stored;
+    }
+
+    return resolvePersistedLineDescription({
+      name: product.name,
+      productDescription: product.description,
+      displaysPerBox: product.displaysPerBox,
+      unitsPerBox: product.unitsPerBox,
+      unitsPerBoxUnit: product.unitsPerBoxUnit,
+      productOption: productOptionsById.get(product.productId),
+    });
+  }
+
   function buildSellerOrderDraftEntry(
-    product: Pick<SellerClientProduct, "productId" | "salePrice" | "description" | "promotion">,
+    product: Pick<SellerClientProduct, "productId" | "salePrice" | "description" | "promotion"> & Partial<Pick<SellerClientProduct, "name" | "displaysPerBox" | "unitsPerBox" | "unitsPerBoxUnit">>,
     existing?: SellerOrderDraft[string],
   ) {
     const defaultSalePrice = getDefaultSellerDraftSalePrice(product);
-    const defaultDescription = String(product.description ?? "").trim();
     const salePriceAwg = String(existing?.salePriceAwg ?? "").trim() !== ""
       ? String(existing?.salePriceAwg)
       : defaultSalePrice;
     const quantity = existing?.quantity ?? "";
-    const quantityValue = Number(quantity || 0);
+    const quantityValue = parseDraftMoneyInput(quantity);
     const unitPrice = resolveSellerDraftUnitPrice(product, { salePriceAwg });
     const derivedSubtotal = Number.isFinite(quantityValue) && quantityValue >= 0
       ? formatSellerDraftMoney(unitPrice * Math.max(0, quantityValue))
@@ -6805,7 +6825,7 @@ export default function App() {
       quantity,
       notes: existing?.notes ?? "",
       salePriceAwg,
-      description: existing?.description ?? defaultDescription,
+      description: resolveSellerDraftDescription(product, existing?.description),
       // Keep the typed subtotal while editing. Only seed from price × qty when absent.
       lineSubtotalAwg: existing
         ? String(existing.lineSubtotalAwg ?? "")
@@ -6853,7 +6873,7 @@ export default function App() {
       return {
         productId: product.productId,
         stockCurrent,
-        quantity: Number(draft.quantity || 0),
+        quantity: parseDraftMoneyInput(draft.quantity),
         stockRowId: product.promotion?.stockRowId,
         salePriceAwg: roundCurrencyValue(Math.max(0, resolvedSalePrice)),
         notes: draft.notes.trim(),
@@ -9905,13 +9925,22 @@ export default function App() {
     const catalogProduct = [...sellerProductCatalog.expiringSoon, ...sellerProductCatalog.products]
       .find((product) => product.productId === productId);
     const fallbackPrice = Number(assignedProduct?.promotion?.promotionSalePrice ?? assignedProduct?.salePrice ?? catalogProduct?.salePrice ?? 0);
-    const fallbackDescription = String(assignedProduct?.description ?? "").trim();
+    const productOption = productOptionsById.get(productId);
+    const fallbackDescription = resolveSellerDraftDescription({
+      productId,
+      name: assignedProduct?.name ?? catalogProduct?.name ?? productOption?.label,
+      description: assignedProduct?.description || productOption?.description,
+      displaysPerBox: assignedProduct?.displaysPerBox ?? catalogProduct?.displaysPerBox ?? productOption?.displaysPerBox,
+      unitsPerBox: assignedProduct?.unitsPerBox ?? catalogProduct?.unitsPerBox ?? productOption?.unitsPerBox,
+      unitsPerBoxUnit: assignedProduct?.unitsPerBoxUnit ?? catalogProduct?.unitsPerBoxUnit ?? productOption?.unitsPerBoxUnit,
+    });
 
     setSellerOrderDraft((current) => {
       const existing = current[productId];
-      const hasQuantity = String(existing?.quantity ?? "").trim() !== "" && Number(existing?.quantity || 0) > 0;
+      const existingQuantity = parseDraftMoneyInput(existing?.quantity ?? "");
+      const hasQuantity = Number.isFinite(existingQuantity) && existingQuantity > 0;
       const quantity = hasQuantity ? String(existing?.quantity) : "1";
-      const quantityValue = Number(quantity || 0);
+      const quantityValue = hasQuantity ? existingQuantity : 1;
       const salePriceAwg = String(existing?.salePriceAwg ?? "").trim() !== ""
         ? String(existing?.salePriceAwg)
         : formatSellerDraftMoney(fallbackPrice);
@@ -9924,7 +9953,7 @@ export default function App() {
           quantity,
           notes: existing?.notes ?? "",
           salePriceAwg,
-          description: existing?.description ?? fallbackDescription,
+          description: String(existing?.description ?? "").trim() || fallbackDescription,
           lineSubtotalAwg: formatSellerDraftMoney(
             (Number.isFinite(unitPrice) ? unitPrice : fallbackPrice) * (Number.isFinite(quantityValue) ? Math.max(0, quantityValue) : 0),
           ),
@@ -9940,7 +9969,7 @@ export default function App() {
 
         setSellerOrderDraft((current) => {
           const existing = current[productId];
-          const quantityValue = Number(existing?.quantity || 0);
+          const quantityValue = parseDraftMoneyInput(existing?.quantity ?? "");
 
           return {
             ...current,
@@ -9949,7 +9978,7 @@ export default function App() {
               quantity: existing?.quantity ?? "1",
               notes: existing?.notes ?? "",
               salePriceAwg: formatSellerDraftMoney(unitPrice),
-              description: existing?.description ?? fallbackDescription,
+              description: String(existing?.description ?? "").trim() || fallbackDescription,
               lineSubtotalAwg: formatSellerDraftMoney(
                 unitPrice * (Number.isFinite(quantityValue) ? Math.max(0, quantityValue) : 0),
               ),
@@ -10065,9 +10094,8 @@ export default function App() {
         </button>
         <input
           className="catalog-price-input seller-order-input"
-          type="number"
-          min="0"
-          step="any"
+          type="text"
+          inputMode="decimal"
           value={options.value}
           placeholder="0"
           onChange={(event) => options.onChange(event.target.value)}
@@ -10084,27 +10112,43 @@ export default function App() {
     );
   }
 
+  function getSellerPickerQuantityRaw(
+    product: Pick<SellerClientProduct, "productId" | "salePrice" | "description" | "promotion">,
+  ) {
+    const existing = sellerOrderDraft[product.productId];
+
+    if (!existing) {
+      return "1";
+    }
+
+    return String(existing.quantity ?? "");
+  }
+
   function getSellerPickerQuantity(
     product: Pick<SellerClientProduct, "productId" | "salePrice" | "description" | "promotion">,
   ) {
-    const quantityValue = Number(getSellerOrderDraftForProduct(product).quantity || 0);
-    return Number.isFinite(quantityValue) && quantityValue > 0 ? quantityValue : 1;
+    const quantityValue = parseDraftMoneyInput(getSellerPickerQuantityRaw(product));
+    return Number.isFinite(quantityValue) && quantityValue > 0 ? quantityValue : 0;
   }
 
   function setSellerPickerQuantity(
     product: Pick<SellerClientProduct, "productId" | "salePrice" | "description" | "promotion">,
     nextQuantity: number | string,
   ) {
-    const parsed = Number(nextQuantity);
-    const quantity = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
-    handleSellerOrderDraftChange(product, "quantity", String(quantity));
+    if (typeof nextQuantity === "number") {
+      const quantity = Number.isFinite(nextQuantity) && nextQuantity > 0 ? nextQuantity : 0;
+      handleSellerOrderDraftChange(product, "quantity", quantity > 0 ? String(quantity) : "");
+      return;
+    }
+
+    handleSellerOrderDraftChange(product, "quantity", nextQuantity);
   }
 
   function adjustSellerPickerQuantity(
     product: Pick<SellerClientProduct, "productId" | "salePrice" | "description" | "promotion">,
     delta: number,
   ) {
-    setSellerPickerQuantity(product, getSellerPickerQuantity(product) + delta);
+    setSellerPickerQuantity(product, Math.max(0, getSellerPickerQuantity(product) + delta));
   }
 
   function renderSellerInlineAddControls(
@@ -10126,8 +10170,8 @@ export default function App() {
         <label className="seller-product-catalog-field seller-product-catalog-field-quantity">
           <span>Cantidad</span>
           {renderSellerQuantityStepper({
-            value: quantityValue,
-            disabledDecrease: quantityValue <= 1,
+            value: getSellerPickerQuantityRaw(product),
+            disabledDecrease: quantityValue <= 0,
             decreaseLabel: "Disminuir cantidad",
             increaseLabel: "Aumentar cantidad",
             onDecrease: () => adjustSellerPickerQuantity(product, -1),
@@ -10342,7 +10386,7 @@ export default function App() {
   ) {
     const { mode } = options;
     const draft = getSellerOrderDraftForProduct(product);
-    const quantityValue = Number(draft.quantity || 0);
+    const quantityValue = parseDraftMoneyInput(draft.quantity);
     const unitPrice = resolveSellerDraftUnitPrice(product, draft);
     const derivedLineTotal = roundCurrencyValue(unitPrice * (Number.isFinite(quantityValue) ? Math.max(0, quantityValue) : 0));
     const lineTotalDisplay = draft.lineSubtotalAwg.trim() !== ""
@@ -10451,9 +10495,8 @@ export default function App() {
                 </button>
                 <input
                   className="catalog-price-input seller-order-input"
-                  type="number"
-                  min="0"
-                  step="any"
+                  type="text"
+                  inputMode="decimal"
                   value={draft.quantity}
                   placeholder="0"
                   onChange={(event) => handleSellerOrderDraftChange(product, "quantity", event.target.value)}
@@ -10585,7 +10628,7 @@ export default function App() {
   function renderSellerRouteOrderExtras(options?: { includeGifts?: boolean; includeActions?: boolean }) {
     const includeGifts = options?.includeGifts ?? true;
     const includeActions = options?.includeActions ?? true;
-    const giftQuantityValue = Number(sellerGiftDraft.quantity || 0);
+    const giftQuantityValue = parseDraftMoneyInput(sellerGiftDraft.quantity);
 
     return (
       <>
@@ -10650,18 +10693,20 @@ export default function App() {
                   type="button"
                   aria-label="Disminuir cantidad de obsequio"
                   disabled={!Number.isFinite(giftQuantityValue) || giftQuantityValue <= 0}
-                  onClick={() => setSellerGiftDraft((current) => ({
-                    ...current,
-                    quantity: String(Math.max(0, Number(current.quantity || 0) - 1)),
-                  }))}
+                  onClick={() => setSellerGiftDraft((current) => {
+                    const currentQuantity = parseDraftMoneyInput(current.quantity);
+                    return {
+                      ...current,
+                      quantity: String(Math.max(0, (Number.isFinite(currentQuantity) ? currentQuantity : 0) - 1)),
+                    };
+                  })}
                 >
                   −
                 </button>
                 <input
                   className="catalog-price-input seller-order-input"
-                  type="number"
-                  min="0"
-                  step="any"
+                  type="text"
+                  inputMode="decimal"
                   value={sellerGiftDraft.quantity}
                   onChange={(event) => setSellerGiftDraft((current) => ({ ...current, quantity: event.target.value }))}
                 />
@@ -10669,10 +10714,13 @@ export default function App() {
                   className="seller-quantity-stepper-btn"
                   type="button"
                   aria-label="Aumentar cantidad de obsequio"
-                  onClick={() => setSellerGiftDraft((current) => ({
-                    ...current,
-                    quantity: String(Math.max(0, Number(current.quantity || 0) + 1)),
-                  }))}
+                  onClick={() => setSellerGiftDraft((current) => {
+                    const currentQuantity = parseDraftMoneyInput(current.quantity);
+                    return {
+                      ...current,
+                      quantity: String(Math.max(0, (Number.isFinite(currentQuantity) ? currentQuantity : 0) + 1)),
+                    };
+                  })}
                 >
                   +
                 </button>
@@ -11055,7 +11103,7 @@ export default function App() {
               <p className="route-helper-text">
                 {isEditingReceivedOrder
                   ? "Modifica productos, cantidades, notas y fecha de entrega del pedido recibido. Al guardar, se actualiza el mismo pedido en bodega."
-                  : "Selecciona ruta, cliente y productos. Puedes cambiar el precio y el total solo de este pedido, sin modificar el catalogo."}
+                  : "Selecciona ruta, cliente y productos. Puedes cambiar el precio solo de este pedido, sin modificar el catalogo. El total se calcula automaticamente."}
               </p>
             </div>
             <div className="management-table-header-actions">
@@ -11162,13 +11210,13 @@ export default function App() {
                     <span>Total del pedido</span>
                     <small>
                       {sellerDraftedItems.length > 0
-                        ? canEditStaffOrderPricing
+                        ? canEditStaffOrderGrandTotal
                           ? "Puedes cambiar el total solo de este pedido"
                           : `${sellerDraftedItems.length} producto${sellerDraftedItems.length === 1 ? "" : "s"} con cantidad`
                         : "Agrega cantidades para calcular el total"}
                     </small>
                   </div>
-                  {canEditStaffOrderPricing ? (
+                  {canEditStaffOrderGrandTotal ? (
                     <label className="seller-order-cart-total-edit">
                       <input
                         className="catalog-price-input seller-order-input seller-order-cart-total-input"
@@ -11893,8 +11941,8 @@ export default function App() {
                       </small>
                     </div>
                     {renderSellerQuantityStepper({
-                      value: quantityValue,
-                      disabledDecrease: quantityValue <= 1,
+                      value: getSellerPickerQuantityRaw(product),
+                      disabledDecrease: quantityValue <= 0,
                       decreaseLabel: "Disminuir cantidad",
                       increaseLabel: "Aumentar cantidad",
                       onDecrease: () => adjustSellerPickerQuantity(product, -1),
@@ -18917,14 +18965,14 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
       if (field === "salePriceAwg") {
         // Price changed → keep quantity, recalculate subtotal.
-        const quantityValue = Number(next.quantity || 0);
+        const quantityValue = parseDraftMoneyInput(next.quantity);
         const unitPrice = resolveSellerDraftUnitPrice(product, next);
         next.lineSubtotalAwg = formatSellerDraftMoney(unitPrice * (Number.isFinite(quantityValue) ? Math.max(0, quantityValue) : 0));
       } else if (field === "lineSubtotalAwg") {
         // Keep the raw typed value; only update unit price when the number is complete.
         // Re-deriving subtotal here caused values like 0.99 to snap back while editing.
         next.lineSubtotalAwg = value;
-        const quantityValue = Number(next.quantity || 0);
+        const quantityValue = parseDraftMoneyInput(next.quantity);
         const subtotalValue = parseDraftMoneyInput(value);
 
         if (
@@ -18938,7 +18986,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       } else if (field === "quantity") {
         if (canEditStaffOrderPricing) {
           // Always keep unit price as reference; subtotal follows price × quantity.
-          const nextQuantity = Number(value || 0);
+          const nextQuantity = parseDraftMoneyInput(value);
           const unitPrice = resolveSellerDraftUnitPrice(product, existing);
           next.salePriceAwg = formatSellerDraftMoney(unitPrice) || existing.salePriceAwg || getDefaultSellerDraftSalePrice(product);
           next.lineSubtotalAwg = formatSellerDraftMoney(
@@ -18962,7 +19010,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
   ) {
     setSellerOrderDraft((current) => {
       const existing = buildSellerOrderDraftEntry(product, current[product.productId]);
-      const quantityValue = Number(existing.quantity || 0);
+      const quantityValue = parseDraftMoneyInput(existing.quantity);
       const next = { ...existing };
 
       if (field === "lineSubtotalAwg") {
@@ -19000,8 +19048,8 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
     delta: number,
   ) {
     const existing = getSellerOrderDraftForProduct(product);
-    const currentValue = Number(existing.quantity || 0);
-    const nextValue = Math.max(0, currentValue + delta);
+    const currentValue = parseDraftMoneyInput(existing.quantity);
+    const nextValue = Math.max(0, (Number.isFinite(currentValue) ? currentValue : 0) + delta);
     handleSellerOrderDraftChange(product, "quantity", nextValue === 0 ? "" : String(nextValue));
   }
 
@@ -19013,7 +19061,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
       return;
     }
 
-    const quantity = Number(sellerGiftDraft.quantity);
+    const quantity = parseDraftMoneyInput(sellerGiftDraft.quantity);
     const lots = inventoryLotsByProductId.get(product.value) ?? [];
     const stockRowId = sellerGiftDraft.stockRowId.trim();
 
