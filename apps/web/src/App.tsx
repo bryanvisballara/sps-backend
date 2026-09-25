@@ -3660,30 +3660,33 @@ const PRODUCT_MIGRATION_TEMPLATE_COLUMNS = [
 ] as const;
 
 function downloadProductMigrationTemplate() {
-  const emptyRow = Object.fromEntries(PRODUCT_MIGRATION_TEMPLATE_COLUMNS.map((column) => [column, ""]));
-  const productsSheet = XLSX.utils.json_to_sheet(
-    Array.from({ length: 12 }, () => ({ ...emptyRow })),
-    { header: [...PRODUCT_MIGRATION_TEMPLATE_COLUMNS] },
-  );
+  const emptyRows = Array.from({ length: 12 }, () => PRODUCT_MIGRATION_TEMPLATE_COLUMNS.map(() => ""));
+  const productsSheet = XLSX.utils.aoa_to_sheet([
+    ["Solo PRODUCTO y CATEGORIA son obligatorios. El resto se puede dejar vacio o borrar la columna."],
+    [...PRODUCT_MIGRATION_TEMPLATE_COLUMNS],
+    ...emptyRows,
+  ]);
+  productsSheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: PRODUCT_MIGRATION_TEMPLATE_COLUMNS.length - 1 } }];
   productsSheet["!cols"] = PRODUCT_MIGRATION_TEMPLATE_COLUMNS.map((column) => ({
     wch: Math.max(18, column.length + 4),
   }));
 
   const instructionsSheet = XLSX.utils.json_to_sheet([
-    { Campo: "SKU", Uso: "Codigo unico. Si ya existe, se actualiza el producto." },
-    { Campo: "PRODUCTO", Uso: "Nombre del producto. Obligatorio." },
-    { Campo: "DESCRIPCION", Uso: "Texto de factura, por ejemplo CAJA X 12 UN." },
-    { Campo: "CATEGORIA", Uso: "Obligatorio. Si no existe, se crea automaticamente." },
-    { Campo: "PROVEEDOR", Uso: "Si se deja vacio, se usa IMPORTADO SPS ARUBA." },
-    { Campo: "PRESENTACION", Uso: "kg, lb, unidad, paquete o caja." },
-    { Campo: "TIPO CONTENEDOR", Uso: "seco o refrigerado. Obligatorio." },
-    { Campo: "PRECIO DE VENTA", Uso: "Precio en AWG. Obligatorio." },
-    { Campo: "PRECIO_VARIABLE", Uso: "si o no." },
-    { Campo: "DISPLAY / UNIDADES / UNIDAD_CAJA", Uso: "Empaque. UNIDAD_CAJA: kg, lb, unidad o paquete." },
-    { Campo: "COMPARTIR_ARUBA / ACTIVO", Uso: "si o no." },
-    { Campo: "LARGO / ANCHO / ALTO", Uso: "Medidas de caja en centimetros." },
+    { Campo: "PRODUCTO", Obligatorio: "Si", Uso: "Nombre del producto." },
+    { Campo: "CATEGORIA", Obligatorio: "Si", Uso: "Si no existe, se crea automaticamente." },
+    { Campo: "SKU", Obligatorio: "No", Uso: "Si se deja vacio, se genera desde el nombre. Si ya existe, se actualiza." },
+    { Campo: "DESCRIPCION", Obligatorio: "No", Uso: "Texto de factura, por ejemplo CAJA X 12 UN." },
+    { Campo: "PROVEEDOR", Obligatorio: "No", Uso: "Si se deja vacio, se usa IMPORTADO SPS ARUBA." },
+    { Campo: "PRESENTACION", Obligatorio: "No", Uso: "kg, lb, unidad, paquete o caja. Por defecto: unidad." },
+    { Campo: "TIPO CONTENEDOR", Obligatorio: "No", Uso: "seco o refrigerado. Por defecto: seco." },
+    { Campo: "PRECIO DE VENTA", Obligatorio: "No", Uso: "Precio en AWG. Por defecto: 0." },
+    { Campo: "PRECIO_VARIABLE", Obligatorio: "No", Uso: "si o no. Por defecto: no." },
+    { Campo: "COSTO / COSTO_COMPRA_ARUBA_USD / TASA_USD_AWG", Obligatorio: "No", Uso: "Costos y tasa. La tasa por defecto es 1.79." },
+    { Campo: "PESO KG / DISPLAY / UNIDADES / UNIDAD_CAJA", Obligatorio: "No", Uso: "Empaque. UNIDAD_CAJA: kg, lb, unidad o paquete." },
+    { Campo: "LARGO / ANCHO / ALTO / ALERTA INVENTARIO", Obligatorio: "No", Uso: "Medidas en cm y alerta de stock." },
+    { Campo: "COMPARTIR_ARUBA / ACTIVO", Obligatorio: "No", Uso: "si o no. Por defecto: si." },
   ]);
-  instructionsSheet["!cols"] = [{ wch: 36 }, { wch: 72 }];
+  instructionsSheet["!cols"] = [{ wch: 42 }, { wch: 14 }, { wch: 72 }];
 
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, productsSheet, "Productos");
@@ -31552,7 +31555,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               <div className="product-import-layout">
                 <div className="product-import-card">
                   <h3>Plantilla esperada</h3>
-                  <p>La importación está preparada para una plantilla de productos con columnas de identificación y datos base del catálogo.</p>
+                  <p>Solo PRODUCTO y CATEGORIA son obligatorios. El resto de columnas se puede dejar vacio o quitarlas del Excel.</p>
                   <div className="product-import-tags">
                     {[
                       "SKU",
@@ -31572,7 +31575,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                     ))}
                   </div>
                   <p className="product-import-note">
-                    Si el Excel trae encabezados equivalentes en español o inglés, el backend intenta reconocerlos también.
+                    Si falta una columna opcional, el sistema usa valores por defecto (contenedor seco, precio 0, compartir con Aruba, etc.).
                   </p>
                   <button className="ghost-button action-secondary-button" type="button" onClick={downloadProductMigrationTemplate}>
                     Plantilla migración

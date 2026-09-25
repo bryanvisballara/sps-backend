@@ -9289,13 +9289,11 @@ apiRouter.post("/management/products/import-excel", async (request, response) =>
     const headerRowIndex = detectImportHeaderRow(rawRows, [
       ["categoria", "category"],
       ["nombre completo del producto/servicio", "producto", "nombre", "product", "product_name"],
-      ["precio de venta", "precio_venta", "sale_price", "sale_price_awg"],
-      ["tipo contenedor", "tipo_contenedor", "container_type"],
     ]);
 
     if (headerRowIndex === -1) {
       response.status(400).json({
-        message: "No se encontro la fila de encabezados en el Excel. Revisa que la plantilla incluya categoria, nombre, precio de venta y tipo de contenedor.",
+        message: "No se encontro la fila de encabezados en el Excel. Solo son obligatorios PRODUCTO y CATEGORIA; el resto de columnas es opcional.",
       });
       return;
     }
