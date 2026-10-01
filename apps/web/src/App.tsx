@@ -6043,6 +6043,7 @@ export default function App() {
   const [selectedSellerStoreId, setSelectedSellerStoreId] = useState("");
   const [isSellerStorePickerOpen, setIsSellerStorePickerOpen] = useState(true);
   const [sellerRouteStoreSearch, setSellerRouteStoreSearch] = useState("");
+  const [isStaffRouteClientsOpen, setIsStaffRouteClientsOpen] = useState(false);
   const [selectedSellerClientId, setSelectedSellerClientId] = useState("");
   const [sellerClientAssignmentDraft, setSellerClientAssignmentDraft] = useState<string[]>([]);
   const [sellerClientAssignmentStatus, setSellerClientAssignmentStatus] = useState<CreationStatus | null>(null);
@@ -6666,6 +6667,7 @@ export default function App() {
     setSelectedSellerDayKey("");
     setSelectedSellerStoreId("");
     setSellerRouteStoreSearch("");
+    setIsStaffRouteClientsOpen(false);
     setSellerOrderDraft({});
     setSellerOrderCartProductIds([]);
     setSellerGiftDraftItems([]);
@@ -9290,6 +9292,7 @@ export default function App() {
 
   useEffect(() => {
     setSellerRouteStoreSearch("");
+    setIsStaffRouteClientsOpen(false);
   }, [selectedSellerRouteId]);
 
   useEffect(() => {
@@ -11093,41 +11096,78 @@ export default function App() {
             {selectedSellerDay ? (
               <>
                 <div className="seller-route-client-panel">
-                  <label className="field field-full">
-                    <span>Buscar tienda</span>
-                    <input
-                      type="search"
-                      placeholder="Buscar entre todas las tiendas de la ruta"
-                      value={sellerRouteStoreSearch}
-                      onChange={(event) => setSellerRouteStoreSearch(event.target.value)}
-                    />
-                  </label>
+                  <div className="seller-store-toolbar">
+                    <label className="field field-full">
+                      <span>Buscar tienda</span>
+                      <input
+                        type="search"
+                        placeholder="Buscar entre todas las tiendas de la ruta"
+                        value={sellerRouteStoreSearch}
+                        onChange={(event) => setSellerRouteStoreSearch(event.target.value)}
+                      />
+                    </label>
+                    <button
+                      className={`ghost-button staff-view-clients-btn${isStaffRouteClientsOpen ? " is-active" : ""}`}
+                      type="button"
+                      onClick={() => setIsStaffRouteClientsOpen((open) => !open)}
+                    >
+                      {isStaffRouteClientsOpen ? "Ocultar clientes" : "Ver clientes"}
+                    </button>
+                  </div>
 
                   <div className="field field-full">
-                    <span>{normalizedSellerRouteStoreSearch ? "Resultados en toda la ruta" : "Cliente de la ruta"}</span>
+                    <span>
+                      {normalizedSellerRouteStoreSearch
+                        ? "Resultados en toda la ruta"
+                        : isStaffRouteClientsOpen
+                          ? "Cliente de la ruta"
+                          : selectedSellerStore
+                            ? "Cliente seleccionado"
+                            : "Cliente de la ruta"}
+                    </span>
                     <p className="seller-route-store-search-meta">
                       {normalizedSellerRouteStoreSearch
                         ? `${sellerRouteStoresForPanel.length} de ${allSelectedSellerRouteStores.length} tiendas`
-                        : `${sellerRouteStoresForPanel.length} tiendas`}
+                        : isStaffRouteClientsOpen
+                          ? `${sellerRouteStoresForPanel.length} tiendas`
+                          : selectedSellerStore
+                            ? "Los demás resultados se ocultan. Busca o pulsa Ver clientes para cambiar."
+                            : "Busca una tienda o pulsa Ver clientes para ver el listado."}
                     </p>
                     <div className="seller-route-store-chips">
-                      {sellerRouteStoresForPanel.length > 0 ? sellerRouteStoresForPanel.map((store) => (
+                      {normalizedSellerRouteStoreSearch || isStaffRouteClientsOpen ? (
+                        sellerRouteStoresForPanel.length > 0 ? sellerRouteStoresForPanel.map((store) => (
+                          <button
+                            key={`${store.routeDay}-${store.storeId}`}
+                            className={`seller-route-store-chip ${selectedSellerStoreId === store.storeId ? "is-active" : ""}`}
+                            type="button"
+                            onClick={() => {
+                              handleSelectSellerRouteStore(store);
+                              setIsStaffRouteClientsOpen(false);
+                            }}
+                          >
+                            {normalizedSellerRouteStoreSearch ? (
+                              <span className="seller-route-store-chip-content">
+                                <strong>{store.storeName}</strong>
+                                <span>{formatRouteDayLabel(store.routeDay)}</span>
+                              </span>
+                            ) : store.storeName}
+                          </button>
+                        )) : (
+                          <p className="route-empty-state">
+                            {normalizedSellerRouteStoreSearch
+                              ? "No hay tiendas que coincidan con la búsqueda."
+                              : "No hay tiendas en este día."}
+                          </p>
+                        )
+                      ) : selectedSellerStore ? (
                         <button
-                          key={`${store.routeDay}-${store.storeId}`}
-                          className={`seller-route-store-chip ${selectedSellerStoreId === store.storeId ? "is-active" : ""}`}
+                          className="seller-route-store-chip is-active"
                           type="button"
-                          onClick={() => handleSelectSellerRouteStore(store)}
                         >
-                          {normalizedSellerRouteStoreSearch ? (
-                            <span className="seller-route-store-chip-content">
-                              <strong>{store.storeName}</strong>
-                              <span>{formatRouteDayLabel(store.routeDay)}</span>
-                            </span>
-                          ) : store.storeName}
+                          {selectedSellerStore.storeName}
                         </button>
-                      )) : (
-                        <p className="route-empty-state">No hay tiendas que coincidan con la búsqueda.</p>
-                      )}
+                      ) : null}
                     </div>
                   </div>
 
@@ -11208,6 +11248,113 @@ export default function App() {
     );
   }
 
+  function renderStaffOrderCartProductsTable() {
+    return (
+      <div className="table-wrap table-wrap--warehouse-items staff-order-cart-table-wrap">
+        <table className="data-table data-table--warehouse-order-items data-table--staff-order-cart">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Producto</th>
+              <th>Descripcion</th>
+              <th>Cantidad</th>
+              <th>Precio</th>
+              <th>Total</th>
+              <th>Quitar</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sellerOrderCartProducts.map((product) => {
+              const draft = getSellerOrderDraftForProduct(product);
+              const quantityValue = parseDraftMoneyInput(draft.quantity);
+              const unitPrice = resolveSellerDraftUnitPrice(product, draft);
+              const derivedLineTotal = roundCurrencyValue(unitPrice * (Number.isFinite(quantityValue) ? Math.max(0, quantityValue) : 0));
+              const lineTotalDisplay = draft.lineSubtotalAwg.trim() !== ""
+                ? draft.lineSubtotalAwg
+                : formatSellerDraftMoney(derivedLineTotal);
+
+              return (
+                <tr key={`staff-order-cart-${product.productId}`}>
+                  <td>{product.sku}</td>
+                  <td>{product.name}</td>
+                  <td>
+                    {canEditStaffOrderPricing ? (
+                      <input
+                        className="seller-order-note-input"
+                        type="text"
+                        value={draft.description}
+                        placeholder="Descripcion en factura"
+                        onChange={(event) => handleSellerOrderDraftChange(product, "description", event.target.value)}
+                      />
+                    ) : (
+                      draft.description || resolveVisibleProductDescription({
+                        name: product.name,
+                        productDescription: product.description,
+                        displaysPerBox: product.displaysPerBox,
+                        unitsPerBox: product.unitsPerBox,
+                        unitsPerBoxUnit: product.unitsPerBoxUnit,
+                        productOption: productOptionsById.get(product.productId),
+                      })
+                    )}
+                  </td>
+                  <td>
+                    <input
+                      className="warehouse-order-qty-input"
+                      type="text"
+                      inputMode="decimal"
+                      value={draft.quantity}
+                      placeholder="0"
+                      onChange={(event) => handleSellerOrderDraftChange(product, "quantity", event.target.value)}
+                    />
+                  </td>
+                  <td>
+                    {canEditStaffOrderPricing ? (
+                      <input
+                        className="warehouse-order-qty-input"
+                        type="text"
+                        inputMode="decimal"
+                        value={draft.salePriceAwg}
+                        placeholder="0.00"
+                        onChange={(event) => handleSellerOrderDraftChange(product, "salePriceAwg", event.target.value)}
+                        onBlur={() => commitSellerOrderLineMoneyField(product, "salePriceAwg")}
+                      />
+                    ) : (
+                      formatSellerDraftMoney(unitPrice)
+                    )}
+                  </td>
+                  <td>
+                    {canEditStaffOrderPricing ? (
+                      <input
+                        className="warehouse-order-qty-input"
+                        type="text"
+                        inputMode="decimal"
+                        value={lineTotalDisplay}
+                        placeholder="0.00"
+                        onChange={(event) => handleSellerOrderDraftChange(product, "lineSubtotalAwg", event.target.value)}
+                        onBlur={() => commitSellerOrderLineMoneyField(product, "lineSubtotalAwg")}
+                      />
+                    ) : (
+                      formatSellerDraftMoney(derivedLineTotal)
+                    )}
+                  </td>
+                  <td>
+                    <button
+                      className="ghost-button warehouse-order-remove-item"
+                      type="button"
+                      onClick={() => removeProductFromSellerOrderCart(product.productId)}
+                    >
+                      Quitar
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
   function renderSellerProductCatalogPanel(storeId: string | null, options?: { showOrderFields?: boolean }) {
     if (!storeId) {
       return null;
@@ -11262,9 +11409,7 @@ export default function App() {
               <p className="route-empty-state">Cargando productos...</p>
             ) : sellerOrderCartProducts.length > 0 ? (
               <>
-                <div className="seller-product-catalog-list">
-                  {sellerOrderCartProducts.map((product) => renderSellerAssignedProductRow(product, storeId, { mode: "cart" }))}
-                </div>
+                {renderStaffOrderCartProductsTable()}
                 <div className="seller-order-cart-total">
                   <div>
                     <span>Total del pedido</span>
@@ -32814,7 +32959,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               <p className="management-table-meta">
                 Periodo: {completedOrdersStartDate} a {completedOrdersEndDate}
                 {" · "}
-                El CSV sigue la plantilla de importacion de facturas con impuestos de QuickBooks.
+                El CSV sigue la plantilla de importacion de facturas con impuestos de QuickBooks. Las facturas anuladas salen con nota Anulada y valor 0.
               </p>
 
               <div className="table-wrap">

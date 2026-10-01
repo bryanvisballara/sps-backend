@@ -5431,6 +5431,20 @@ function canVoidDeliveredInvoice(role: string) {
   return role === "management" || role === "contabilidad" || role === "warehouse-aruba";
 }
 
+function withAnuladaInternalNote(existing: unknown) {
+  const notes = String(existing ?? "").trim();
+
+  if (!notes) {
+    return "Anulada";
+  }
+
+  if (/(^|\b)anulada\b/i.test(notes)) {
+    return notes;
+  }
+
+  return `Anulada. ${notes}`;
+}
+
 async function voidDeliveredInvoiceById(orderId: string, body: Record<string, unknown> = {}) {
   const order = await Order.findById(orderId).lean();
 
@@ -5455,6 +5469,7 @@ async function voidDeliveredInvoiceById(orderId: string, body: Record<string, un
   const invoiceNumber = Number(order.invoiceNumber ?? 0) || null;
   const voidReason = typeof body.voidReason === "string" ? body.voidReason.trim() : "";
   const voidedAt = new Date();
+  const nextInternalNotes = withAnuladaInternalNote(order.internalOrderNotes);
 
   await restoreOrderInventoryOnDelete(order);
   await deactivateCarteraForOrder(String(order._id));
@@ -5479,6 +5494,7 @@ async function voidDeliveredInvoiceById(orderId: string, body: Record<string, un
       invoiceVoidedByUserName: actor.userName,
       invoiceVoidedByRole: actor.role,
       invoiceVoidReason: voidReason,
+      internalOrderNotes: nextInternalNotes,
       // Keep status=delivered and invoiceNumber so the invoice remains visible
       // and the consecutive number is never reused.
     },

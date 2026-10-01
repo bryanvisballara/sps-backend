@@ -4105,6 +4105,16 @@ async function restoreOrderInventoryOnDelete(order) {
 function canVoidDeliveredInvoice(role) {
     return role === "management" || role === "contabilidad" || role === "warehouse-aruba";
 }
+function withAnuladaInternalNote(existing) {
+    const notes = String(existing ?? "").trim();
+    if (!notes) {
+        return "Anulada";
+    }
+    if (/(^|\b)anulada\b/i.test(notes)) {
+        return notes;
+    }
+    return `Anulada. ${notes}`;
+}
 async function voidDeliveredInvoiceById(orderId, body = {}) {
     const order = await Order.findById(orderId).lean();
     if (!order) {
@@ -4123,6 +4133,7 @@ async function voidDeliveredInvoiceById(orderId, body = {}) {
     const invoiceNumber = Number(order.invoiceNumber ?? 0) || null;
     const voidReason = typeof body.voidReason === "string" ? body.voidReason.trim() : "";
     const voidedAt = new Date();
+    const nextInternalNotes = withAnuladaInternalNote(order.internalOrderNotes);
     await restoreOrderInventoryOnDelete(order);
     await deactivateCarteraForOrder(String(order._id));
     await LogisticsInvoice.updateMany({ orderId: String(order._id), active: { $ne: false } }, {
@@ -4139,6 +4150,7 @@ async function voidDeliveredInvoiceById(orderId, body = {}) {
         invoiceVoidedByUserName: actor.userName,
         invoiceVoidedByRole: actor.role,
         invoiceVoidReason: voidReason,
+        internalOrderNotes: nextInternalNotes,
         // Keep status=delivered and invoiceNumber so the invoice remains visible
         // and the consecutive number is never reused.
     }, { new: true, runValidators: true }).lean();

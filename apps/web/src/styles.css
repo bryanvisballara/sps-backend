@@ -3720,6 +3720,23 @@ h1 {
   min-width: 760px;
 }
 
+.staff-order-cart-table-wrap {
+  margin: 12px 0 4px;
+}
+
+.table-wrap--warehouse-items .data-table--staff-order-cart td:nth-child(2),
+.table-wrap--warehouse-items .data-table--staff-order-cart td:nth-child(3) {
+  white-space: normal;
+  min-width: 160px;
+  max-width: 320px;
+  font-weight: 600;
+}
+
+.table-wrap--warehouse-items .data-table--staff-order-cart .seller-order-note-input {
+  width: 100%;
+  min-width: 160px;
+}
+
 .table-wrap--warehouse-items .data-table--warehouse-order-items .warehouse-order-notes-col {
   min-width: 140px;
   max-width: 260px;
@@ -5042,6 +5059,35 @@ h1 {
 .staff-order-composer-body {
   display: grid;
   gap: 1rem;
+}
+
+.staff-order-composer-body .seller-store-toolbar {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+}
+
+.staff-order-composer-body .staff-view-clients-btn {
+  height: 46px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.staff-order-composer-body .staff-view-clients-btn.is-active {
+  border-color: rgba(13, 148, 136, 0.35);
+  background: #ecfdf5;
+  color: #0f766e;
+}
+
+@media (max-width: 700px) {
+  .staff-order-composer-body .seller-store-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .staff-order-composer-body .staff-view-clients-btn {
+    width: 100%;
+  }
 }
 
 .staff-order-composer-body .creation-header.database-header {

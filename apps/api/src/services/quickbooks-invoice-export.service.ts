@@ -172,6 +172,28 @@ type ExportLineItem = {
   amount: number;
 };
 
+function withAnuladaInternalNote(existing: unknown) {
+  const notes = String(existing ?? "").trim();
+
+  if (!notes) {
+    return "Anulada";
+  }
+
+  if (/(^|\b)anulada\b/i.test(notes)) {
+    return notes;
+  }
+
+  return `Anulada. ${notes}`;
+}
+
+function resolveInvoiceExportMemo(order: { invoiceVoided?: unknown; internalOrderNotes?: unknown }) {
+  if (order.invoiceVoided === true) {
+    return withAnuladaInternalNote(order.internalOrderNotes);
+  }
+
+  return String(order.internalOrderNotes ?? "").trim();
+}
+
 function appendMissingGiftLines(existing: ExportLineItem[], gifts: ExportLineItem[]) {
   const giftedProductIds = new Set(
     existing
@@ -196,7 +218,7 @@ export async function buildQuickBooksInvoiceExportCsv(params: {
   const startDate = isValidDateKey(params.startDate ?? "") ? String(params.startDate) : defaults.startDate;
   const endDate = isValidDateKey(params.endDate ?? "") ? String(params.endDate) : defaults.endDate;
 
-  const deliveredOrders = await Order.find({ status: "delivered", invoiceVoided: { $ne: true } })
+  const deliveredOrders = await Order.find({ status: "delivered" })
     .sort({ deliveryDate: 1, updatedAt: 1 })
     .lean();
 
@@ -275,8 +297,9 @@ export async function buildQuickBooksInvoiceExportCsv(params: {
     const dueDateKey = resolveDueDateKey(invoiceDateKey, terms);
     // Prefer store address over deliveryZone snapshots that sometimes glue name+address.
     const location = String(store?.address ?? order.deliveryZone ?? "").trim();
-    // QuickBooks Memo: only warehouse internal notes (never route, seller, or customer-facing notes).
-    const memo = String(order.internalOrderNotes ?? "").trim();
+    const isVoidedInvoice = order.invoiceVoided === true;
+    // QuickBooks Memo: warehouse internal notes. Voided invoices always say Anulada.
+    const memo = resolveInvoiceExportMemo(order);
 
     const resolveProduct = (productId?: string, productSku?: string) => (
       productsById.get(String(productId ?? ""))
@@ -349,10 +372,26 @@ export async function buildQuickBooksInvoiceExportCsv(params: {
       });
 
     const lineItems = appendMissingGiftLines(billedLineItems, mapGiftExportLines())
-      .filter((lineItem) => Number.isFinite(lineItem.quantity) && lineItem.quantity > 0);
+      .filter((lineItem) => Number.isFinite(lineItem.quantity) && lineItem.quantity > 0)
+      .map((lineItem) => (
+        isVoidedInvoice
+          ? { ...lineItem, rate: 0, amount: 0 }
+          : lineItem
+      ));
 
     if (lineItems.length === 0) {
-      continue;
+      if (!isVoidedInvoice) {
+        continue;
+      }
+
+      lineItems.push({
+        productName: "Anulada",
+        productSku: "-",
+        description: "Anulada",
+        quantity: 1,
+        rate: 0,
+        amount: 0,
+      });
     }
 
     lineItems.forEach((lineItem) => {
