@@ -4127,7 +4127,7 @@ function WarehouseCompletedEditTimer({
       className={`warehouse-order-edit-timer${isExpired ? " warehouse-order-edit-timer--expired" : ""}`}
       title={isExpired
         ? "Ya no puedes editar este pedido desde bodega (24 h desde facturacion)"
-        : "Tiempo restante para editar (24 h desde que se facturo, no desde creacion)"}
+        : "Tiempo restante para editar (24 h desde que se facturo en bodega, no desde Creado)"}
     >
       {formatWarehouseCompletedEditRemaining(remainingMs)}
     </span>

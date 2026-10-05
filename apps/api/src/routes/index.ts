@@ -1761,31 +1761,44 @@ async function mapWarehouseOrderRecords(orders: WarehouseOrderDocument[]) {
     getClientCatalogProductSalePricesByClientIds(orders.map((order) => String(order.storeId ?? ""))),
   ]);
   const productsById = new Map(products.map((product) => [String(product._id), product]));
-  const deliveredOrderIdsMissingDeliveredAt = orders
-    .filter((order) => order.status === "delivered" && !order.deliveredAt)
+  const deliveredOrderIds = orders
+    .filter((order) => order.status === "delivered")
     .map((order) => String(order._id));
   const invoicedAtByOrderId = new Map<string, Date>();
+  const completedAtByOrderId = new Map<string, Date>();
 
-  if (deliveredOrderIdsMissingDeliveredAt.length > 0) {
-    const carteraEntries = await CarteraEntry.find({ orderId: { $in: deliveredOrderIdsMissingDeliveredAt } })
-      .select({ orderId: 1, invoicedAt: 1 })
-      .sort({ invoicedAt: 1 })
-      .lean();
+  if (deliveredOrderIds.length > 0) {
+    const [carteraEntries, completedLogs] = await Promise.all([
+      CarteraEntry.find({ orderId: { $in: deliveredOrderIds } })
+        .select({ orderId: 1, invoicedAt: 1 })
+        .sort({ invoicedAt: 1 })
+        .lean(),
+      OrderEditLog.find({ orderId: { $in: deliveredOrderIds }, action: "invoice_completed" })
+        .select({ orderId: 1, editedAt: 1 })
+        .sort({ editedAt: 1 })
+        .lean(),
+    ]);
 
     carteraEntries.forEach((entry) => {
       const orderId = String(entry.orderId ?? "").trim();
+      const invoicedAt = parseStoredDate(entry.invoicedAt);
 
-      if (!orderId || invoicedAtByOrderId.has(orderId) || !entry.invoicedAt) {
+      if (!orderId || invoicedAtByOrderId.has(orderId) || !invoicedAt) {
         return;
       }
 
-      const invoicedAt = entry.invoicedAt instanceof Date
-        ? entry.invoicedAt
-        : new Date(String(entry.invoicedAt));
+      invoicedAtByOrderId.set(orderId, invoicedAt);
+    });
 
-      if (!Number.isNaN(invoicedAt.getTime())) {
-        invoicedAtByOrderId.set(orderId, invoicedAt);
+    completedLogs.forEach((entry) => {
+      const orderId = String(entry.orderId ?? "").trim();
+      const completedAt = parseStoredDate(entry.editedAt);
+
+      if (!orderId || completedAtByOrderId.has(orderId) || !completedAt) {
+        return;
       }
+
+      completedAtByOrderId.set(orderId, completedAt);
     });
   }
 
@@ -1794,7 +1807,10 @@ async function mapWarehouseOrderRecords(orders: WarehouseOrderDocument[]) {
       order,
       productsById,
       catalogSalePriceByClientId.get(String(order.storeId ?? "")) ?? new Map(),
-      invoicedAtByOrderId.get(String(order._id)) ?? null,
+      {
+        invoicedAtFallback: invoicedAtByOrderId.get(String(order._id)) ?? null,
+        completedAtFallback: completedAtByOrderId.get(String(order._id)) ?? null,
+      },
     )
   ));
 }
@@ -1833,9 +1849,12 @@ function buildWarehouseOrderRecord(
   order: WarehouseOrderDocument,
   productsById: Map<string, { name?: unknown; sku?: unknown; description?: unknown; displaysPerBox?: unknown; unitsPerBox?: unknown; unitsPerBoxUnit?: unknown }>,
   catalogSalePriceByProductId: Map<string, number>,
-  invoicedAtFallback: Date | null = null,
+  deliveredAtFallbacks: {
+    invoicedAtFallback?: Date | null;
+    completedAtFallback?: Date | null;
+  } = {},
 ) {
-  const deliveredAt = resolveOrderDeliveredAt(order, invoicedAtFallback);
+  const deliveredAt = resolveOrderDeliveredAt(order, deliveredAtFallbacks);
 
   return {
     _id: String(order._id),
@@ -4633,21 +4652,35 @@ function resolveOrderEditSource(role: string): OrderEditActor["source"] {
 
 const WAREHOUSE_DELIVERED_EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+function parseStoredDate(value: unknown) {
+  if (!value) {
+    return null;
+  }
+
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function resolveOrderDeliveredAt(order: {
   status?: unknown;
   deliveredAt?: unknown;
-}, invoicedAtFallback?: Date | null) {
-  if (order.deliveredAt) {
-    const deliveredAt = order.deliveredAt instanceof Date
-      ? order.deliveredAt
-      : new Date(String(order.deliveredAt));
+}, fallbacks: {
+  invoicedAtFallback?: Date | null;
+  completedAtFallback?: Date | null;
+} = {}) {
+  const completedAtFallback = fallbacks.completedAtFallback ?? null;
+  const invoicedAtFallback = fallbacks.invoicedAtFallback ?? null;
+  const storedDeliveredAt = parseStoredDate(order.deliveredAt);
 
-    if (!Number.isNaN(deliveredAt.getTime())) {
-      return deliveredAt;
-    }
+  if (completedAtFallback) {
+    return completedAtFallback;
   }
 
-  if (invoicedAtFallback && !Number.isNaN(invoicedAtFallback.getTime())) {
+  if (storedDeliveredAt) {
+    return storedDeliveredAt;
+  }
+
+  if (invoicedAtFallback) {
     return invoicedAtFallback;
   }
 
@@ -4659,30 +4692,31 @@ async function resolveOrderDeliveredAtForPolicy(order: {
   status?: unknown;
   deliveredAt?: unknown;
 }) {
-  const direct = resolveOrderDeliveredAt(order);
-
-  if (direct) {
-    return direct;
-  }
-
   if (order.status !== "delivered") {
     return null;
   }
 
-  const carteraEntry = await CarteraEntry.findOne({ orderId: String(order._id ?? "") })
-    .select({ invoicedAt: 1 })
-    .sort({ invoicedAt: 1 })
-    .lean();
+  const orderId = String(order._id ?? "").trim();
 
-  if (!carteraEntry?.invoicedAt) {
+  if (!orderId) {
     return null;
   }
 
-  const invoicedAt = carteraEntry.invoicedAt instanceof Date
-    ? carteraEntry.invoicedAt
-    : new Date(String(carteraEntry.invoicedAt));
+  const [completedLog, carteraEntry] = await Promise.all([
+    OrderEditLog.findOne({ orderId, action: "invoice_completed" })
+      .sort({ editedAt: 1 })
+      .select({ editedAt: 1 })
+      .lean(),
+    CarteraEntry.findOne({ orderId })
+      .select({ invoicedAt: 1 })
+      .sort({ invoicedAt: 1 })
+      .lean(),
+  ]);
 
-  return Number.isNaN(invoicedAt.getTime()) ? null : invoicedAt;
+  return resolveOrderDeliveredAt(order, {
+    completedAtFallback: parseStoredDate(completedLog?.editedAt),
+    invoicedAtFallback: parseStoredDate(carteraEntry?.invoicedAt),
+  });
 }
 
 function buildOrderDeliveredAtPolicyContext(
@@ -6054,9 +6088,11 @@ async function completeWarehouseOrderById(orderId: string, body: Record<string, 
     giftItems: Array.isArray(order.giftItems) ? order.giftItems : [],
   });
 
+  const completedAt = new Date();
+
   const updatedOrder = await Order.findByIdAndUpdate(
     orderId,
-    { status: "delivered", items: itemsWithPrices, invoiceNumber, deliveredAt: invoicedAt },
+    { status: "delivered", items: itemsWithPrices, invoiceNumber, deliveredAt: completedAt },
     { new: true, runValidators: true },
   ).lean();
 
