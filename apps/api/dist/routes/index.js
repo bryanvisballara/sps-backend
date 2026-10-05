@@ -1308,10 +1308,32 @@ async function mapWarehouseOrderRecords(orders) {
         getClientCatalogProductSalePricesByClientIds(orders.map((order) => String(order.storeId ?? ""))),
     ]);
     const productsById = new Map(products.map((product) => [String(product._id), product]));
-    return orders.map((order) => (buildWarehouseOrderRecord(order, productsById, catalogSalePriceByClientId.get(String(order.storeId ?? "")) ?? new Map())));
+    const deliveredOrderIdsMissingDeliveredAt = orders
+        .filter((order) => order.status === "delivered" && !order.deliveredAt)
+        .map((order) => String(order._id));
+    const invoicedAtByOrderId = new Map();
+    if (deliveredOrderIdsMissingDeliveredAt.length > 0) {
+        const carteraEntries = await CarteraEntry.find({ orderId: { $in: deliveredOrderIdsMissingDeliveredAt } })
+            .select({ orderId: 1, invoicedAt: 1 })
+            .sort({ invoicedAt: 1 })
+            .lean();
+        carteraEntries.forEach((entry) => {
+            const orderId = String(entry.orderId ?? "").trim();
+            if (!orderId || invoicedAtByOrderId.has(orderId) || !entry.invoicedAt) {
+                return;
+            }
+            const invoicedAt = entry.invoicedAt instanceof Date
+                ? entry.invoicedAt
+                : new Date(String(entry.invoicedAt));
+            if (!Number.isNaN(invoicedAt.getTime())) {
+                invoicedAtByOrderId.set(orderId, invoicedAt);
+            }
+        });
+    }
+    return orders.map((order) => (buildWarehouseOrderRecord(order, productsById, catalogSalePriceByClientId.get(String(order.storeId ?? "")) ?? new Map(), invoicedAtByOrderId.get(String(order._id)) ?? null)));
 }
-function buildWarehouseOrderRecord(order, productsById, catalogSalePriceByProductId) {
-    const deliveredAt = resolveOrderDeliveredAt(order);
+function buildWarehouseOrderRecord(order, productsById, catalogSalePriceByProductId, invoicedAtFallback = null) {
+    const deliveredAt = resolveOrderDeliveredAt(order, invoicedAtFallback);
     return {
         _id: String(order._id),
         routeId: order.routeId ?? "",
@@ -2908,9 +2930,11 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
         const requestedByRole = typeof body.requestedByRole === "string"
             ? body.requestedByRole.trim()
             : "";
+        const deliveredAtReference = await resolveOrderDeliveredAtForPolicy(order);
+        const orderPolicyContext = buildOrderDeliveredAtPolicyContext(order, deliveredAtReference);
         const wasVoidedInvoice = order.status === "delivered" && order.invoiceVoided === true;
         if (wasVoidedInvoice) {
-            if (!canRoleMutateDeliveredWarehouseOrder(requestedByRole, order)) {
+            if (!canRoleMutateDeliveredWarehouseOrder(requestedByRole, orderPolicyContext)) {
                 response.status(400).json({ message: "No tienes permiso para editar una factura anulada." });
                 return;
             }
@@ -2919,7 +2943,7 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
                 requestedByRole: requestedByRole || String(body.editedByRole ?? ""),
             });
         }
-        if (order.status === "delivered" && !canRoleMutateDeliveredWarehouseOrder(requestedByRole, order)) {
+        if (order.status === "delivered" && !canRoleMutateDeliveredWarehouseOrder(requestedByRole, orderPolicyContext)) {
             response.status(400).json({
                 message: requestedByRole === "warehouse-aruba"
                     ? "Ya pasaron 24 horas desde que se completo el pedido. Solo puedes consultarlo e imprimir la factura."
@@ -3503,7 +3527,7 @@ function resolveOrderEditSource(role) {
     return "system";
 }
 const WAREHOUSE_DELIVERED_EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
-function resolveOrderDeliveredAt(order) {
+function resolveOrderDeliveredAt(order, invoicedAtFallback) {
     if (order.deliveredAt) {
         const deliveredAt = order.deliveredAt instanceof Date
             ? order.deliveredAt
@@ -3512,15 +3536,36 @@ function resolveOrderDeliveredAt(order) {
             return deliveredAt;
         }
     }
-    if (order.status === "delivered" && order.updatedAt) {
-        const updatedAt = order.updatedAt instanceof Date
-            ? order.updatedAt
-            : new Date(String(order.updatedAt));
-        if (!Number.isNaN(updatedAt.getTime())) {
-            return updatedAt;
-        }
+    if (invoicedAtFallback && !Number.isNaN(invoicedAtFallback.getTime())) {
+        return invoicedAtFallback;
     }
     return null;
+}
+async function resolveOrderDeliveredAtForPolicy(order) {
+    const direct = resolveOrderDeliveredAt(order);
+    if (direct) {
+        return direct;
+    }
+    if (order.status !== "delivered") {
+        return null;
+    }
+    const carteraEntry = await CarteraEntry.findOne({ orderId: String(order._id ?? "") })
+        .select({ invoicedAt: 1 })
+        .sort({ invoicedAt: 1 })
+        .lean();
+    if (!carteraEntry?.invoicedAt) {
+        return null;
+    }
+    const invoicedAt = carteraEntry.invoicedAt instanceof Date
+        ? carteraEntry.invoicedAt
+        : new Date(String(carteraEntry.invoicedAt));
+    return Number.isNaN(invoicedAt.getTime()) ? null : invoicedAt;
+}
+function buildOrderDeliveredAtPolicyContext(order, deliveredAtReference) {
+    return {
+        status: order.status,
+        deliveredAt: deliveredAtReference ?? order.deliveredAt,
+    };
 }
 function isWithinWarehouseDeliveredEditWindow(order, referenceDate = new Date()) {
     const deliveredAt = resolveOrderDeliveredAt(order);
@@ -4209,7 +4254,9 @@ async function voidDeliveredInvoiceById(orderId, body = {}) {
     if (!actor || !canVoidDeliveredInvoice(actor.role)) {
         throw Object.assign(new Error("No tienes permiso para anular esta factura."), { statusCode: 403 });
     }
-    if (!canRoleMutateDeliveredWarehouseOrder(actor.role, order)) {
+    const deliveredAtReference = await resolveOrderDeliveredAtForPolicy(order);
+    const orderPolicyContext = buildOrderDeliveredAtPolicyContext(order, deliveredAtReference);
+    if (!canRoleMutateDeliveredWarehouseOrder(actor.role, orderPolicyContext)) {
         throw Object.assign(new Error("Ya pasaron 24 horas desde que se completo el pedido. Solo gerencia o contabilidad pueden anularla."), { statusCode: 400 });
     }
     const invoiceNumber = Number(order.invoiceNumber ?? 0) || null;
@@ -4277,7 +4324,9 @@ async function reactivateDeliveredInvoiceById(orderId, body = {}) {
     if (!actor || !canVoidDeliveredInvoice(actor.role)) {
         throw Object.assign(new Error("No tienes permiso para reactivar esta factura."), { statusCode: 403 });
     }
-    if (!canRoleMutateDeliveredWarehouseOrder(actor.role, order)) {
+    const deliveredAtReference = await resolveOrderDeliveredAtForPolicy(order);
+    const orderPolicyContext = buildOrderDeliveredAtPolicyContext(order, deliveredAtReference);
+    if (!canRoleMutateDeliveredWarehouseOrder(actor.role, orderPolicyContext)) {
         throw Object.assign(new Error("Ya pasaron 24 horas desde que se completo el pedido. Solo gerencia o contabilidad pueden reactivarla."), { statusCode: 400 });
     }
     const invoiceNumber = Number(order.invoiceNumber ?? 0) || null;

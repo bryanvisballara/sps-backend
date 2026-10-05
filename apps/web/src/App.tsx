@@ -4042,7 +4042,7 @@ function getOrderInvoiceDate(order: SellerOrderRecord) {
 
 const WAREHOUSE_COMPLETED_EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-function getOrderDeliveredAt(order: Pick<SellerOrderRecord, "deliveredAt" | "updatedAt" | "status">) {
+function getOrderDeliveredAt(order: Pick<SellerOrderRecord, "deliveredAt" | "status">) {
   if (order.deliveredAt) {
     const deliveredAt = new Date(order.deliveredAt);
 
@@ -4051,24 +4051,16 @@ function getOrderDeliveredAt(order: Pick<SellerOrderRecord, "deliveredAt" | "upd
     }
   }
 
-  if (order.status === "delivered") {
-    const updatedAt = new Date(order.updatedAt);
-
-    if (!Number.isNaN(updatedAt.getTime())) {
-      return updatedAt;
-    }
-  }
-
   return null;
 }
 
-function getWarehouseCompletedEditDeadlineMs(order: Pick<SellerOrderRecord, "deliveredAt" | "updatedAt" | "status">) {
+function getWarehouseCompletedEditDeadlineMs(order: Pick<SellerOrderRecord, "deliveredAt" | "status">) {
   const deliveredAt = getOrderDeliveredAt(order);
   return deliveredAt ? deliveredAt.getTime() + WAREHOUSE_COMPLETED_EDIT_WINDOW_MS : null;
 }
 
 function isWithinWarehouseCompletedEditWindow(
-  order: Pick<SellerOrderRecord, "deliveredAt" | "updatedAt" | "status">,
+  order: Pick<SellerOrderRecord, "deliveredAt" | "status">,
   now = Date.now(),
 ) {
   const deadlineMs = getWarehouseCompletedEditDeadlineMs(order);
@@ -4077,7 +4069,7 @@ function isWithinWarehouseCompletedEditWindow(
 
 function canEditCompletedWarehouseOrderForRole(
   role: string | undefined,
-  order: Pick<SellerOrderRecord, "status" | "deliveredAt" | "updatedAt"> | null | undefined,
+  order: Pick<SellerOrderRecord, "status" | "deliveredAt"> | null | undefined,
 ) {
   if (!role) {
     return false;
@@ -4134,8 +4126,8 @@ function WarehouseCompletedEditTimer({
     <span
       className={`warehouse-order-edit-timer${isExpired ? " warehouse-order-edit-timer--expired" : ""}`}
       title={isExpired
-        ? "Ya no puedes editar este pedido desde bodega"
-        : "Tiempo restante para editar desde bodega"}
+        ? "Ya no puedes editar este pedido desde bodega (24 h desde facturacion)"
+        : "Tiempo restante para editar (24 h desde que se facturo, no desde creacion)"}
     >
       {formatWarehouseCompletedEditRemaining(remainingMs)}
     </span>
@@ -6697,7 +6689,8 @@ export default function App() {
   const isStaffOrderComposerActive = activeSection === "create-order" || activeSection === "direct-invoice";
   const isDirectInvoiceComposer = activeSection === "direct-invoice";
   const canEditStaffOrderPricing = canCreateStaffOrders(sessionUser?.role) && isStaffOrderComposerActive;
-  const canEditStaffOrderGrandTotal = canEditStaffOrderPricing && (isDirectInvoiceComposer || Boolean(editingStaffOrder));
+  const canEditStaffOrderGrandTotal = canEditStaffOrderPricing && isDirectInvoiceComposer && !editingStaffOrder;
+  const canEditStaffOrderLineSubtotalManual = canEditStaffOrderGrandTotal;
   const activeComposerRoutes = isStaffOrderComposerActive ? staffOrderRoutes : sellerRoutes;
   const selectedSellerRoute = activeComposerRoutes.find((route) => (route._id ?? route.code) === selectedSellerRouteId) ?? null;
   const selectedSellerDay = selectedSellerRoute?.days.find((day) => day.day === selectedSellerDayKey) ?? null;
@@ -11405,6 +11398,7 @@ export default function App() {
               <th>Cantidad</th>
               <th>Precio</th>
               <th>Total</th>
+              <th className="warehouse-order-notes-col">Notas internas</th>
               <th>Quitar</th>
             </tr>
           </thead>
@@ -11468,7 +11462,7 @@ export default function App() {
                     )}
                   </td>
                   <td>
-                    {canEditStaffOrderPricing ? (
+                    {canEditStaffOrderLineSubtotalManual ? (
                       <input
                         className="warehouse-order-qty-input"
                         type="text"
@@ -11481,6 +11475,15 @@ export default function App() {
                     ) : (
                       formatSellerDraftMoney(derivedLineTotal)
                     )}
+                  </td>
+                  <td className="warehouse-order-notes-col warehouse-order-notes-cell">
+                    <input
+                      className="seller-order-note-input"
+                      type="text"
+                      value={draft.notes}
+                      placeholder="Nota interna del producto"
+                      onChange={(event) => handleSellerOrderDraftChange(product, "notes", event.target.value)}
+                    />
                   </td>
                   <td>
                     <button
@@ -24060,7 +24063,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         <p>Pedidos ya facturados. Los mas recientes aparecen primero. Filtra por fecha, cliente o # de factura.</p>
                         {isWarehouseUser ? (
                           <p className="route-helper-text">
-                            Bodega puede editar cada pedido durante 24 h desde que se facturo. El contador aparece junto al # de factura.
+                            Bodega puede editar cada pedido durante 24 h desde que se facturo (no desde Creado). El contador muestra el tiempo restante junto al # de factura.
                           </p>
                         ) : null}
                       </div>
