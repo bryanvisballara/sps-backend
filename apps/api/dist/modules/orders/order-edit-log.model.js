@@ -20,7 +20,7 @@ const orderEditLogSchema = new Schema({
     },
     action: {
         type: String,
-        enum: ["update_order", "update_invoice_number", "invoice_completed", "reprint", "invoice_voided"],
+        enum: ["update_order", "update_invoice_number", "invoice_completed", "reprint", "invoice_voided", "invoice_reactivated"],
         required: true,
     },
     changes: { type: [orderEditChangeSchema], default: [] },

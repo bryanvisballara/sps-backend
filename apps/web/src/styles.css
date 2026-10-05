@@ -4158,6 +4158,31 @@ h1 {
   font-variant-numeric: tabular-nums;
 }
 
+.warehouse-order-invoice-cell {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.warehouse-order-edit-timer {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: #0f766e;
+  background: #ccfbf1;
+}
+
+.warehouse-order-edit-timer--expired {
+  color: #64748b;
+  background: #e2e8f0;
+}
+
 .warehouse-order-overdue-badge {
   display: inline-flex;
   align-items: center;

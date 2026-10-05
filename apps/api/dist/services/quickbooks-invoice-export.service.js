@@ -270,7 +270,7 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
         const lineItems = appendMissingGiftLines(billedLineItems, mapGiftExportLines())
             .filter((lineItem) => Number.isFinite(lineItem.quantity) && lineItem.quantity > 0)
             .map((lineItem) => (isVoidedInvoice
-            ? { ...lineItem, rate: 0, amount: 0 }
+            ? { ...lineItem, quantity: 0, rate: 0, amount: 0 }
             : lineItem));
         if (lineItems.length === 0) {
             if (!isVoidedInvoice) {
@@ -280,7 +280,7 @@ export async function buildQuickBooksInvoiceExportCsv(params) {
                 productName: "Anulada",
                 productSku: "-",
                 description: "Anulada",
-                quantity: 1,
+                quantity: 0,
                 rate: 0,
                 amount: 0,
             });

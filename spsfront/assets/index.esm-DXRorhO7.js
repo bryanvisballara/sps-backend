@@ -1,4 +1,4 @@
-import{r as R,d as _,C,c as H,E as ue,o as j,F as Ue,f as g,g as Ve,v as We,h as Ge,j as Je,k as E}from"./index.esm-BkGMThoj.js";const de="@firebase/installations",L="0.6.22";/**
+import{r as R,d as _,C,c as H,E as ue,o as j,F as Ue,f as g,g as Ve,v as We,h as Ge,j as Je,k as E}from"./index.esm-tx6toF6o.js";const de="@firebase/installations",L="0.6.24";/**
  * @license
  * Copyright 2019 Google LLC
  *
@@ -268,7 +268,22 @@ import{r as R,d as _,C,c as H,E as ue,o as j,F as Ue,f as g,g as Ve,v as We,h as
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */const _e="installations",Nt="installations-internal",Ot=e=>{const t=e.getProvider("app").getImmediate(),n=Dt(t),i=H(t,"heartbeat");return{app:t,appConfig:n,heartbeatServiceProvider:i,_delete:()=>Promise.resolve()}},Ft=e=>{const t=e.getProvider("app").getImmediate(),n=H(t,_e).getImmediate();return{getId:()=>Et(n),getToken:r=>Rt(n,r)}};function Mt(){_(new C(_e,Ot,"PUBLIC")),_(new C(Nt,Ft,"PRIVATE"))}Mt();R(de,L);R(de,L,"esm2020");/**
+ */const _e="installations",Nt="installations-internal",Ot=e=>{const t=e.getProvider("app").getImmediate(),n=Dt(t),i=H(t,"heartbeat");return{app:t,appConfig:n,heartbeatServiceProvider:i,_delete:()=>Promise.resolve()}},Ft=e=>{const t=e.getProvider("app").getImmediate(),n=H(t,_e).getImmediate();return{getId:()=>Et(n),getToken:r=>Rt(n,r)}};function Mt(){_(new C(_e,Ot,"PUBLIC")),_(new C(Nt,Ft,"PRIVATE"))}/**
+ * @license
+ * Copyright 2019 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */Mt();R(de,L);R(de,L,"esm2020");/**
  * @license
  * Copyright 2019 Google LLC
  *
@@ -356,7 +371,7 @@ import{r as R,d as _,C,c as H,E as ue,o as j,F as Ue,f as g,g as Ve,v as We,h as
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */const ee="firebase-messaging-database",te=2,p="firebase-messaging-store",l="firebase-messaging-fid-registration-store",Vt={openDB:j,deleteDB:E};let ne=Vt,S=null;function Wt(e,t,n){switch(t){case 0:if(e.createObjectStore(p),n===1)break;case 1:n===2&&e.createObjectStore(l)}}function ie(e){return{upgrade:(t,n)=>{Wt(t,n,e)},blocked:()=>{},blocking:(t,n,i)=>{var r;S=null,(r=i.target)==null||r.close()},terminated:()=>{S=null}}}function m(){return S||(S=ne.openDB(ee,te,ie(2)).catch(()=>ne.openDB(ee,te-1,ie(1)))),S}function Oe(e,t){return e.objectStoreNames.contains(t)}function V(e){if(!Oe(e,l))throw c.create("fid-registration-idb-schema-unavailable")}async function Fe(e){const t=k(e),i=await(await m()).transaction(p).objectStore(p).get(t);if(i)return i;{const r=await qt(e.appConfig.senderId);if(r)return await W(e,r),r}}async function W(e,t){const n=k(e),i=await m(),r=[p],o=Oe(i,l);o&&r.push(l);const a=i.transaction(r,"readwrite");return await a.objectStore(p).put(t,n),o&&await a.objectStore(l).delete(n),await a.done,t}async function Me(e){const t=k(e),i=(await m()).transaction(p,"readwrite");await i.objectStore(p).delete(t),await i.done}async function O(e){const t=k(e),n=await m();return V(n),await n.transaction(l).objectStore(l).get(t)}async function Gt(e,t){const n=k(e),i=await m();V(i);const r=i.transaction([p,l],"readwrite");return await r.objectStore(l).put(t,n),await r.objectStore(p).delete(n),await r.done,t}async function Pe(e){const t=k(e),n=await m();V(n);const i=n.transaction(l,"readwrite");await i.objectStore(l).delete(t),await i.done}function k({appConfig:e}){return e.appId}const re="@firebase/messaging",x="0.13.0";/**
+ */const ee="firebase-messaging-database",te=2,p="firebase-messaging-store",l="firebase-messaging-fid-registration-store",Vt={openDB:j,deleteDB:E};let ne=Vt,S=null;function Wt(e,t,n){switch(t){case 0:if(e.createObjectStore(p),n===1)break;case 1:n===2&&e.createObjectStore(l)}}function ie(e){return{upgrade:(t,n)=>{Wt(t,n,e)},blocked:()=>{},blocking:(t,n,i)=>{var r;S=null,(r=i.target)==null||r.close()},terminated:()=>{S=null}}}function m(){return S||(S=ne.openDB(ee,te,ie(2)).catch(()=>ne.openDB(ee,te-1,ie(1)))),S}function Oe(e,t){return e.objectStoreNames.contains(t)}function V(e){if(!Oe(e,l))throw c.create("fid-registration-idb-schema-unavailable")}async function Fe(e){const t=k(e),i=await(await m()).transaction(p).objectStore(p).get(t);if(i)return i;{const r=await qt(e.appConfig.senderId);if(r)return await W(e,r),r}}async function W(e,t){const n=k(e),i=await m(),r=[p],o=Oe(i,l);o&&r.push(l);const a=i.transaction(r,"readwrite");return await a.objectStore(p).put(t,n),o&&await a.objectStore(l).delete(n),await a.done,t}async function Me(e){const t=k(e),i=(await m()).transaction(p,"readwrite");await i.objectStore(p).delete(t),await i.done}async function O(e){const t=k(e),n=await m();return V(n),await n.transaction(l).objectStore(l).get(t)}async function Gt(e,t){const n=k(e),i=await m();V(i);const r=i.transaction([p,l],"readwrite");return await r.objectStore(l).put(t,n),await r.objectStore(p).delete(n),await r.done,t}async function Pe(e){const t=k(e),n=await m();V(n);const i=n.transaction(l,"readwrite");await i.objectStore(l).delete(t),await i.done}function k({appConfig:e}){return e.appId}const re="@firebase/messaging",x="0.13.3";/**
  * @license
  * Copyright 2019 Google LLC
  *
@@ -701,4 +716,19 @@ import{r as R,d as _,C,c as H,E as ue,o as j,F as Ue,f as g,g as Ve,v as We,h as
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */function xn(e=Ve()){return Nn().then(t=>{if(!t)throw c.create("unsupported-browser")},t=>{throw c.create("indexed-db-unsupported")}),H(g(e),"messaging").getImmediate()}async function Hn(e,t){return e=g(e),qe(e,t)}function jn(e){return e=g(e),On(e)}function Ln(e,t){return e=g(e),Fn(e,t)}async function qn(e,t){return e=g(e),J(e,t)}async function Bn(e){return e=g(e),Kn(e)}function Un(e,t){return e=g(e),Mn(e,t)}function Vn(e,t){return e=g(e),Pn(e,t)}Dn();export{jn as deleteToken,xn as getMessaging,Hn as getToken,Nn as isSupported,Ln as onMessage,Un as onRegistered,Vn as onUnregistered,qn as register,Bn as unregister};
+ */function xn(e=Ve()){return Nn().then(t=>{if(!t)throw c.create("unsupported-browser")},t=>{throw c.create("indexed-db-unsupported")}),H(g(e),"messaging").getImmediate()}async function Hn(e,t){return e=g(e),qe(e,t)}function jn(e){return e=g(e),On(e)}function Ln(e,t){return e=g(e),Fn(e,t)}async function qn(e,t){return e=g(e),J(e,t)}async function Bn(e){return e=g(e),Kn(e)}function Un(e,t){return e=g(e),Mn(e,t)}function Vn(e,t){return e=g(e),Pn(e,t)}/**
+ * @license
+ * Copyright 2017 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */Dn();export{jn as deleteToken,xn as getMessaging,Hn as getToken,Nn as isSupported,Ln as onMessage,Un as onRegistered,Vn as onUnregistered,qn as register,Bn as unregister};

@@ -921,6 +921,7 @@ type SellerOrderRecord = {
   deliveryOverdue?: boolean;
   status: "draft" | "submitted" | "picking" | "dispatched" | "delivered";
   invoiceNumber?: number | null;
+  deliveredAt?: string | null;
   invoiceVoided?: boolean;
   invoiceVoidedAt?: string | null;
   invoiceVoidedByUserId?: string;
@@ -3729,6 +3730,16 @@ function formatInvoiceNumberLabel(order: Pick<SellerOrderRecord, "invoiceNumber"
   return order.invoiceVoided ? `#${order.invoiceNumber} (anulada)` : `#${order.invoiceNumber}`;
 }
 
+function stripAnuladaInternalNote(value: unknown) {
+  const notes = String(value ?? "").trim();
+
+  if (!notes || /^anulada\.?\s*$/i.test(notes)) {
+    return "";
+  }
+
+  return notes.replace(/^anulada\.\s*/i, "").trim();
+}
+
 function getSellerOrderInvoiceTotalAwg(order: Pick<SellerOrderRecord, "items">) {
   const items = Array.isArray(order.items) ? order.items : [];
 
@@ -4029,6 +4040,108 @@ function getOrderInvoiceDate(order: SellerOrderRecord) {
   return parsed;
 }
 
+const WAREHOUSE_COMPLETED_EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function getOrderDeliveredAt(order: Pick<SellerOrderRecord, "deliveredAt" | "updatedAt" | "status">) {
+  if (order.deliveredAt) {
+    const deliveredAt = new Date(order.deliveredAt);
+
+    if (!Number.isNaN(deliveredAt.getTime())) {
+      return deliveredAt;
+    }
+  }
+
+  if (order.status === "delivered") {
+    const updatedAt = new Date(order.updatedAt);
+
+    if (!Number.isNaN(updatedAt.getTime())) {
+      return updatedAt;
+    }
+  }
+
+  return null;
+}
+
+function getWarehouseCompletedEditDeadlineMs(order: Pick<SellerOrderRecord, "deliveredAt" | "updatedAt" | "status">) {
+  const deliveredAt = getOrderDeliveredAt(order);
+  return deliveredAt ? deliveredAt.getTime() + WAREHOUSE_COMPLETED_EDIT_WINDOW_MS : null;
+}
+
+function isWithinWarehouseCompletedEditWindow(
+  order: Pick<SellerOrderRecord, "deliveredAt" | "updatedAt" | "status">,
+  now = Date.now(),
+) {
+  const deadlineMs = getWarehouseCompletedEditDeadlineMs(order);
+  return deadlineMs !== null && now < deadlineMs;
+}
+
+function canEditCompletedWarehouseOrderForRole(
+  role: string | undefined,
+  order: Pick<SellerOrderRecord, "status" | "deliveredAt" | "updatedAt"> | null | undefined,
+) {
+  if (!role) {
+    return false;
+  }
+
+  if (hasAccountingDispatchAccess(role)) {
+    return true;
+  }
+
+  if (role !== "warehouse-aruba") {
+    return false;
+  }
+
+  if (!order || order.status !== "delivered") {
+    return true;
+  }
+
+  return isWithinWarehouseCompletedEditWindow(order);
+}
+
+function formatWarehouseCompletedEditRemaining(ms: number) {
+  if (ms <= 0) {
+    return "Cerrado";
+  }
+
+  const totalMinutes = Math.ceil(ms / 60_000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours >= 1) {
+    return `${hours}h ${minutes}m`;
+  }
+
+  return `${minutes}m`;
+}
+
+function WarehouseCompletedEditTimer({
+  order,
+  now,
+}: {
+  order: SellerOrderRecord;
+  now: number;
+}) {
+  const deadlineMs = getWarehouseCompletedEditDeadlineMs(order);
+
+  if (deadlineMs === null) {
+    return null;
+  }
+
+  const remainingMs = deadlineMs - now;
+  const isExpired = remainingMs <= 0;
+
+  return (
+    <span
+      className={`warehouse-order-edit-timer${isExpired ? " warehouse-order-edit-timer--expired" : ""}`}
+      title={isExpired
+        ? "Ya no puedes editar este pedido desde bodega"
+        : "Tiempo restante para editar desde bodega"}
+    >
+      {formatWarehouseCompletedEditRemaining(remainingMs)}
+    </span>
+  );
+}
+
 function formatDeliveryDateLabel(dateKey: string) {
   const parsed = new Date(`${dateKey}T12:00:00`);
 
@@ -4132,6 +4245,7 @@ type WarehouseOrderListProps = {
   allSelected?: boolean;
   onToggleSelectAll?: (selected: boolean) => void;
   selectAllDisabled?: boolean;
+  renderInvoiceMeta?: (order: SellerOrderRecord) => ReactNode;
 };
 
 const WAREHOUSE_ORDERS_PAGE_SIZE = 10;
@@ -4315,6 +4429,7 @@ function WarehouseOrderList({
   allSelected = false,
   onToggleSelectAll,
   selectAllDisabled = false,
+  renderInvoiceMeta,
 }: WarehouseOrderListProps) {
   const columnCount = 5
     + Number(showRoute)
@@ -4460,7 +4575,12 @@ function WarehouseOrderList({
                       ) : null}
                       {showStatus ? <td>{formatSellerOrderStatus(order.status, order.invoiceVoided)}</td> : null}
                       {showConsecutivo ? (
-                        <td>{formatInvoiceNumberLabel(order)}</td>
+                        <td>
+                          <div className="warehouse-order-invoice-cell">
+                            <span>{formatInvoiceNumberLabel(order)}</span>
+                            {renderInvoiceMeta?.(order)}
+                          </div>
+                        </td>
                       ) : null}
                       {showSalesRep && showInvoiceNumber ? <td>{formatInvoiceNumberLabel(order)}</td> : null}
                       {showInvoiceNotes ? (
@@ -6081,6 +6201,7 @@ export default function App() {
   const [isSavingSellerOrderEdit, setIsSavingSellerOrderEdit] = useState(false);
   const [deletingSellerOrderId, setDeletingSellerOrderId] = useState("");
   const [warehouseActiveSection, setWarehouseActiveSection] = useState<WarehouseActiveSection>("inventory");
+  const [warehouseCompletedEditTimerNow, setWarehouseCompletedEditTimerNow] = useState(() => Date.now());
   const [warehouseOrders, setWarehouseOrders] = useState<SellerOrderRecord[]>([]);
   const [warehouseOrdersError, setWarehouseOrdersError] = useState("");
   const [isLoadingWarehouseOrders, setIsLoadingWarehouseOrders] = useState(false);
@@ -6119,6 +6240,7 @@ export default function App() {
   const [orderEditHistorySearch, setOrderEditHistorySearch] = useState("");
   const [deletingWarehouseOrderId, setDeletingWarehouseOrderId] = useState("");
   const [voidingWarehouseOrderId, setVoidingWarehouseOrderId] = useState("");
+  const [reactivatingWarehouseOrderId, setReactivatingWarehouseOrderId] = useState("");
   const [cancellingWarehouseDispatchOrderId, setCancellingWarehouseDispatchOrderId] = useState("");
   const [warehouseOrderChecklist, setWarehouseOrderChecklist] = useState<Record<string, boolean>>({});
   const [warehouseOrderCompletionStatus, setWarehouseOrderCompletionStatus] = useState<CreationStatus | null>(null);
@@ -7193,19 +7315,30 @@ export default function App() {
   const warehouseOrderSubtotal = warehousePricedItems.reduce((sum, item) => sum + item.lineTotal, 0);
   const isWarehouseUser = sessionUser?.role === "warehouse-aruba";
   const canWarehouseInvoiceOrder = hasAccountingDispatchAccess(sessionUser?.role);
-  const canEditCompletedWarehouseOrders = Boolean(
-    sessionUser?.role === "warehouse-aruba"
-    || hasAccountingDispatchAccess(sessionUser?.role)
+  const canEditSelectedCompletedWarehouseOrder = canEditCompletedWarehouseOrderForRole(
+    sessionUser?.role,
+    selectedWarehouseOrderDetail,
   );
   const canMutateSelectedWarehouseOrder = Boolean(
     selectedWarehouseOrderDetail
-    && !selectedWarehouseOrderDetail.invoiceVoided
-    && (selectedWarehouseOrderDetail.status !== "delivered" || canEditCompletedWarehouseOrders)
+    && (selectedWarehouseOrderDetail.status !== "delivered" || canEditSelectedCompletedWarehouseOrder)
   );
   const canVoidSelectedWarehouseInvoice = Boolean(
     selectedWarehouseOrderDetail
     && selectedWarehouseOrderDetail.status === "delivered"
     && !selectedWarehouseOrderDetail.invoiceVoided
+    && canEditCompletedWarehouseOrderForRole(sessionUser?.role, selectedWarehouseOrderDetail)
+    && (
+      sessionUser?.role === "warehouse-aruba"
+      || sessionUser?.role === "management"
+      || sessionUser?.role === "contabilidad"
+    )
+  );
+  const canReactivateSelectedWarehouseInvoice = Boolean(
+    selectedWarehouseOrderDetail
+    && selectedWarehouseOrderDetail.status === "delivered"
+    && selectedWarehouseOrderDetail.invoiceVoided
+    && canEditCompletedWarehouseOrderForRole(sessionUser?.role, selectedWarehouseOrderDetail)
     && (
       sessionUser?.role === "warehouse-aruba"
       || sessionUser?.role === "management"
@@ -7341,7 +7474,7 @@ export default function App() {
   const warehouseSomeItemsChecked = warehousePricedItems.some((item) => Boolean(warehouseOrderChecklist[item.productId]));
   const warehouseOrderItemsDirty = Boolean(
     selectedWarehouseOrderDetail
-    && (selectedWarehouseOrderDetail.status !== "delivered" || canEditCompletedWarehouseOrders)
+    && (selectedWarehouseOrderDetail.status !== "delivered" || canEditSelectedCompletedWarehouseOrder)
     && (() => {
       const savedOrder = warehouseOrders.find((order) => String(order._id) === String(selectedWarehouseOrderDetail._id));
       const draftProductIds = Object.keys(warehouseOrderItemDraft);
@@ -9128,6 +9261,18 @@ export default function App() {
 
     void refreshInventorySummary();
   }, [sessionUser, warehouseActiveSection]);
+
+  useEffect(() => {
+    if (sessionUser?.role !== "warehouse-aruba") {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setWarehouseCompletedEditTimerNow(Date.now());
+    }, 30_000);
+
+    return () => window.clearInterval(intervalId);
+  }, [sessionUser?.role]);
 
   useEffect(() => {
     if (sessionUser?.role !== "sales-rep-aruba") {
@@ -14651,7 +14796,7 @@ export default function App() {
   }
 
   async function addProductToWarehouseOrder() {
-    if (!selectedWarehouseOrderDetail || (selectedWarehouseOrderDetail.status === "delivered" && !canEditCompletedWarehouseOrders)) {
+    if (!selectedWarehouseOrderDetail || (selectedWarehouseOrderDetail.status === "delivered" && !canEditSelectedCompletedWarehouseOrder)) {
       return;
     }
 
@@ -14737,7 +14882,7 @@ export default function App() {
   }
 
   function addGiftToWarehouseOrder() {
-    if (!selectedWarehouseOrderDetail || (selectedWarehouseOrderDetail.status === "delivered" && !canEditCompletedWarehouseOrders)) {
+    if (!selectedWarehouseOrderDetail || (selectedWarehouseOrderDetail.status === "delivered" && !canEditSelectedCompletedWarehouseOrder)) {
       return;
     }
 
@@ -14794,7 +14939,7 @@ export default function App() {
   }
 
   function removeWarehouseGiftItem(giftKey: string) {
-    if (!selectedWarehouseOrderDetail || (selectedWarehouseOrderDetail.status === "delivered" && !canEditCompletedWarehouseOrders)) {
+    if (!selectedWarehouseOrderDetail || (selectedWarehouseOrderDetail.status === "delivered" && !canEditSelectedCompletedWarehouseOrder)) {
       return;
     }
 
@@ -14808,7 +14953,7 @@ export default function App() {
   }
 
   function updateWarehouseGiftQuantity(giftKey: string, quantityValue: string) {
-    if (!selectedWarehouseOrderDetail || (selectedWarehouseOrderDetail.status === "delivered" && !canEditCompletedWarehouseOrders)) {
+    if (!selectedWarehouseOrderDetail || (selectedWarehouseOrderDetail.status === "delivered" && !canEditSelectedCompletedWarehouseOrder)) {
       return;
     }
 
@@ -14832,7 +14977,7 @@ export default function App() {
   }
 
   function removeWarehouseOrderItem(productId: string) {
-    if (!selectedWarehouseOrderDetail || (selectedWarehouseOrderDetail.status === "delivered" && !canEditCompletedWarehouseOrders)) {
+    if (!selectedWarehouseOrderDetail || (selectedWarehouseOrderDetail.status === "delivered" && !canEditSelectedCompletedWarehouseOrder)) {
       return;
     }
 
@@ -14875,7 +15020,7 @@ export default function App() {
       return;
     }
 
-    if (selectedWarehouseOrderDetail.status === "delivered" && !canEditCompletedWarehouseOrders) {
+    if (selectedWarehouseOrderDetail.status === "delivered" && !canEditSelectedCompletedWarehouseOrder) {
       return;
     }
 
@@ -15639,14 +15784,6 @@ export default function App() {
   }
 
   async function handlePrintCompletedOrderSummary(order: SellerOrderRecord) {
-    if (order.invoiceVoided) {
-      setWarehouseOrderCompletionStatus({
-        tone: "error",
-        message: "No puedes reimprimir una factura anulada.",
-      });
-      return;
-    }
-
     try {
       const response = await fetch(`${apiBaseUrl}/warehouse/orders/${order._id}/invoice-document`);
       const data = (await response.json()) as {
@@ -16729,8 +16866,8 @@ export default function App() {
     setInvoiceChangeGiftDrafts(mapOrderGiftsToInvoiceChangeDrafts(order.giftItems));
     setInvoiceChangeOriginalGifts((order.giftItems ?? []).map((item) => ({ ...item })));
     setInvoiceChangeAddProductId("");
-    setInvoiceChangeNotes(String(order.internalOrderNotes ?? ""));
-    setInvoiceChangeOriginalInternalNotes(String(order.internalOrderNotes ?? ""));
+    setInvoiceChangeNotes(stripAnuladaInternalNote(order.internalOrderNotes));
+    setInvoiceChangeOriginalInternalNotes(stripAnuladaInternalNote(order.internalOrderNotes));
     setInvoiceChangeStatus(null);
 
     const initialNumber = Number(order.invoiceNumber ?? 0) || null;
@@ -17397,6 +17534,90 @@ export default function App() {
       });
     } finally {
       setVoidingWarehouseOrderId("");
+    }
+  }
+
+  async function handleReactivateWarehouseInvoice(order: SellerOrderRecord) {
+    if (!order._id || !sessionUser) {
+      setWarehouseOrderCompletionStatus({ tone: "error", message: "No fue posible identificar el pedido." });
+      return;
+    }
+
+    if (order.status !== "delivered" || !order.invoiceVoided) {
+      setWarehouseOrderCompletionStatus({ tone: "error", message: "Solo puedes reactivar facturas anuladas." });
+      return;
+    }
+
+    const invoiceLabel = order.invoiceNumber ? `#${order.invoiceNumber}` : "sin consecutivo";
+    if (!globalThis.confirm(
+      `Se reactivara la factura ${invoiceLabel} de ${order.storeName}.\n\n`
+      + "Volvera a cartera activa, se descontara el inventario otra vez y dejara de aparecer como Anulada.",
+    )) {
+      return;
+    }
+
+    try {
+      setReactivatingWarehouseOrderId(order._id);
+      setWarehouseOrderCompletionStatus(null);
+      const response = await fetch(`${apiBaseUrl}/warehouse/orders/${order._id}/reactivate-invoice`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestedByUserId: sessionUser.id,
+          requestedByUserName: sessionUser.name,
+          requestedByRole: sessionUser.role,
+          editedByUserId: sessionUser.id,
+          editedByUserName: sessionUser.name,
+          editedByRole: sessionUser.role,
+        }),
+      });
+      const data = (await response.json()) as {
+        message?: string;
+        order?: SellerOrderRecord;
+      };
+
+      if (!response.ok || !data.order) {
+        setWarehouseOrderCompletionStatus({
+          tone: "error",
+          message: data.message ?? "No fue posible reactivar la factura.",
+        });
+        return;
+      }
+
+      const reactivatedOrder = {
+        ...data.order,
+        items: Array.isArray(data.order.items) ? data.order.items : order.items,
+        giftItems: Array.isArray(data.order.giftItems) ? data.order.giftItems : order.giftItems,
+      };
+
+      setWarehouseOrders((current) => current.map((entry) => (
+        String(entry._id) === String(order._id) ? { ...entry, ...reactivatedOrder } : entry
+      )));
+      setSelectedWarehouseOrderDetail((current) => (
+        current && String(current._id) === String(order._id)
+          ? { ...current, ...reactivatedOrder }
+          : current
+      ));
+
+      if (sessionUser.role === "management" || sessionUser.role === "contabilidad" || sessionUser.role === "warehouse-aruba") {
+        await refreshInventorySummary();
+      }
+
+      if (sessionUser.role === "management" || sessionUser.role === "contabilidad") {
+        await refreshCarteraData();
+      }
+
+      setWarehouseOrderCompletionStatus({
+        tone: "success",
+        message: data.message ?? "Factura reactivada correctamente.",
+      });
+    } catch (error) {
+      setWarehouseOrderCompletionStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "No fue posible conectar con el backend.",
+      });
+    } finally {
+      setReactivatingWarehouseOrderId("");
     }
   }
 
@@ -23629,7 +23850,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       {canMutateSelectedWarehouseOrder ? (
                         <p className="route-helper-text">
                           {selectedWarehouseOrderDetail.status === "delivered"
-                            ? "Puedes editar cantidades o quitar productos de un pedido ya facturado. Guarda los cambios y luego reimprime: no se vuelve a facturar, pero el PDF y el pedido completado quedan actualizados."
+                            ? (selectedWarehouseOrderDetail.invoiceVoided
+                              ? "Esta factura esta anulada. Puedes editarla o reactivarla: al guardar o reactivar vuelve a cartera y se descuenta el inventario."
+                              : "Puedes editar cantidades o quitar productos de un pedido ya facturado. Guarda los cambios y luego reimprime: no se vuelve a facturar, pero el PDF y el pedido completado quedan actualizados.")
                             : selectedWarehouseOrderDetail.status === "dispatched"
                             ? (canWarehouseInvoiceOrder
                               ? "Ajusta cantidad y total por producto si hace falta. El precio unitario se calcula automaticamente antes de facturar."
@@ -23637,6 +23860,13 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             : "Ajusta cantidades o lotes antes de imprimir y facturar."}
                         </p>
                       ) : null}
+                      {selectedWarehouseOrderDetail.status === "delivered"
+                        && isWarehouseUser
+                        && !canEditSelectedCompletedWarehouseOrder ? (
+                          <p className="route-helper-text">
+                            Pasaron 24 horas desde que se facturo. Solo puedes consultar e imprimir; para cambios contacta gerencia o contabilidad.
+                          </p>
+                        ) : null}
                       {warehouseOrderCompletionHints.length > 0 ? (
                         <ul className="warehouse-order-hints">
                           {warehouseOrderCompletionHints.map((hint) => (
@@ -23655,7 +23885,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           {isSavingWarehouseOrderEdit ? "Guardando cambios..." : "Guardar cambios al pedido"}
                         </button>
                       ) : null}
-                      {selectedWarehouseOrderDetail.status === "delivered" && !selectedWarehouseOrderDetail.invoiceVoided ? (
+                      {selectedWarehouseOrderDetail.status === "delivered" ? (
                         <button
                           className="warehouse-action-button warehouse-action-button--print"
                           type="button"
@@ -23669,10 +23899,20 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                         <button
                           className="warehouse-action-button warehouse-action-button--danger"
                           type="button"
-                          disabled={voidingWarehouseOrderId === String(selectedWarehouseOrderDetail._id)}
+                          disabled={voidingWarehouseOrderId === String(selectedWarehouseOrderDetail._id) || Boolean(reactivatingWarehouseOrderId)}
                           onClick={() => void handleVoidWarehouseInvoice(selectedWarehouseOrderDetail)}
                         >
                           {voidingWarehouseOrderId === String(selectedWarehouseOrderDetail._id) ? "Anulando..." : "Anular factura"}
+                        </button>
+                      ) : null}
+                      {canReactivateSelectedWarehouseInvoice ? (
+                        <button
+                          className="warehouse-action-button warehouse-action-button--save"
+                          type="button"
+                          disabled={reactivatingWarehouseOrderId === String(selectedWarehouseOrderDetail._id) || Boolean(voidingWarehouseOrderId)}
+                          onClick={() => void handleReactivateWarehouseInvoice(selectedWarehouseOrderDetail)}
+                        >
+                          {reactivatingWarehouseOrderId === String(selectedWarehouseOrderDetail._id) ? "Reactivando..." : "Reactivar factura"}
                         </button>
                       ) : null}
                       {(selectedWarehouseOrderDetail.status === "submitted" || selectedWarehouseOrderDetail.status === "dispatched") ? (
@@ -23818,6 +24058,11 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       <div>
                         <h2>Pedidos completados</h2>
                         <p>Pedidos ya facturados. Los mas recientes aparecen primero. Filtra por fecha, cliente o # de factura.</p>
+                        {isWarehouseUser ? (
+                          <p className="route-helper-text">
+                            Bodega puede editar cada pedido durante 24 h desde que se facturo. El contador aparece junto al # de factura.
+                          </p>
+                        ) : null}
                       </div>
                       <p className="management-table-meta">{warehouseCompletedTotal} pedidos</p>
                     </div>
@@ -23938,10 +24183,26 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       selectAllDisabled={printableWarehouseCompletedOrders.length === 0 || isPrintingSelectedCompletedOrders}
                       onSelectOrder={setSelectedWarehouseOrderDetail}
                       hideDefaultViewButton
+                      renderInvoiceMeta={isWarehouseUser
+                        ? (order) => (
+                          <WarehouseCompletedEditTimer order={order} now={warehouseCompletedEditTimerNow} />
+                        )
+                        : undefined}
                       renderActions={(order) => {
                         const isVoidingOrder = voidingWarehouseOrderId === String(order._id);
+                        const isReactivatingOrder = reactivatingWarehouseOrderId === String(order._id);
+                        const canModifyCompletedOrder = canEditCompletedWarehouseOrderForRole(sessionUser?.role, order);
                         const canVoidOrder = order.status === "delivered"
                           && !order.invoiceVoided
+                          && canModifyCompletedOrder
+                          && (
+                            sessionUser?.role === "warehouse-aruba"
+                            || sessionUser?.role === "management"
+                            || sessionUser?.role === "contabilidad"
+                          );
+                        const canReactivateOrder = order.status === "delivered"
+                          && Boolean(order.invoiceVoided)
+                          && canModifyCompletedOrder
                           && (
                             sessionUser?.role === "warehouse-aruba"
                             || sessionUser?.role === "management"
@@ -23955,32 +24216,42 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             type="button"
                             onClick={() => setSelectedWarehouseOrderDetail(order)}
                           >
-                            {order.invoiceVoided ? "Ver" : canEditCompletedWarehouseOrders ? "Editar" : "Ver"}
+                            {canModifyCompletedOrder ? "Editar" : "Ver"}
                           </button>
-                          {!order.invoiceVoided ? (
-                            <button
-                              className="table-action-icon"
-                              type="button"
-                              aria-label="Reimprimir factura"
-                              title="Reimprimir factura"
-                              disabled={isVoidingOrder || isPrintingSelectedCompletedOrders}
-                              onClick={() => void handlePrintCompletedOrderSummary(order)}
-                            >
-                              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
-                              </svg>
-                            </button>
-                          ) : null}
+                          <button
+                            className="table-action-icon"
+                            type="button"
+                            aria-label="Reimprimir factura"
+                            title="Reimprimir factura"
+                            disabled={isVoidingOrder || isReactivatingOrder || isPrintingSelectedCompletedOrders}
+                            onClick={() => void handlePrintCompletedOrderSummary(order)}
+                          >
+                            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                              <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
+                            </svg>
+                          </button>
                           {canVoidOrder ? (
                             <button
                               className="seller-order-detail-trigger seller-order-detail-trigger--danger"
                               type="button"
                               aria-label="Anular factura"
                               title="Anular factura"
-                              disabled={isVoidingOrder}
+                              disabled={isVoidingOrder || isReactivatingOrder}
                               onClick={() => void handleVoidWarehouseInvoice(order)}
                             >
                               {isVoidingOrder ? "Anulando..." : "Anular"}
+                            </button>
+                          ) : null}
+                          {canReactivateOrder ? (
+                            <button
+                              className="seller-order-detail-trigger"
+                              type="button"
+                              aria-label="Reactivar factura"
+                              title="Reactivar factura"
+                              disabled={isVoidingOrder || isReactivatingOrder}
+                              onClick={() => void handleReactivateWarehouseInvoice(order)}
+                            >
+                              {isReactivatingOrder ? "Reactivando..." : "Reactivar"}
                             </button>
                           ) : null}
                         </>
@@ -32959,7 +33230,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
               <p className="management-table-meta">
                 Periodo: {completedOrdersStartDate} a {completedOrdersEndDate}
                 {" · "}
-                El CSV sigue la plantilla de importacion de facturas con impuestos de QuickBooks. Las facturas anuladas salen con nota Anulada y valor 0.
+                El CSV sigue la plantilla de importacion de facturas con impuestos de QuickBooks. Las facturas anuladas salen con nota Anulada y cantidad, precio y total en 0.
               </p>
 
               <div className="table-wrap">
@@ -32984,12 +33255,12 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                       filteredWarehouseCompletedOrders.map((order) => {
                         const isDeletingOrder = deletingWarehouseOrderId === order._id;
                         const isVoidingOrder = voidingWarehouseOrderId === order._id;
-                        const canVoidOrder = !order.invoiceVoided
-                          && (
-                            sessionUser.role === "management"
-                            || sessionUser.role === "contabilidad"
-                            || sessionUser.role === "warehouse-aruba"
-                          );
+                        const isReactivatingOrder = reactivatingWarehouseOrderId === order._id;
+                        const canManageInvoice = sessionUser.role === "management"
+                          || sessionUser.role === "contabilidad"
+                          || sessionUser.role === "warehouse-aruba";
+                        const canVoidOrder = canManageInvoice && !order.invoiceVoided;
+                        const canReactivateOrder = canManageInvoice && Boolean(order.invoiceVoided);
 
                         return (
                           <tr key={order._id} className={order.invoiceVoided ? "is-voided-invoice" : undefined}>
@@ -33000,27 +33271,25 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             <td>{formatOrderLineCountLabel(order, "long")}</td>
                             <td>{`${formatAwgCurrency(getSellerOrderInvoiceTotalAwg(order))} AWG`}</td>
                             <td className="table-actions-cell">
-                              {!order.invoiceVoided ? (
-                                <button
-                                  className="table-action-icon"
-                                  type="button"
-                                  aria-label="Reimprimir factura"
-                                  title="Reimprimir factura"
-                                  disabled={isDeletingOrder || isVoidingOrder}
-                                  onClick={() => void handlePrintCompletedOrderSummary(order)}
-                                >
-                                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                    <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
-                                  </svg>
-                                </button>
-                              ) : null}
-                              {(sessionUser.role === "management" || sessionUser.role === "contabilidad" || sessionUser.role === "warehouse-aruba") && !order.invoiceVoided ? (
+                              <button
+                                className="table-action-icon"
+                                type="button"
+                                aria-label="Reimprimir factura"
+                                title="Reimprimir factura"
+                                disabled={isDeletingOrder || isVoidingOrder || isReactivatingOrder}
+                                onClick={() => void handlePrintCompletedOrderSummary(order)}
+                              >
+                                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                  <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor" />
+                                </svg>
+                              </button>
+                              {canManageInvoice ? (
                                 <button
                                   className="table-action-icon"
                                   type="button"
                                   aria-label="Editar factura"
                                   title="Editar factura"
-                                  disabled={isDeletingOrder || isVoidingOrder}
+                                  disabled={isDeletingOrder || isVoidingOrder || isReactivatingOrder}
                                   onClick={() => openInvoiceChangeModal(order)}
                                 >
                                   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -33034,10 +33303,22 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                                   type="button"
                                   aria-label="Anular factura"
                                   title="Anular factura"
-                                  disabled={isDeletingOrder || isVoidingOrder}
+                                  disabled={isDeletingOrder || isVoidingOrder || isReactivatingOrder}
                                   onClick={() => void handleVoidWarehouseInvoice(order)}
                                 >
                                   {isVoidingOrder ? "Anulando..." : "Anular"}
+                                </button>
+                              ) : null}
+                              {canReactivateOrder ? (
+                                <button
+                                  className="seller-order-detail-trigger"
+                                  type="button"
+                                  aria-label="Reactivar factura"
+                                  title="Reactivar factura"
+                                  disabled={isDeletingOrder || isVoidingOrder || isReactivatingOrder}
+                                  onClick={() => void handleReactivateWarehouseInvoice(order)}
+                                >
+                                  {isReactivatingOrder ? "Reactivando..." : "Reactivar"}
                                 </button>
                               ) : null}
                               {!order.invoiceVoided ? (
@@ -33339,8 +33620,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                             className="warehouse-action-button warehouse-action-button--save"
                             type="button"
                             disabled={
-                              Boolean(selectedWarehouseOrderDetail.invoiceVoided)
-                              || isSavingAccountingOrderPrices
+                              isSavingAccountingOrderPrices
                               || isDispatchingWarehouseOrder
                               || isCompletingWarehouseOrder
                               || !selectedWarehouseOrderDetail.items.some((item) => {
@@ -33370,7 +33650,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                           >
                             {isSavingAccountingOrderPrices ? "Guardando cambios..." : "Guardar cambios del pedido"}
                           </button>
-                          {selectedWarehouseOrderDetail.status === "delivered" && !selectedWarehouseOrderDetail.invoiceVoided ? (
+                          {selectedWarehouseOrderDetail.status === "delivered" ? (
                             <button
                               className="warehouse-action-button warehouse-action-button--print"
                               type="button"
@@ -33386,6 +33666,7 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               type="button"
                               disabled={
                                 voidingWarehouseOrderId === String(selectedWarehouseOrderDetail._id)
+                                || reactivatingWarehouseOrderId === String(selectedWarehouseOrderDetail._id)
                                 || isSavingAccountingOrderPrices
                               }
                               onClick={() => void handleVoidWarehouseInvoice(selectedWarehouseOrderDetail)}
@@ -33393,6 +33674,22 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
                               {voidingWarehouseOrderId === String(selectedWarehouseOrderDetail._id)
                                 ? "Anulando..."
                                 : "Anular factura"}
+                            </button>
+                          ) : null}
+                          {canReactivateSelectedWarehouseInvoice ? (
+                            <button
+                              className="warehouse-action-button warehouse-action-button--save"
+                              type="button"
+                              disabled={
+                                reactivatingWarehouseOrderId === String(selectedWarehouseOrderDetail._id)
+                                || voidingWarehouseOrderId === String(selectedWarehouseOrderDetail._id)
+                                || isSavingAccountingOrderPrices
+                              }
+                              onClick={() => void handleReactivateWarehouseInvoice(selectedWarehouseOrderDetail)}
+                            >
+                              {reactivatingWarehouseOrderId === String(selectedWarehouseOrderDetail._id)
+                                ? "Reactivando..."
+                                : "Reactivar factura"}
                             </button>
                           ) : null}
                           {(selectedWarehouseOrderDetail.status === "submitted" || selectedWarehouseOrderDetail.status === "dispatched") ? (
@@ -33443,6 +33740,9 @@ Revisa el PDF adjunto. Para pedidos o consultas, escribenos directamente aqui:
 
               <p className="route-helper-text">
                 Ajusta descripcion, cantidad, precio o total por linea, agrega o quita productos. Los cambios se aplican de inmediato sobre la factura, inventario y cartera.
+                {invoiceChangeOrder.invoiceVoided
+                  ? " Esta factura esta anulada: al guardar se reactiva, vuelve a cartera y se descuenta el inventario."
+                  : ""}
               </p>
 
               {(sessionUser?.role === "management" || sessionUser?.role === "contabilidad") ? (

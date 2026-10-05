@@ -52,6 +52,7 @@ const orderSchema = new Schema(
     giftItems: { type: [orderGiftItemSchema], default: [] },
     attachments: { type: [orderAttachmentSchema], default: [] },
     invoiceNumber: { type: Number, min: 1 },
+    deliveredAt: { type: Date },
     invoiceVoided: { type: Boolean, default: false, index: true },
     invoiceVoidedAt: { type: Date },
     invoiceVoidedByUserId: { type: String, trim: true, default: "" },

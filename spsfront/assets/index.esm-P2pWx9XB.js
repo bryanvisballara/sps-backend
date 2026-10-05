@@ -1,4 +1,4 @@
-import{i as p,r as e}from"./index.esm-BkGMThoj.js";import{F as t,D as n,_,a as m,b as g,c as v,d as A,e as d,g as E}from"./index.esm-BkGMThoj.js";var r="firebase",a="12.15.0";/**
+import{i as p,r as e}from"./index.esm-tx6toF6o.js";import{F as t,D as n,_,a as m,b as g,c as v,d as A,e as d,g as E}from"./index.esm-tx6toF6o.js";var r="firebase",a="12.19.0";/**
  * @license
  * Copyright 2020 Google LLC
  *

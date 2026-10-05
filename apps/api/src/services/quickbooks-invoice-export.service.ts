@@ -375,7 +375,7 @@ export async function buildQuickBooksInvoiceExportCsv(params: {
       .filter((lineItem) => Number.isFinite(lineItem.quantity) && lineItem.quantity > 0)
       .map((lineItem) => (
         isVoidedInvoice
-          ? { ...lineItem, rate: 0, amount: 0 }
+          ? { ...lineItem, quantity: 0, rate: 0, amount: 0 }
           : lineItem
       ));
 
@@ -388,7 +388,7 @@ export async function buildQuickBooksInvoiceExportCsv(params: {
         productName: "Anulada",
         productSku: "-",
         description: "Anulada",
-        quantity: 1,
+        quantity: 0,
         rate: 0,
         amount: 0,
       });

@@ -1311,6 +1311,7 @@ async function mapWarehouseOrderRecords(orders) {
     return orders.map((order) => (buildWarehouseOrderRecord(order, productsById, catalogSalePriceByClientId.get(String(order.storeId ?? "")) ?? new Map())));
 }
 function buildWarehouseOrderRecord(order, productsById, catalogSalePriceByProductId) {
+    const deliveredAt = resolveOrderDeliveredAt(order);
     return {
         _id: String(order._id),
         routeId: order.routeId ?? "",
@@ -1325,6 +1326,7 @@ function buildWarehouseOrderRecord(order, productsById, catalogSalePriceByProduc
         deliveryOverdue: order.deliveryOverdue === true,
         status: order.status,
         invoiceNumber: Number(order.invoiceNumber ?? 0) || null,
+        deliveredAt: deliveredAt ? String(deliveredAt) : null,
         invoiceVoided: order.invoiceVoided === true,
         invoiceVoidedAt: order.invoiceVoidedAt ? String(order.invoiceVoidedAt) : null,
         invoiceVoidedByUserId: String(order.invoiceVoidedByUserId ?? ""),
@@ -2906,12 +2908,23 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
         const requestedByRole = typeof body.requestedByRole === "string"
             ? body.requestedByRole.trim()
             : "";
-        if (order.status === "delivered" && order.invoiceVoided === true) {
-            response.status(400).json({ message: "No puedes editar un pedido con factura anulada." });
-            return;
+        const wasVoidedInvoice = order.status === "delivered" && order.invoiceVoided === true;
+        if (wasVoidedInvoice) {
+            if (!canRoleMutateDeliveredWarehouseOrder(requestedByRole, order)) {
+                response.status(400).json({ message: "No tienes permiso para editar una factura anulada." });
+                return;
+            }
+            await reactivateDeliveredInvoiceById(String(order._id), {
+                ...body,
+                requestedByRole: requestedByRole || String(body.editedByRole ?? ""),
+            });
         }
-        if (order.status === "delivered" && !canEditDeliveredWarehouseOrder(requestedByRole)) {
-            response.status(400).json({ message: "Solo gerencia, contabilidad o bodega pueden modificar un pedido ya completado." });
+        if (order.status === "delivered" && !canRoleMutateDeliveredWarehouseOrder(requestedByRole, order)) {
+            response.status(400).json({
+                message: requestedByRole === "warehouse-aruba"
+                    ? "Ya pasaron 24 horas desde que se completo el pedido. Solo puedes consultarlo e imprimir la factura."
+                    : "Solo gerencia, contabilidad o bodega (durante 24 h) pueden modificar un pedido ya completado.",
+            });
             return;
         }
         const previousItems = Array.isArray(order.items)
@@ -2984,9 +2997,12 @@ apiRouter.put("/warehouse/orders/:id", async (request, response) => {
         const hasOrderNotesField = typeof body.orderNotes === "string";
         const hasAttachmentsField = Object.prototype.hasOwnProperty.call(body, "attachments");
         const hasDeliveryDateField = body.deliveryDate !== undefined && body.deliveryDate !== null && String(body.deliveryDate).trim() !== "";
-        const nextInternalOrderNotes = hasInternalNotesField
+        const rawNextInternalNotes = hasInternalNotesField
             ? String(body.internalOrderNotes).trim()
             : previousInternalNotes;
+        const nextInternalOrderNotes = wasVoidedInvoice
+            ? withoutAnuladaInternalNote(rawNextInternalNotes)
+            : rawNextInternalNotes;
         const nextOrderNotes = hasOrderNotesField
             ? String(body.orderNotes).trim()
             : previousOrderNotes;
@@ -3486,8 +3502,44 @@ function resolveOrderEditSource(role) {
     }
     return "system";
 }
+const WAREHOUSE_DELIVERED_EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
+function resolveOrderDeliveredAt(order) {
+    if (order.deliveredAt) {
+        const deliveredAt = order.deliveredAt instanceof Date
+            ? order.deliveredAt
+            : new Date(String(order.deliveredAt));
+        if (!Number.isNaN(deliveredAt.getTime())) {
+            return deliveredAt;
+        }
+    }
+    if (order.status === "delivered" && order.updatedAt) {
+        const updatedAt = order.updatedAt instanceof Date
+            ? order.updatedAt
+            : new Date(String(order.updatedAt));
+        if (!Number.isNaN(updatedAt.getTime())) {
+            return updatedAt;
+        }
+    }
+    return null;
+}
+function isWithinWarehouseDeliveredEditWindow(order, referenceDate = new Date()) {
+    const deliveredAt = resolveOrderDeliveredAt(order);
+    if (!deliveredAt) {
+        return false;
+    }
+    return referenceDate.getTime() - deliveredAt.getTime() <= WAREHOUSE_DELIVERED_EDIT_WINDOW_MS;
+}
 function canEditDeliveredWarehouseOrder(role) {
     return role === "management" || role === "contabilidad" || role === "warehouse-aruba";
+}
+function canRoleMutateDeliveredWarehouseOrder(role, order) {
+    if (role === "management" || role === "contabilidad") {
+        return true;
+    }
+    if (role === "warehouse-aruba") {
+        return order.status === "delivered" && isWithinWarehouseDeliveredEditWindow(order);
+    }
+    return false;
 }
 function canChangeDeliveredInvoiceNumber(role) {
     return role === "management" || role === "contabilidad";
@@ -3664,7 +3716,9 @@ async function recordOrderEditLog(params) {
                             ? "Factura reimpresa"
                             : params.action === "invoice_voided"
                                 ? "Factura anulada"
-                                : "Pedido actualizado",
+                                : params.action === "invoice_reactivated"
+                                    ? "Factura reactivada"
+                                    : "Pedido actualizado",
                     before: "",
                     after: "",
                 }],
@@ -4017,7 +4071,7 @@ apiRouter.get("/warehouse/orders/:id/invoice-document", async (request, response
             return;
         }
         const mappedOrder = await mapWarehouseOrderRecord(order);
-        const carteraEntry = await CarteraEntry.findOne({ orderId: String(order._id), active: { $ne: false } }).lean();
+        const carteraEntry = await CarteraEntry.findOne({ orderId: String(order._id) }).lean();
         // Always use the live order lines so reprints reflect warehouse/accounting edits.
         // LogisticsInvoice can keep a stale snapshot after products are removed.
         const sourceItems = await buildWarehouseInvoiceDocumentLines(order);
@@ -4052,6 +4106,24 @@ apiRouter.get("/warehouse/orders/:id/invoice-document", async (request, response
         sendCreationError(response, error);
     }
 });
+async function reactivateCarteraForOrder(orderId) {
+    const normalizedOrderId = String(orderId ?? "").trim();
+    if (!normalizedOrderId) {
+        return;
+    }
+    const relatedEntries = await CarteraEntry.find({ orderId: normalizedOrderId }).select({ _id: 1 }).lean();
+    const carteraEntryIds = relatedEntries.map((entry) => String(entry._id));
+    await CarteraEntry.updateMany({ orderId: normalizedOrderId }, { active: true });
+    if (carteraEntryIds.length === 0) {
+        return;
+    }
+    await CarteraCollection.updateMany({
+        $or: [
+            { relatedOrderId: normalizedOrderId },
+            { carteraEntryId: { $in: carteraEntryIds } },
+        ],
+    }, { active: true });
+}
 async function deactivateCarteraForOrder(orderId) {
     const normalizedOrderId = String(orderId ?? "").trim();
     if (!normalizedOrderId) {
@@ -4115,6 +4187,13 @@ function withAnuladaInternalNote(existing) {
     }
     return `Anulada. ${notes}`;
 }
+function withoutAnuladaInternalNote(existing) {
+    const notes = String(existing ?? "").trim();
+    if (!notes || /^anulada\.?\s*$/i.test(notes)) {
+        return "";
+    }
+    return notes.replace(/^anulada\.\s*/i, "").trim();
+}
 async function voidDeliveredInvoiceById(orderId, body = {}) {
     const order = await Order.findById(orderId).lean();
     if (!order) {
@@ -4129,6 +4208,9 @@ async function voidDeliveredInvoiceById(orderId, body = {}) {
     const actor = normalizeOrderEditActor(body);
     if (!actor || !canVoidDeliveredInvoice(actor.role)) {
         throw Object.assign(new Error("No tienes permiso para anular esta factura."), { statusCode: 403 });
+    }
+    if (!canRoleMutateDeliveredWarehouseOrder(actor.role, order)) {
+        throw Object.assign(new Error("Ya pasaron 24 horas desde que se completo el pedido. Solo gerencia o contabilidad pueden anularla."), { statusCode: 400 });
     }
     const invoiceNumber = Number(order.invoiceNumber ?? 0) || null;
     const voidReason = typeof body.voidReason === "string" ? body.voidReason.trim() : "";
@@ -4176,6 +4258,79 @@ async function voidDeliveredInvoiceById(orderId, body = {}) {
         message: invoiceNumber
             ? `Factura #${invoiceNumber} anulada. El consecutivo se conserva y no se reutiliza.`
             : "Factura anulada. El consecutivo se conserva y no se reutiliza.",
+        order: updatedOrder,
+        invoiceNumber,
+    };
+}
+async function reactivateDeliveredInvoiceById(orderId, body = {}) {
+    const order = await Order.findById(orderId).lean();
+    if (!order) {
+        throw Object.assign(new Error("El pedido no existe."), { statusCode: 404 });
+    }
+    if (order.status !== "delivered") {
+        throw Object.assign(new Error("Solo puedes reactivar facturas de pedidos completados."), { statusCode: 400 });
+    }
+    if (order.invoiceVoided !== true) {
+        throw Object.assign(new Error("Esta factura no esta anulada."), { statusCode: 400 });
+    }
+    const actor = normalizeOrderEditActor(body);
+    if (!actor || !canVoidDeliveredInvoice(actor.role)) {
+        throw Object.assign(new Error("No tienes permiso para reactivar esta factura."), { statusCode: 403 });
+    }
+    if (!canRoleMutateDeliveredWarehouseOrder(actor.role, order)) {
+        throw Object.assign(new Error("Ya pasaron 24 horas desde que se completo el pedido. Solo gerencia o contabilidad pueden reactivarla."), { statusCode: 400 });
+    }
+    const invoiceNumber = Number(order.invoiceNumber ?? 0) || null;
+    const quantitiesByProductId = buildOrderQuantitiesMap([
+        ...(Array.isArray(order.items) ? order.items : []),
+        ...(Array.isArray(order.giftItems) ? order.giftItems : []),
+    ]);
+    for (const [productId, quantity] of quantitiesByProductId.entries()) {
+        await deductAdditionalInventoryForProduct(productId, quantity, String(order._id));
+    }
+    await reactivateCarteraForOrder(String(order._id));
+    await LogisticsInvoice.updateMany({ orderId: String(order._id) }, {
+        active: true,
+        syncExcluded: false,
+    });
+    const nextInternalNotes = typeof body.internalOrderNotes === "string"
+        ? withoutAnuladaInternalNote(body.internalOrderNotes)
+        : withoutAnuladaInternalNote(order.internalOrderNotes);
+    const updatedOrder = await Order.findByIdAndUpdate(orderId, {
+        $set: {
+            invoiceVoided: false,
+            invoiceVoidedByUserId: "",
+            invoiceVoidedByUserName: "",
+            invoiceVoidedByRole: "",
+            invoiceVoidReason: "",
+            internalOrderNotes: nextInternalNotes,
+        },
+        $unset: {
+            invoiceVoidedAt: 1,
+        },
+    }, { new: true, runValidators: true }).lean();
+    if (!updatedOrder) {
+        throw Object.assign(new Error("El pedido no existe."), { statusCode: 404 });
+    }
+    await recordOrderEditLog({
+        orderId: String(updatedOrder._id),
+        storeName: String(updatedOrder.storeName ?? ""),
+        invoiceNumber,
+        actor,
+        action: "invoice_reactivated",
+        changes: [{
+                field: "invoiceVoided",
+                summary: invoiceNumber
+                    ? `Factura #${invoiceNumber} reactivada`
+                    : "Factura reactivada",
+                before: "anulada",
+                after: "activa",
+            }],
+    });
+    return {
+        message: invoiceNumber
+            ? `Factura #${invoiceNumber} reactivada. Volvio a cartera y se desconto el inventario.`
+            : "Factura reactivada. Volvio a cartera y se desconto el inventario.",
         order: updatedOrder,
         invoiceNumber,
     };
@@ -4345,7 +4500,7 @@ async function completeWarehouseOrderById(orderId, body = {}) {
         items: itemsWithPrices,
         giftItems: Array.isArray(order.giftItems) ? order.giftItems : [],
     });
-    const updatedOrder = await Order.findByIdAndUpdate(orderId, { status: "delivered", items: itemsWithPrices, invoiceNumber }, { new: true, runValidators: true }).lean();
+    const updatedOrder = await Order.findByIdAndUpdate(orderId, { status: "delivered", items: itemsWithPrices, invoiceNumber, deliveredAt: invoicedAt }, { new: true, runValidators: true }).lean();
     if (!updatedOrder) {
         throw Object.assign(new Error("El pedido no existe."), { statusCode: 404 });
     }
@@ -4527,6 +4682,26 @@ apiRouter.put("/warehouse/orders/:id/void-invoice", async (request, response) =>
             ? request.body
             : {};
         const result = await voidDeliveredInvoiceById(String(request.params.id), body);
+        response.json({
+            message: result.message,
+            order: await mapWarehouseOrderRecord(result.order),
+            invoiceNumber: result.invoiceNumber,
+        });
+    }
+    catch (error) {
+        if (error instanceof Error && "statusCode" in error && typeof error.statusCode === "number") {
+            response.status(error.statusCode).json({ message: error.message });
+            return;
+        }
+        sendCreationError(response, error);
+    }
+});
+apiRouter.put("/warehouse/orders/:id/reactivate-invoice", async (request, response) => {
+    try {
+        const body = typeof request.body === "object" && request.body !== null
+            ? request.body
+            : {};
+        const result = await reactivateDeliveredInvoiceById(String(request.params.id), body);
         response.json({
             message: result.message,
             order: await mapWarehouseOrderRecord(result.order),
