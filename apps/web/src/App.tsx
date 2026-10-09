@@ -6690,7 +6690,7 @@ export default function App() {
   const isDirectInvoiceComposer = activeSection === "direct-invoice";
   const canEditStaffOrderPricing = canCreateStaffOrders(sessionUser?.role) && isStaffOrderComposerActive;
   const canEditStaffOrderGrandTotal = canEditStaffOrderPricing && isDirectInvoiceComposer && !editingStaffOrder;
-  const canEditStaffOrderLineSubtotalManual = canEditStaffOrderGrandTotal;
+  const canEditStaffOrderLineSubtotalManual = canEditStaffOrderPricing;
   const activeComposerRoutes = isStaffOrderComposerActive ? staffOrderRoutes : sellerRoutes;
   const selectedSellerRoute = activeComposerRoutes.find((route) => (route._id ?? route.code) === selectedSellerRouteId) ?? null;
   const selectedSellerDay = selectedSellerRoute?.days.find((day) => day.day === selectedSellerDayKey) ?? null;
